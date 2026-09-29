@@ -1,0 +1,4 @@
+# 复制为 .dev.vars 供本地 wrangler dev 使用（不会被提交）
+GEMINI_API_KEY=your-gemini-api-key
+# 本地开发跳过 Cloudflare Access 校验；线上绝对不要设置
+AUTH_DISABLED=true

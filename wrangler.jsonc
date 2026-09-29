@@ -1,0 +1,42 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wordcard",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // 前端静态资源（vite build 输出），/api/* 先交给 Worker 处理
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Gemini API 不支持中国香港等地区；中国大陆访问 Cloudflare 常落在香港节点，
+  // 所以把 Worker 固定跑在美国，避免 "User location is not supported"。
+  "placement": { "region": "gcp:us-central1" },
+
+  // 绑定自定义域名后可改为 false，并在下方 routes 里填域名
+  "workers_dev": true,
+  // "routes": [{ "pattern": "words.example.com", "custom_domain": true }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wordcard",
+      // 首次部署前运行 `npx wrangler d1 create wordcard`，把输出的 id 填到这里
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "wordcard-audio" }],
+
+  "vars": {
+    "GEMINI_TEXT_MODEL": "gemini-2.5-flash",
+    "GEMINI_TTS_MODEL": "gemini-2.5-flash-preview-tts",
+    "GEMINI_VOICE": "Kore"
+  },
+
+  "observability": { "enabled": true }
+}

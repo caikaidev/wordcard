@@ -1,0 +1,163 @@
+@import 'tailwindcss';
+
+/* ---------- 设计令牌（来自设计稿：暖白纸感 + 墨蓝强调色） ---------- */
+:root {
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --chip: #f2efe8;
+  --line: #e6e2d9;
+  --line-soft: #ece8df;
+  --divider: #efece5;
+  --ink: #1c1b19;
+  --muted: #6b6860;
+  --muted-2: #5e5b54;
+  --faint: #b9b5ac;
+  --accent: #2b4c7e;
+  --accent-soft: #e8edf5;
+  --on-accent: #ffffff;
+  --forgot-bg: #f8ebe3;
+  --forgot-fg: #9a3f12;
+  --hazy-bg: #ece8df;
+  --invert-bg: #1c1b19;
+  --invert-fg: #f6f4ef;
+  --shadow-card: 0 1px 2px rgba(28, 27, 25, 0.04), 0 16px 40px -16px rgba(28, 27, 25, 0.14);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131312;
+    --surface: #1d1c1a;
+    --chip: #292825;
+    --line: #2a2926;
+    --line-soft: #2e2c29;
+    --divider: #2a2926;
+    --ink: #edeae3;
+    --muted: #a19d94;
+    --muted-2: #a19d94;
+    --faint: #5e5b54;
+    --accent: #9db8e3;
+    --accent-soft: #232c3b;
+    --on-accent: #131312;
+    --forgot-bg: #3a2419;
+    --forgot-fg: #f0b08e;
+    --hazy-bg: #292825;
+    --invert-bg: #edeae3;
+    --invert-fg: #131312;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px -16px rgba(0, 0, 0, 0.6);
+    color-scheme: dark;
+  }
+}
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-chip: var(--chip);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-divider: var(--divider);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-forgot-bg: var(--forgot-bg);
+  --color-forgot-fg: var(--forgot-fg);
+  --color-hazy-bg: var(--hazy-bg);
+  --color-invert-bg: var(--invert-bg);
+  --color-invert-fg: var(--invert-fg);
+
+  --font-sans: 'Noto Sans SC', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+
+  --shadow-card: var(--shadow-card);
+  --animate-flip: flip 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
+  --animate-rise: rise 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+
+  @keyframes flip {
+    from {
+      transform: perspective(1200px) rotateY(-70deg);
+      opacity: 0;
+    }
+    to {
+      transform: perspective(1200px) rotateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes rise {
+    from {
+      transform: translateY(8px);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+  @keyframes shimmer {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+
+@layer base {
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+  font-family: inherit;
+}
+button:disabled {
+  cursor: default;
+}
+input,
+textarea {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 12px);
+}
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 16px);
+}
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

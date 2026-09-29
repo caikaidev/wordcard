@@ -1,0 +1,35 @@
+import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
+
+export type Path = '/' | '/add' | '/library' | '/remix'
+
+const subscribe = (cb: () => void) => {
+  window.addEventListener('popstate', cb)
+  return () => window.removeEventListener('popstate', cb)
+}
+
+export function usePath(): Path {
+  const p = useSyncExternalStore(subscribe, () => window.location.pathname)
+  return (['/', '/add', '/library', '/remix'] as const).find((x) => x === p) ?? '/'
+}
+
+export function navigate(to: Path) {
+  if (window.location.pathname === to) return
+  window.history.pushState(null, '', to)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+  window.scrollTo(0, 0)
+}
+
+export function Link({ to, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: Path }) {
+  return (
+    <a
+      href={to}
+      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+        onClick?.(e)
+        if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+        e.preventDefault()
+        navigate(to)
+      }}
+      {...rest}
+    />
+  )
+}
