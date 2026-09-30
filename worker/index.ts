@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, tts, GeminiError } from './gemini'
+import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits } from './gemini'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
@@ -299,7 +299,14 @@ app.get('/usage', async (c) => {
   const nextMonth = monthStart(now, -1)
   const elapsed = Math.max((now - thisMonth) / 86400000, 1)
   const days = (nextMonth - thisMonth) / 86400000
-  return c.json({ month: cur, lastMonth: prev, projected: (cur.total.cost / elapsed) * days })
+  const counts = await aiCallCounts(c.env)
+  const limits = aiLimits(c.env)
+  return c.json({
+    month: cur,
+    lastMonth: prev,
+    projected: (cur.total.cost / elapsed) * days,
+    today: { text: counts.text, tts: counts.tts, textLimit: limits.text, ttsLimit: limits.tts, disabled: limits.disabled },
+  })
 })
 
 /* ------------------------------ 音频缓存管理 ------------------------------ */

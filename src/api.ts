@@ -72,4 +72,5 @@ export type UsageReport = {
   month: { total: UsageBucket; byKind: Record<string, UsageBucket> }
   lastMonth: UsageBucket
   projected: number
+  today: { text: number; tts: number; textLimit: number; ttsLimit: number; disabled: boolean }
 }

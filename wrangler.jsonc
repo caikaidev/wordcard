@@ -36,6 +36,11 @@
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
     "GEMINI_TTS_MODEL": "gemini-3.8-flash-tts",
     "GEMINI_VOICE": "Kore",
+    // 费用闸门：每天最多多少次 AI 调用（失败也计数），超出返回 429；AI_DISABLED 设为 "true" 可一键停用
+    "DAILY_TEXT_LIMIT": "300",
+    "DAILY_TTS_LIMIT": "600",
+    "PER_MINUTE_LIMIT": "40",
+    "AI_DISABLED": "false",
     // Cloudflare Access（Worker → Access 页面的“应用程序值”），不是密码，可以公开
     "ACCESS_TEAM_DOMAIN": "caikai.cloudflareaccess.com",
     "ACCESS_AUD": "25addfc0a956b5762deabf87d9264524cadaf8b2ae97cb1ec701ecebad47ad21"

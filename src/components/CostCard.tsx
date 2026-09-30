@@ -101,6 +101,16 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
             })}
           </div>
 
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Quota label="今日 AI 调用" used={data.today.text} limit={data.today.textLimit} />
+            <Quota label="今日新语音" used={data.today.tts} limit={data.today.ttsLimit} />
+          </div>
+          {data.today.disabled && (
+            <div className="mt-2 rounded-xl bg-forgot-bg px-3.5 py-2.5 text-[13px] text-forgot-fg">
+              AI 功能已暂停（AI_DISABLED），已缓存的语音照常能播
+            </div>
+          )}
+
           {per100 !== null && (
             <div className="mt-3 rounded-xl bg-chip px-3.5 py-2.5 text-[13px]">
               按目前用量，每添加 <span className="font-medium">100 个词</span>（补全 + 单词和例句发音）约{' '}
@@ -123,5 +133,24 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
         </>
       )}
     </section>
+  )
+}
+
+/** 每日上限：超过 80% 变成警示色 */
+function Quota({ label, used, limit }: { label: string; used: number; limit: number }) {
+  const pct = Math.min(100, (used / limit) * 100)
+  const warn = pct >= 80
+  return (
+    <div className="rounded-xl border border-line-soft px-3 py-2.5">
+      <div className="flex items-baseline justify-between text-xs text-muted">
+        <span>{label}</span>
+        <span className="tabular">
+          <span className={`font-semibold ${warn ? 'text-forgot-fg' : 'text-ink'}`}>{used}</span> / {limit}
+        </span>
+      </div>
+      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-line-soft">
+        <div className={`h-1 rounded-full ${warn ? 'bg-forgot-fg' : 'bg-accent'}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
   )
 }

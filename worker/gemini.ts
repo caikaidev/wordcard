@@ -16,14 +16,83 @@ export class GeminiError extends Error {
 const baseUrl = (env: Env) =>
   (env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')
 
-async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
+/* ------------------------------ 费用闸门 ------------------------------ */
+
+const DAY = 86_400_000
+const TZ = 8 * 3600_000
+
+export function aiLimits(env: Env) {
+  const n = (v: string | undefined, d: number) => (Number(v) > 0 ? Number(v) : d)
+  return {
+    disabled: env.AI_DISABLED === 'true',
+    text: n(env.DAILY_TEXT_LIMIT, 300),
+    tts: n(env.DAILY_TTS_LIMIT, 600),
+    perMinute: n(env.PER_MINUTE_LIMIT, 40),
+  }
+}
+
+/** 今天（北京时间）和最近一分钟的调用次数；失败的调用也计入 */
+export async function aiCallCounts(env: Env) {
+  const now = Date.now()
+  const dayStart = Math.floor((now + TZ) / DAY) * DAY - TZ
+  const r = await env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN ts >= ?1 AND kind != 'tts' THEN 1 ELSE 0 END), 0) AS text,
+       COALESCE(SUM(CASE WHEN ts >= ?1 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS tts,
+       COALESCE(SUM(CASE WHEN ts >= ?2 THEN 1 ELSE 0 END), 0) AS minute
+     FROM usage WHERE ts >= MIN(?1, ?2)`,
+  )
+    .bind(dayStart, now - 60_000)
+    .first<{ text: number; tts: number; minute: number }>()
+  return { text: r?.text ?? 0, tts: r?.tts ?? 0, minute: r?.minute ?? 0 }
+}
+
+async function guard(env: Env, kind: UsageKind) {
+  const limits = aiLimits(env)
+  if (limits.disabled) throw new GeminiError('AI 功能已暂停（AI_DISABLED）', 503)
+  const c = await aiCallCounts(env)
+  if (c.minute >= limits.perMinute) throw new GeminiError('调用太频繁了，歇一分钟再试', 429)
+  if (kind === 'tts' ? c.tts >= limits.tts : c.text >= limits.text) {
+    throw new GeminiError(
+      kind === 'tts'
+        ? `今天生成的语音已达上限（${limits.tts} 段），明天再来；已缓存的语音照常能播`
+        : `今天的 AI 调用已达上限（${limits.text} 次），明天再来`,
+      429,
+    )
+  }
+}
+
+/* ------------------------------ 请求 ------------------------------ */
+
+type UsageMeta = {
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
+}
+
+/** 所有 Gemini 请求的唯一出口：先过闸门，再请求，最后记账（失败也记一次） */
+async function post<T>(env: Env, path: string, body: unknown, call: { kind: UsageKind; model: string }): Promise<T> {
   if (!env.GEMINI_API_KEY) throw new GeminiError('服务端未配置 GEMINI_API_KEY', 500)
-  const res = await fetch(`${baseUrl(env)}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify(body),
-  })
-  const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string } }
+  await guard(env, call.kind)
+  let res: Response
+  try {
+    res = await fetch(`${baseUrl(env)}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    await recordUsage(env, call.kind, call.model, 0, 0)
+    throw new GeminiError('连不上 Gemini，请稍后再试')
+  }
+  const data = (await res.json().catch(() => ({}))) as T & UsageMeta & { error?: { message?: string } }
+  const u = data.usageMetadata
+  const alt = u ? null : findUsage(data)
+  await recordUsage(
+    env,
+    call.kind,
+    call.model,
+    u ? (u.promptTokenCount ?? 0) : (alt?.input ?? 0),
+    u ? (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) : (alt?.output ?? 0),
+  )
   if (!res.ok) {
     throw new GeminiError(`Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`, 502, res.status)
   }
@@ -49,12 +118,12 @@ async function recordUsage(env: Env, kind: UsageKind, model: string, input: numb
 }
 
 async function generate(env: Env, model: string, body: unknown, kind: UsageKind): Promise<GeminiPart[]> {
-  const data = await post<{
-    candidates?: { content?: { parts?: GeminiPart[] } }[]
-    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
-  }>(env, `/models/${model}:generateContent`, body)
-  const u = data.usageMetadata
-  if (u) await recordUsage(env, kind, model, u.promptTokenCount ?? 0, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0))
+  const data = await post<{ candidates?: { content?: { parts?: GeminiPart[] } }[] }>(
+    env,
+    `/models/${model}:generateContent`,
+    body,
+    { kind, model },
+  )
   const parts = data.candidates?.[0]?.content?.parts
   if (!parts?.length) throw new GeminiError('Gemini 没有返回内容，请重试')
   return parts
@@ -230,7 +299,10 @@ async function ttsGenerateContent(env: Env, text: string, slow: boolean) {
 }
 
 async function ttsInteractions(env: Env, text: string, slow: boolean) {
-  const data = await post<unknown>(env, '/interactions', {
+  const data = await post<unknown>(
+    env,
+    '/interactions',
+    {
     model: env.GEMINI_TTS_MODEL,
     input: [
       {
@@ -240,9 +312,9 @@ async function ttsInteractions(env: Env, text: string, slow: boolean) {
     ],
     response_format: { type: 'audio' },
     generation_config: { speech_config: [{ voice: voice(env) }] },
-  })
-  const usage = findUsage(data)
-  if (usage) await recordUsage(env, 'tts', env.GEMINI_TTS_MODEL, usage.input, usage.output)
+    },
+    { kind: 'tts', model: env.GEMINI_TTS_MODEL },
+  )
   const audio = findAudio(data)
   if (!audio) throw new GeminiError('Gemini 没有返回音频，请重试')
   return audio
