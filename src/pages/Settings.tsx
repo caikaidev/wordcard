@@ -83,7 +83,7 @@ export default function Settings() {
       </div>
 
       {!cur ? (
-        <div className="mx-6 mt-5 h-64 animate-shimmer rounded-[22px] bg-surface" />
+        <div className="mx-6 mt-5 h-64 animate-shimmer rounded-2xl bg-surface" />
       ) : (
         <>
           <Section title="文本模型" desc="用于 AI 补全和 AI 重组">

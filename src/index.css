@@ -146,10 +146,10 @@ textarea {
 }
 
 .pb-safe {
-  padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  padding-bottom: max(env(safe-area-inset-bottom), 8px);
 }
 .pt-safe {
-  padding-top: max(env(safe-area-inset-top), 16px);
+  padding-top: max(env(safe-area-inset-top), 12px);
 }
 }
 

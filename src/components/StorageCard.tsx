@@ -53,7 +53,7 @@ export default function StorageCard() {
   const warn = pct >= 80
 
   return (
-    <section className="mx-6 mt-4 mb-2 rounded-[22px] border border-line-soft bg-surface p-5" aria-labelledby="storage-title">
+    <section className="mx-6 mt-4 mb-2 rounded-2xl border border-line-soft bg-surface p-5" aria-labelledby="storage-title">
       <div className="flex items-center justify-between">
         <h2 id="storage-title" className="m-0 text-[15px] font-semibold">
           音频缓存

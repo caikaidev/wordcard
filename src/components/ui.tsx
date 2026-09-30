@@ -75,8 +75,8 @@ export function PageTitle({ eyebrow, title, right }: { eyebrow: ReactNode; title
   return (
     <div className="flex items-end justify-between gap-3">
       <div className="flex flex-col gap-1">
-        <div className="text-[13px] tracking-wide text-muted">{eyebrow}</div>
-        <h1 className="m-0 text-2xl font-semibold tracking-tight">{title}</h1>
+        <div className="text-xs tracking-wide text-muted md:text-[13px]">{eyebrow}</div>
+        <h1 className="m-0 text-[22px] font-semibold tracking-tight md:text-2xl">{title}</h1>
       </div>
       {right}
     </div>
@@ -85,7 +85,7 @@ export function PageTitle({ eyebrow, title, right }: { eyebrow: ReactNode; title
 
 export function Card({ children, className = "" }: { children?: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-[28px] border border-line-soft bg-surface shadow-card ${className}`}>{children}</div>
+    <div className={`rounded-[20px] md:rounded-3xl border border-line-soft bg-surface shadow-card ${className}`}>{children}</div>
   )
 }
 

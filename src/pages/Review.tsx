@@ -115,7 +115,7 @@ export default function Review() {
   }, [])
 
   return (
-    <div className="pt-safe flex flex-1 flex-col px-6 md:pt-10">
+    <div className="pt-safe flex flex-1 flex-col px-5 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle
           eyebrow="今日复习"
@@ -138,7 +138,7 @@ export default function Review() {
         />
       </div>
 
-      <div className="mt-5 flex items-center gap-4 md:mt-0">
+      <div className="mt-4 flex items-center gap-4 md:mt-0">
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
@@ -150,11 +150,11 @@ export default function Review() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col pt-5 pb-4 md:flex-none">
+      <div className="flex min-h-0 flex-1 flex-col pt-4 pb-3 md:flex-none md:pt-5 md:pb-4">
         {error ? (
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue ? (
-          <Card className="flex-1 animate-shimmer md:h-[440px]" />
+          <Card className="min-h-[300px] flex-1 animate-shimmer md:h-[440px] md:flex-none" />
         ) : !card ? (
           <Empty
             title={reviewed ? '今天的复习完成了' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
@@ -179,7 +179,7 @@ export default function Review() {
             }
           />
         ) : (
-          <Card key={`${card.id}-${flipped}-${reviewed}`} className="flex min-h-[420px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none">
+          <Card key={`${card.id}-${flipped}-${reviewed}`} className="flex min-h-[300px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none">
             {flipped ? (
               <Back item={card} onDone={markDone} busy={busy} />
             ) : (
@@ -190,11 +190,11 @@ export default function Review() {
       </div>
 
       {card && (
-        <div className="pb-4 md:pb-0">
+        <div className="pb-3 md:pb-0">
           {!flipped ? (
             <button
               onClick={() => setFlipped(true)}
-              className="h-[60px] w-full rounded-[18px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg md:h-16"
+              className="h-[52px] w-full rounded-[14px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg md:h-16"
             >
               显示答案
             </button>
@@ -222,7 +222,7 @@ const btnGhost =
 function Front({ item, pos, onFlip }: { item: Item; pos: string; onFlip: () => void }) {
   const isWord = item.type === 'word'
   return (
-    <div className="flex flex-1 flex-col p-6 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="flex flex-1 flex-col p-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <Chip>{isWord ? '单词' : '句子'}</Chip>
         <span className="tabular text-xs text-muted md:hidden">{pos}</span>
@@ -230,14 +230,14 @@ function Front({ item, pos, onFlip }: { item: Item; pos: string; onFlip: () => v
       <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
         <div
           className={`font-serif font-medium tracking-tight ${
-            isWord ? 'text-5xl leading-[1.1] md:text-[56px]' : 'text-[26px] leading-snug md:text-[30px]'
+            isWord ? 'text-[40px] leading-[1.1] md:text-[56px]' : 'text-[22px] leading-snug md:text-[30px]'
           }`}
         >
           {item.text}
         </div>
-        {item.meta.ipa && <div className="font-serif text-lg text-muted italic">{item.meta.ipa}</div>}
-        <div className="mt-4">
-          <SpeakButton text={item.text} size={52} label={isWord ? '播放发音' : '播放句子'} />
+        {item.meta.ipa && <div className="font-serif text-base text-muted italic md:text-lg">{item.meta.ipa}</div>}
+        <div className="mt-3">
+          <SpeakButton text={item.text} size={48} label={isWord ? '播放发音' : '播放句子'} />
         </div>
       </div>
       <div className="text-center text-[13px] text-muted">{isWord ? '先在心里回想释义' : '先在心里回想意思'}</div>
@@ -249,12 +249,12 @@ function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: bo
   const m = item.meta
   const isWord = item.type === 'word'
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto p-6 md:px-12 md:py-10">
+    <div className="flex flex-1 flex-col overflow-y-auto p-5 md:px-12 md:py-10">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-baseline md:gap-4">
           <div
             className={`font-serif font-medium tracking-tight ${
-              isWord ? 'text-[32px] leading-[1.1] md:text-[44px]' : 'text-[22px] leading-snug md:text-[26px]'
+              isWord ? 'text-[28px] leading-[1.1] md:text-[44px]' : 'text-[19px] leading-snug md:text-[26px]'
             }`}
           >
             {item.text}
@@ -264,22 +264,22 @@ function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: bo
         <SpeakButton text={item.text} size={44} />
       </div>
 
-      <div className="my-5 h-px bg-divider md:my-7" />
+      <div className="my-4 h-px bg-divider md:my-7" />
 
       <div className="flex items-baseline gap-2.5">
         {m.pos && <span className="font-serif text-[15px] text-muted italic md:text-[17px]">{m.pos}</span>}
-        <span className="text-lg leading-relaxed font-medium md:text-xl">{m.meaning || '（暂无释义）'}</span>
+        <span className="text-base leading-relaxed font-medium md:text-xl">{m.meaning || '（暂无释义）'}</span>
       </div>
 
       {m.example && (
-        <div className="mt-6 flex flex-col gap-2 md:mt-7">
+        <div className="mt-5 flex flex-col gap-1.5 md:mt-7 md:gap-2">
           <div className="flex items-center justify-between">
             <div className="text-xs tracking-wider text-muted">例句</div>
             <div className="-my-3 -mr-3">
               <SpeakButton text={m.example} variant="ghost" size={44} waves={1} label="播放例句" />
             </div>
           </div>
-          <div className="font-serif text-xl leading-normal md:text-[23px]">
+          <div className="font-serif text-lg leading-normal md:text-[23px]">
             <Highlighted text={m.example} marks={[m.highlight]} />
           </div>
           {m.exampleZh && <div className="text-sm leading-relaxed text-muted md:text-[15px]">{m.exampleZh}</div>}
@@ -287,7 +287,7 @@ function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: bo
       )}
 
       {m.phrases.length > 0 && (
-        <div className="mt-5 flex flex-col gap-1.5">
+        <div className="mt-4 flex flex-col gap-1 md:mt-5">
           <div className="text-xs tracking-wider text-muted">{isWord ? '搭配' : '重点短语'}</div>
           {m.phrases.map((p, i) => (
             <div key={i} className="text-sm leading-relaxed">
@@ -316,13 +316,13 @@ function GradeButton(p: { k: string; label: string; hint: string; cls: string; o
     <button
       onClick={p.onClick}
       disabled={p.disabled}
-      className={`flex h-[60px] flex-col items-center justify-center gap-0.5 rounded-[18px] border-0 transition active:scale-[0.97] disabled:opacity-60 md:h-16 md:flex-row md:gap-2.5 ${p.cls}`}
+      className={`flex h-[52px] flex-col items-center justify-center gap-0 rounded-[14px] border-0 transition active:scale-[0.97] disabled:opacity-60 md:h-16 md:flex-row md:gap-2.5 ${p.cls}`}
     >
       <span className="hidden h-[22px] w-[22px] items-center justify-center rounded-md border border-current/35 text-xs md:flex">
         {p.k}
       </span>
-      <span className="text-base font-semibold">{p.label}</span>
-      <span className="text-xs opacity-85 md:text-[13px]">{p.hint}</span>
+      <span className="text-[15px] font-semibold md:text-base">{p.label}</span>
+      <span className="text-[11px] opacity-85 md:text-[13px]">{p.hint}</span>
     </button>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Toaster } from './components/ui'
@@ -10,27 +10,32 @@ import Remix from './pages/Remix'
 import Settings from './pages/Settings'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
-  { to: '/', label: '复习', icon: <IconCards size={24} /> },
-  { to: '/add', label: '添加', icon: <IconPlusCircle size={24} /> },
-  { to: '/library', label: '词库', icon: <IconList size={24} /> },
+  { to: '/', label: '复习', icon: <IconCards size={22} /> },
+  { to: '/add', label: '添加', icon: <IconPlusCircle size={22} /> },
+  { to: '/library', label: '词库', icon: <IconList size={22} /> },
 ]
 
 export default function App() {
   const path = usePath()
+  const scroller = useRef<HTMLDivElement>(null)
   useEffect(() => {
     refreshStats()
+    scroller.current?.scrollTo(0, 0)
   }, [path])
 
+  // 整页固定为可视高度：内容区自己滚动，底部 Tab 永远不会盖住按钮
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-dvh flex-col overflow-hidden">
       <DesktopHeader path={path} />
-      <main className="mx-auto flex w-full max-w-[640px] flex-1 flex-col">
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <main className="mx-auto flex min-h-full w-full max-w-[640px] flex-col">
         {path === '/' && <Review />}
         {path === '/add' && <Add />}
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
         {path === '/settings' && <Settings />}
       </main>
+      </div>
       {path !== '/remix' && path !== '/settings' && <MobileTabBar path={path} />}
       <Toaster />
     </div>
@@ -41,9 +46,7 @@ export default function App() {
 function MobileTabBar({ path }: { path: Path }) {
   return (
     <>
-      {/* 占位，避免内容被固定的 Tab 挡住 */}
-      <div className="h-[calc(68px+max(env(safe-area-inset-bottom),12px))] md:hidden" />
-      <nav className="pb-safe fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t border-line bg-bg/95 px-8 pt-2 backdrop-blur md:hidden">
+      <nav className="pb-safe grid shrink-0 grid-cols-3 border-t border-line bg-bg px-8 pt-1 md:hidden">
         {tabs.map((t) => {
           const on = path === t.to
           return (
@@ -51,7 +54,7 @@ function MobileTabBar({ path }: { path: Path }) {
               key={t.to}
               to={t.to}
               aria-current={on ? 'page' : undefined}
-              className={`flex h-[52px] flex-col items-center justify-center gap-1 text-[11px] no-underline ${
+              className={`flex h-12 flex-col items-center justify-center gap-0.5 text-[11px] no-underline ${
                 on ? 'font-semibold text-ink' : 'text-muted'
               }`}
             >
@@ -69,7 +72,7 @@ function MobileTabBar({ path }: { path: Path }) {
 function DesktopHeader({ path }: { path: Path }) {
   const stats = useStats()
   return (
-    <header className="sticky top-0 z-40 hidden h-[72px] shrink-0 grid-cols-3 items-center border-b border-line bg-bg/95 px-10 backdrop-blur md:grid">
+    <header className="z-40 hidden h-[72px] shrink-0 grid-cols-3 items-center border-b border-line bg-bg/95 px-10 backdrop-blur md:grid">
       <Link to="/" className="font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
         词句卡
       </Link>

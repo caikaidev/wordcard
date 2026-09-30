@@ -69,12 +69,12 @@ export default function Add() {
   const setMeta = (patch: Partial<CardMeta>) => setDraft((d) => (d ? { ...d, meta: { ...d.meta, ...patch } } : d))
 
   return (
-    <div className="pt-safe flex flex-1 flex-col px-6 md:pt-10">
+    <div className="pt-safe flex flex-1 flex-col px-5 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle eyebrow="新条目" title="添加" />
       </div>
 
-      <div className="flex flex-1 flex-col gap-4 pt-5 pb-4 md:pt-0">
+      <div className="flex flex-1 flex-col gap-3.5 pt-4 pb-3 md:pt-0">
         <form
           className="flex flex-col gap-2"
           onSubmit={(e) => {
@@ -97,7 +97,7 @@ export default function Add() {
               autoCapitalize="off"
               spellCheck={false}
               enterKeyHint="go"
-              className="h-[60px] w-full rounded-[18px] border-[1.5px] border-line bg-surface pr-14 pl-5 font-serif text-[22px] text-ink outline-none placeholder:font-sans placeholder:text-base placeholder:text-faint focus:border-ink"
+              className="h-14 w-full rounded-[14px] border-[1.5px] border-line bg-surface pr-14 pl-5 font-serif text-xl text-ink outline-none placeholder:font-sans placeholder:text-base placeholder:text-faint focus:border-ink"
             />
             {input && (
               <button
@@ -133,14 +133,14 @@ export default function Add() {
         {loading && !draft && <SkeletonCard />}
 
         {draft && (
-          <Card className={`flex animate-rise flex-col gap-[18px] p-6 transition-opacity ${loading ? 'opacity-50' : ''}`}>
+          <Card className={`flex animate-rise flex-col gap-4 p-5 transition-opacity ${loading ? 'opacity-50' : ''}`}>
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <Editable
                   value={draft.text}
                   onChange={(v) => setDraft({ ...draft, text: v })}
                   className={`font-serif font-medium tracking-tight ${
-                    draft.type === 'word' ? 'text-[32px] leading-[1.1]' : 'text-[22px] leading-snug'
+                    draft.type === 'word' ? 'text-[28px] leading-[1.1]' : 'text-[19px] leading-snug'
                   }`}
                   label="原文"
                 />
@@ -178,7 +178,7 @@ export default function Add() {
                 <Editable
                   value={draft.meta.meaning}
                   onChange={(v) => setMeta({ meaning: v })}
-                  className="flex-1 text-[17px] leading-relaxed font-medium"
+                  className="flex-1 text-base leading-relaxed font-medium"
                   placeholder="中文释义"
                   label="释义"
                 />
@@ -189,7 +189,7 @@ export default function Add() {
               <Editable
                 value={draft.meta.example}
                 onChange={(v) => setMeta({ example: v })}
-                className="font-serif text-[19px] leading-normal"
+                className="font-serif text-lg leading-normal"
                 placeholder="英文例句"
                 label="例句"
                 render={(v) => <Highlighted text={v} marks={[draft.meta.highlight]} />}
@@ -244,7 +244,7 @@ export default function Add() {
             type="button"
             onClick={save}
             disabled={saving || loading}
-            className="flex h-[60px] w-full items-center justify-center gap-2 rounded-[18px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg disabled:opacity-60"
+            className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg disabled:opacity-60"
           >
             {saving ? '保存中…' : '保存到词库'}
           </button>
@@ -253,7 +253,7 @@ export default function Add() {
             type="button"
             onClick={() => runEnrich()}
             disabled={!input.trim() || loading}
-            className="flex h-[60px] w-full items-center justify-center gap-2 rounded-[18px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg disabled:opacity-40"
+            className="flex h-[52px] w-full items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg disabled:opacity-40"
           >
             {loading ? '补全中…' : 'AI 补全'}
             {!loading && <IconArrowRight size={18} />}
