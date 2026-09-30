@@ -85,11 +85,22 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
   )
 
   // 对照模式：整篇按 20 段一批翻译，边翻边显示
+  // 对照模式：从当前屏幕上的段落开始，8 段一批、同时跑 3 批，先出现在眼前的先翻好
   const toggleBilingual = async () => {
     if (bilingual) return setBilingual(false)
     setBilingual(true)
-    const all = paragraphs.map((_, i) => i).filter((i) => translatable[i])
-    for (let k = 0; k < all.length; k += 20) if (!(await fetchZh(all.slice(k, k + 20)))) break
+    const nodes = [...(bodyRef.current?.querySelectorAll<HTMLElement>('[data-p]') ?? [])]
+    const first = Math.max(0, nodes.findIndex((n) => n.getBoundingClientRect().bottom > 60))
+    const order = [...paragraphs.keys()].filter((i) => translatable[i] && zh[i] === undefined)
+    const sorted = [...order.filter((i) => i >= first), ...order.filter((i) => i < first)]
+    const batches: number[][] = []
+    for (let k = 0; k < sorted.length; k += 8) batches.push(sorted.slice(k, k + 8))
+    let next = 0
+    let failed = false
+    const worker = async () => {
+      while (!failed && next < batches.length) if (!(await fetchZh(batches[next++]))) failed = true
+    }
+    await Promise.all([worker(), worker(), worker()])
   }
 
   const onTap = (e: React.MouseEvent) => {
@@ -258,7 +269,7 @@ const Paragraph = memo(function Paragraph({
   onToggleZh: (i: number) => void
 }) {
   return (
-    <div className="mb-5">
+    <div className="mb-5" data-p={idx}>
       <p className="m-0">
         {sentences.map((s, i) => (
           <span key={i} data-s="">

@@ -170,6 +170,8 @@ export async function generateJson<T>(
   schema: unknown,
   kind: UsageKind,
   temperature = 0.7,
+  /** 思考强度：翻译这类不需要推理的任务用 minimal，更快更省 */
+  thinkingLevel: 'minimal' | 'low' = 'low',
 ): Promise<T> {
   const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
@@ -179,7 +181,7 @@ export async function generateJson<T>(
       responseMimeType: 'application/json',
       responseSchema: schema,
       // 3.x 模型用 thinkingLevel；卡片生成不需要深度思考，用 low 更快更省
-      ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
+      ...(thinking ? { thinkingConfig: { thinkingLevel } } : {}),
     },
   })
   let parts: GeminiPart[]
@@ -257,6 +259,7 @@ ${paras.map((p, i) => `[${i + 1}] ${p}`).join('\n\n')}`
     { type: 'OBJECT', properties: { translations: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['translations'] },
     'translate',
     0.2,
+    'minimal',
   )
   const out = Array.isArray(r.translations) ? r.translations : []
   return paras.map((_, i) => (typeof out[i] === 'string' ? out[i].trim() : ''))
