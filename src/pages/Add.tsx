@@ -69,12 +69,12 @@ export default function Add() {
   const setMeta = (patch: Partial<CardMeta>) => setDraft((d) => (d ? { ...d, meta: { ...d.meta, ...patch } } : d))
 
   return (
-    <div className="pt-safe flex flex-1 flex-col px-5 md:px-6 md:pt-10">
+    <div className="pt-safe flex flex-1 flex-col px-4 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle eyebrow="新条目" title="添加" />
       </div>
 
-      <div className="flex flex-1 flex-col gap-3.5 pt-4 pb-3 md:pt-0">
+      <div className="flex flex-1 flex-col gap-3 pt-4 pb-3 md:pt-0">
         <form
           className="flex flex-col gap-2"
           onSubmit={(e) => {

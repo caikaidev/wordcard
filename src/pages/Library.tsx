@@ -75,7 +75,7 @@ export default function Library() {
 
   return (
     <div className="pt-safe flex flex-1 flex-col md:pt-10">
-      <div className="px-6 md:hidden">
+      <div className="px-4 md:hidden">
         <PageTitle
           eyebrow={`共 ${total ?? '–'} 条`}
           title="词库"
@@ -83,7 +83,7 @@ export default function Library() {
             <Link
               to="/settings"
               aria-label="设置"
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-ink"
+              className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-ink"
             >
               <IconGear />
             </Link>
@@ -91,7 +91,7 @@ export default function Library() {
         />
       </div>
 
-      <div className="flex flex-col gap-3 px-6 pt-5 md:pt-0">
+      <div className="flex flex-col gap-2.5 px-4 pt-4 md:px-6 md:pt-0">
         <div className="relative">
           <label htmlFor="q" aria-label="搜索" className="absolute top-[13px] left-4 flex text-muted">
             <IconSearch size={18} />
@@ -123,7 +123,7 @@ export default function Library() {
         </div>
       </div>
 
-      <div className="flex flex-col px-6 pt-2 pb-6">
+      <div className="flex flex-col px-4 pt-1 pb-6 md:px-6">
         {!items ? (
           Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="flex animate-shimmer flex-col gap-2 border-b border-line py-4">

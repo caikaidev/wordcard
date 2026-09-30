@@ -115,7 +115,7 @@ export default function Review() {
   }, [])
 
   return (
-    <div className="pt-safe flex flex-1 flex-col px-5 md:px-6 md:pt-10">
+    <div className="pt-safe flex flex-1 flex-col px-4 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle
           eyebrow="今日复习"
@@ -125,11 +125,11 @@ export default function Review() {
               <Link
                 to="/remix"
                 aria-label="AI 重组今日到期词"
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-ink"
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-ink"
               >
                 <IconSparkle />
               </Link>
-              <div className="flex h-11 items-center gap-1.5 rounded-full bg-invert-bg px-4 text-sm text-invert-fg">
+              <div className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-3.5 text-[13px] text-invert-fg">
                 <span className="opacity-70">剩余</span>
                 <span className="tabular font-semibold">{queue?.length ?? '–'}</span>
               </div>
@@ -138,19 +138,19 @@ export default function Review() {
         />
       </div>
 
-      <div className="mt-4 flex items-center gap-4 md:mt-0">
+      <div className="mt-3.5 flex items-center gap-3 md:mt-0 md:gap-4">
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
             style={{ width: total ? `${Math.round((reviewed / total) * 100)}%` : '0%' }}
           />
         </div>
-        <div className={`tabular hidden text-[13px] text-muted ${total ? 'md:block' : ''}`}>
+        <div className={`tabular text-xs text-muted md:text-[13px] ${total ? '' : 'invisible'}`}>
           {Math.min(reviewed + 1, total)} / {total}
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col pt-4 pb-3 md:flex-none md:pt-5 md:pb-4">
+      <div className="flex min-h-0 flex-1 flex-col pt-3 pb-3 md:flex-none md:pt-5 md:pb-4">
         {error ? (
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue ? (
@@ -183,7 +183,7 @@ export default function Review() {
             {flipped ? (
               <Back item={card} onDone={markDone} busy={busy} />
             ) : (
-              <Front item={card} pos={`${reviewed + 1} / ${total}`} onFlip={() => setFlipped(true)} />
+              <Front item={card} onFlip={() => setFlipped(true)} />
             )}
           </Card>
         )}
@@ -219,13 +219,12 @@ const btnPrimary =
 const btnGhost =
   'flex h-12 items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-5 text-[15px] font-medium text-ink'
 
-function Front({ item, pos, onFlip }: { item: Item; pos: string; onFlip: () => void }) {
+function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
   const isWord = item.type === 'word'
   return (
-    <div className="flex flex-1 flex-col p-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="flex flex-1 flex-col px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <Chip>{isWord ? '单词' : '句子'}</Chip>
-        <span className="tabular text-xs text-muted md:hidden">{pos}</span>
       </div>
       <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
         <div
@@ -249,7 +248,7 @@ function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: bo
   const m = item.meta
   const isWord = item.type === 'word'
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto p-5 md:px-12 md:py-10">
+    <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-5 pb-3 md:px-12 md:py-10">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-baseline md:gap-4">
           <div

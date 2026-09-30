@@ -72,18 +72,18 @@ export default function Settings() {
 
   return (
     <div className="pt-safe flex flex-1 flex-col pb-10 md:pt-8">
-      <div className="flex items-center px-4 md:px-6">
+      <div className="flex items-center px-2 md:px-6">
         <Link to="/library" aria-label="返回词库" className="-ml-1 flex h-11 w-11 items-center justify-center text-ink md:-ml-3">
           <IconBack size={22} />
         </Link>
       </div>
-      <div className="px-6 pt-2">
+      <div className="px-4 pt-1 md:px-6">
         <div className="text-[13px] tracking-wide text-muted">模型 · 语音 · 存储</div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">设置</h1>
       </div>
 
       {!cur ? (
-        <div className="mx-6 mt-5 h-64 animate-shimmer rounded-2xl bg-surface" />
+        <div className="mx-4 mt-5 h-64 md:mx-6 animate-shimmer rounded-2xl bg-surface" />
       ) : (
         <>
           <Section title="文本模型" desc="用于 AI 补全和 AI 重组">
@@ -157,7 +157,7 @@ export default function Settings() {
         </>
       )}
 
-      <div className="mt-6 px-6 text-[13px] font-semibold text-ink">存储</div>
+      <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">存储</div>
       <StorageCard />
     </div>
   )
@@ -165,7 +165,7 @@ export default function Settings() {
 
 function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
   return (
-    <section className="mt-6 px-6">
+    <section className="mt-5 px-4 md:mt-6 md:px-6">
       <h2 className="m-0 text-[13px] font-semibold">{title}</h2>
       {desc && <p className="mt-0.5 mb-0 text-xs text-muted">{desc}</p>}
       <div className="mt-2.5">{children}</div>

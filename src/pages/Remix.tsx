@@ -60,7 +60,7 @@ export default function Remix() {
 
   return (
     <div className="pt-safe flex flex-1 flex-col md:pt-8">
-      <div className="flex items-center justify-between px-4 md:px-6">
+      <div className="flex items-center justify-between px-2 pr-4 md:px-6">
         <Link
           to="/"
           aria-label="返回复习"
@@ -76,7 +76,7 @@ export default function Remix() {
         </button>
       </div>
 
-      <div className="flex flex-col gap-3 px-5 pt-1 md:px-6">
+      <div className="flex flex-col gap-3 px-4 pt-1 md:px-6">
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1.5 text-[13px] tracking-wide text-muted">
             <IconSparkle size={14} className="text-accent" />
@@ -93,7 +93,7 @@ export default function Remix() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2.5 px-5 pt-4 pb-3 md:px-6">
+      <div className="flex flex-col gap-2.5 px-4 pt-4 pb-3 md:px-6">
         {error ? (
           <div className="rounded-2xl border border-line-soft bg-surface p-6 text-center">
             <div className="text-sm leading-relaxed text-muted">{error}</div>
@@ -119,7 +119,7 @@ export default function Remix() {
             <div
               key={i}
               style={{ animationDelay: `${i * 60}ms` }}
-              className={`flex animate-rise items-start gap-3 rounded-2xl border bg-surface py-4 pr-3 pl-4 transition-colors ${
+              className={`flex animate-rise items-start gap-3 rounded-2xl border bg-surface py-3.5 pr-3 pl-4 transition-colors ${
                 playing === i ? 'border-accent' : 'border-line-soft'
               }`}
             >
@@ -135,7 +135,7 @@ export default function Remix() {
         )}
       </div>
 
-      <div className="pb-safe sticky bottom-0 mt-auto grid grid-cols-2 gap-2.5 bg-bg px-5 pt-3 md:px-6 md:pb-10">
+      <div className="pb-safe sticky bottom-0 mt-auto grid grid-cols-2 gap-2.5 bg-bg px-4 pt-3 md:px-6 md:pb-10">
         <button
           onClick={() => generate(data?.words.map((w) => w.id) ?? [])}
           disabled={loading}

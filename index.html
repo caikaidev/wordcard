@@ -13,7 +13,8 @@
     <meta name="apple-mobile-web-app-title" content="词句卡" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- 带上登录 Cookie 读取 manifest，否则会被 Cloudflare Access 拦截，Chrome 提示“无法安装” -->
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
   </head>
   <body>
     <div id="root"></div>
