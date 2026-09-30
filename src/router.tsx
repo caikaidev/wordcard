@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
 
-export type Path = '/' | '/add' | '/library' | '/remix' | '/settings'
+export type Path = '/' | '/add' | '/library' | '/remix' | '/settings' | '/practice' | `/practice/${number}`
 
 const subscribe = (cb: () => void) => {
   window.addEventListener('popstate', cb)
@@ -9,7 +9,8 @@ const subscribe = (cb: () => void) => {
 
 export function usePath(): Path {
   const p = useSyncExternalStore(subscribe, () => window.location.pathname)
-  return (['/', '/add', '/library', '/remix', '/settings'] as const).find((x) => x === p) ?? '/'
+  if (/^\/practice\/\d+$/.test(p)) return p as Path
+  return (['/', '/add', '/library', '/remix', '/settings', '/practice'] as const).find((x) => x === p) ?? '/'
 }
 
 export function navigate(to: Path) {
@@ -33,3 +34,6 @@ export function Link({ to, onClick, ...rest }: AnchorHTMLAttributes<HTMLAnchorEl
     />
   )
 }
+
+/** /practice/123 → 123 */
+export const lessonIdOf = (p: Path) => (p.startsWith('/practice/') ? Number(p.slice('/practice/'.length)) : null)

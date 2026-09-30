@@ -1,4 +1,5 @@
 import type { Settings } from '../shared/settings'
+import type { Lesson, LessonSummary, Level, PracticeStats } from '../shared/practice'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, RemixResult } from '../shared/types'
 
 export class ApiError extends Error {
@@ -45,9 +46,17 @@ export const api = {
   grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType) => req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type }) }),
   settings: () => req<{ current: Settings; defaults: Settings }>('/settings'),
-  saveSettings: (patch: Partial<Record<keyof Settings, string | null>>) =>
+  saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
     req<{ current: Settings }>('/settings', { method: 'PUT', body: json(patch) }),
   usage: () => req<UsageReport>('/usage'),
+  practiceStats: () => req<PracticeStats>('/practice/stats'),
+  lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
+  lesson: (id: number) => req<{ lesson: Lesson }>(`/practice/lessons/${id}`),
+  createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level: Level }) =>
+    req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }),
+  deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),
+  submit: (id: number, idx: number, text: string) =>
+    req<{ lesson: Lesson }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
   storage: () =>
     req<{ count: number; bytes: number; unusedCount: number; unusedBytes: number; limitBytes: number }>('/storage'),
   cleanup: (mode: 'unused' | 'all') =>

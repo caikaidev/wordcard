@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, usePath, type Path } from './router'
+import { Link, lessonIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Toaster } from './components/ui'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
-import { IconCards, IconGear, IconList, IconPlusCircle, IconSparkle } from './components/icons'
+import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
 import Add from './pages/Add'
 import Library from './pages/Library'
 import Remix from './pages/Remix'
 import Settings from './pages/Settings'
+import Practice from './pages/Practice'
+import LessonPage from './pages/Lesson'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
+  { to: '/practice', label: '练习', icon: <IconPen size={22} /> },
   { to: '/add', label: '添加', icon: <IconPlusCircle size={22} /> },
   { to: '/library', label: '词库', icon: <IconList size={22} /> },
 ]
@@ -28,7 +31,7 @@ export default function App() {
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
-    path !== '/add',
+    path !== '/add' && lessonIdOf(path) === null, // 有输入框的页面不启用，免得刷掉正在写的内容
   )
   useEffect(() => {
     refreshStats()
@@ -52,10 +55,12 @@ export default function App() {
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
         {path === '/settings' && <Settings />}
+        {path === '/practice' && <Practice />}
+        {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
       </main>
       </div>
       </div>
-      {path !== '/remix' && path !== '/settings' && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && lessonIdOf(path) === null && <MobileTabBar path={path} />}
       <Toaster />
     </div>
   )
@@ -65,9 +70,9 @@ export default function App() {
 function MobileTabBar({ path }: { path: Path }) {
   return (
     <>
-      <nav className="pb-safe grid shrink-0 grid-cols-3 border-t border-line bg-bg px-8 pt-1 md:hidden">
+      <nav className="pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-bg px-3 pt-1 md:hidden">
         {tabs.map((t) => {
-          const on = path === t.to
+          const on = path === t.to || (t.to === '/practice' && lessonIdOf(path) !== null)
           return (
             <Link
               key={t.to}
@@ -97,7 +102,7 @@ function DesktopHeader({ path }: { path: Path }) {
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
         {tabs.map((t) => {
-          const on = path === t.to
+          const on = path === t.to || (t.to === '/practice' && lessonIdOf(path) !== null)
           return (
             <Link
               key={t.to}

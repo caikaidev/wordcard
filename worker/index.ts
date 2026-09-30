@@ -4,7 +4,8 @@ import { requireAccess } from './auth'
 import { enrich, remix, tts, GeminiError } from './gemini'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
-import { isSafeId, type Settings } from '../shared/settings'
+import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
+import { practice } from './practice'
 import { costOf } from '../shared/pricing'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
@@ -35,22 +36,6 @@ function safeMeta(raw: unknown): CardMeta {
 const cleanText = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, 500) : '')
 const isType = (v: unknown): v is ItemType => v === 'word' || v === 'sentence'
 const isStatus = (v: unknown): v is ItemStatus => v === 'active' || v === 'done'
-
-/** 读取页面上保存的设置，覆盖 wrangler.jsonc 的默认值 */
-async function loadSettings(env: Env): Promise<Settings> {
-  const { results } = await env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>()
-  const m = Object.fromEntries(results.map((r) => [r.key, r.value]))
-  return {
-    textModel: isSafeId(m.textModel) ? m.textModel : env.GEMINI_TEXT_MODEL,
-    ttsModel: isSafeId(m.ttsModel) ? m.ttsModel : env.GEMINI_TTS_MODEL,
-    voice: isSafeId(m.voice) ? m.voice : env.GEMINI_VOICE,
-  }
-}
-
-async function aiEnv(env: Env): Promise<Env> {
-  const s = await loadSettings(env)
-  return { ...env, GEMINI_TEXT_MODEL: s.textModel, GEMINI_TTS_MODEL: s.ttsModel, GEMINI_VOICE: s.voice }
-}
 
 const app = new Hono<{ Bindings: Env }>().basePath('/api')
 
@@ -259,34 +244,16 @@ app.get('/tts', async (c) => {
 /* ------------------------------ 设置 ------------------------------ */
 
 app.get('/settings', async (c) => {
-  const current = await loadSettings(c.env)
-  const defaults: Settings = {
-    textModel: c.env.GEMINI_TEXT_MODEL,
-    ttsModel: c.env.GEMINI_TTS_MODEL,
-    voice: c.env.GEMINI_VOICE,
-  }
-  return c.json({ current, defaults })
+  return c.json({ current: await loadSettings(c.env), defaults: defaultSettings(c.env) })
 })
 
 app.put('/settings', async (c) => {
-  const body = await c.req.json<Partial<Record<keyof Settings, unknown>>>()
-  const stmts: D1PreparedStatement[] = []
-  for (const k of ['textModel', 'ttsModel', 'voice'] as const) {
-    const v = body[k]
-    if (v === undefined) continue
-    if (v === null || v === '') {
-      stmts.push(c.env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(k)) // 恢复默认
-    } else if (isSafeId(v)) {
-      stmts.push(
-        c.env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(k, v),
-      )
-    } else {
-      return c.json({ error: `${k} 格式不对：只能包含字母、数字、点、横线` }, 400)
-    }
-  }
-  if (stmts.length) await c.env.DB.batch(stmts)
+  const err = await saveSettings(c.env, await c.req.json<Record<string, unknown>>())
+  if (err) return c.json({ error: err }, 400)
   return c.json({ current: await loadSettings(c.env) })
 })
+
+app.route('/practice', practice)
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 
@@ -303,7 +270,7 @@ app.get('/usage', async (c) => {
   const lastMonth = monthStart(now, 1)
   // 按 天 × 模型 × 类型 汇总（单价可能随日期变化），再在这里算钱
   const { results } = await c.env.DB.prepare(
-    `SELECT kind, model, (ts + ?) / 86400000 AS day, COUNT(*) AS calls,
+    `SELECT kind, model, CAST((ts + ?) / 86400000 AS INTEGER) AS day, COUNT(*) AS calls,
             SUM(input_tokens) AS input, SUM(output_tokens) AS output
      FROM usage WHERE ts >= ? GROUP BY kind, model, day`,
   )

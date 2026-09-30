@@ -1,0 +1,467 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { api, ApiError } from '../api'
+import { prefetch } from '../audio'
+import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../shared/practice'
+import type { CardMeta } from '../../shared/types'
+import { Link, navigate } from '../router'
+import { refreshStats } from '../store'
+import { Chip, Highlighted, SpeakButton, errMsg, toast } from '../components/ui'
+import { IconBack, IconCheck, IconLock, IconPlusCircle, IconTrash } from '../components/icons'
+
+const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
+
+export default function LessonPage({ id }: { id: number }) {
+  const [lesson, setLesson] = useState<Lesson | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [added, setAdded] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    api
+      .lesson(id)
+      .then((r) => {
+        setLesson(r.lesson)
+        const c = r.lesson.content
+        // 生词、句式例句、口语题的语音先在后台准备好
+        prefetch([...c.words.map((w) => w.word), ...c.expressions.map((e) => e.example), ...c.speaking.map((q) => q.question)])
+      })
+      .catch((e) => setError(errMsg(e)))
+  }, [id])
+
+  /** 加入复习卡片；已在词库里（409）也算成功 */
+  const addCard = async (key: string, type: 'word' | 'sentence', text: string, meta: Partial<CardMeta>) => {
+    try {
+      await api.create(type, text, { ...blankMeta(), ...meta })
+      toast(`已加入复习：${text}`)
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 409)) return toast(errMsg(e), 'error')
+      toast('已经在词库里了')
+    }
+    setAdded((s) => new Set(s).add(key))
+    refreshStats()
+  }
+
+  const remove = async () => {
+    if (!lesson || !window.confirm('删除这份练习和所有提交记录？')) return
+    try {
+      await api.deleteLesson(lesson.id)
+      navigate('/practice')
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    }
+  }
+
+  const c = lesson?.content
+
+  return (
+    <div className="pt-safe flex flex-1 flex-col pb-10 md:pt-8">
+      <div className="flex items-center justify-between px-2 pr-3 md:px-6">
+        <Link to="/practice" aria-label="返回练习" className="flex h-11 w-11 items-center justify-center text-ink md:-ml-3">
+          <IconBack size={22} />
+        </Link>
+        {lesson && (
+          <button
+            onClick={remove}
+            aria-label="删除这份练习"
+            className="flex h-11 w-11 items-center justify-center border-0 bg-transparent text-muted"
+          >
+            <IconTrash size={18} />
+          </button>
+        )}
+      </div>
+
+      {error ? (
+        <p className="px-4 text-sm text-forgot-fg md:px-6">{error}</p>
+      ) : !lesson || !c ? (
+        <div className="mx-4 mt-2 h-72 animate-shimmer rounded-2xl bg-surface md:mx-6" />
+      ) : (
+        <div className="flex flex-col px-4 md:px-6">
+          {/* 标题与难度 */}
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <Chip>{LEVELS[lesson.level - 1]?.name}</Chip>
+            <span>{new Date(lesson.created_at).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</span>
+            {lesson.source_url && (
+              <a href={lesson.source_url} target="_blank" rel="noreferrer" className="truncate text-accent">
+                原文
+              </a>
+            )}
+          </div>
+          <h1 className="m-0 mt-2 font-serif text-[24px] leading-tight font-medium tracking-tight">{c.title}</h1>
+          <div
+            className={`mt-3 rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
+              c.fit === 'hard' ? 'bg-forgot-bg text-forgot-fg' : 'bg-chip text-ink'
+            }`}
+          >
+            <span className="font-semibold">{c.fit === 'ok' ? '难度合适' : c.fit === 'hard' ? '偏难' : '偏简单'}</span>
+            {c.fitNote && <span className="text-muted"> · {c.fitNote}</span>}
+          </div>
+          <div className="mt-3 flex items-start gap-2">
+            <p className="m-0 flex-1 font-serif text-[17px] leading-relaxed">{c.summary}</p>
+            <SpeakButton text={c.summary} size={40} waves={1} label="播放概要" />
+          </div>
+
+          {/* 生词 */}
+          {c.words.length > 0 && (
+            <Section title="生词" count={c.words.length}>
+              {c.words.map((w, i) => (
+                <Row key={i} first={i === 0}>
+                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <div className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="font-serif text-[18px] font-medium">{w.word}</span>
+                      {w.ipa && <span className="font-serif text-sm text-muted italic">{w.ipa}</span>}
+                    </div>
+                    <div className="text-[13px]">{w.meaning}</div>
+                    {w.quote && (
+                      <div className="mt-0.5 font-serif text-[14px] leading-snug text-muted italic">
+                        <Highlighted text={w.quote} marks={[w.word]} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center">
+                    <SpeakButton text={w.word} size={36} variant="ghost" />
+                    <AddButton
+                      done={added.has(`w${i}`)}
+                      onClick={() =>
+                        addCard(`w${i}`, /\s/.test(w.word) ? 'sentence' : 'word', w.word, {
+                          ipa: w.ipa,
+                          meaning: w.meaning,
+                          example: w.quote,
+                          highlight: w.word,
+                        })
+                      }
+                    />
+                  </div>
+                </Row>
+              ))}
+            </Section>
+          )}
+
+          {/* 句式 */}
+          {c.expressions.length > 0 && (
+            <Section title="表达句式" count={c.expressions.length}>
+              {c.expressions.map((e, i) => (
+                <Row key={i} first={i === 0}>
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="font-serif text-[17px] leading-snug font-medium">{e.pattern}</div>
+                    <div className="text-[13px] text-muted">{e.meaning}</div>
+                    <div className="font-serif text-[15px] leading-snug">{e.example}</div>
+                  </div>
+                  <div className="flex shrink-0 items-center">
+                    <SpeakButton text={e.example} size={36} variant="ghost" waves={1} label="播放例句" />
+                    <AddButton
+                      done={added.has(`e${i}`)}
+                      onClick={() => addCard(`e${i}`, 'sentence', e.pattern, { meaning: e.meaning, example: e.example })}
+                    />
+                  </div>
+                </Row>
+              ))}
+            </Section>
+          )}
+
+          {/* 输出任务 */}
+          <h2 className="mt-7 mb-0 text-[13px] font-semibold">输出任务 · 3 句话</h2>
+          <p className="mt-0.5 mb-0 text-xs text-muted">一句一句来。提交前先大声读一遍，读不顺的地方通常就是写得不自然的地方。</p>
+          <div className="mt-2.5 flex flex-col gap-2.5">
+            {c.tasks.map((t, idx) => (
+              <TaskStep
+                key={idx}
+                lesson={lesson}
+                idx={idx}
+                onGraded={(l) => {
+                  setLesson(l)
+                  refreshStats()
+                }}
+                onRemember={(r) => addCard(`r${idx}-${r.text}`, /\s/.test(r.text) ? 'sentence' : 'word', r.text, { meaning: r.meaning, example: r.example })}
+                rememberAdded={(text) => added.has(`r${idx}-${text}`)}
+                goal={t.goal}
+              />
+            ))}
+          </div>
+
+          {/* 口语 */}
+          {c.speaking.length > 0 && (
+            <Section title="口语任务" count={c.speaking.length} note="散步时用英文回答，每题 1 分钟">
+              {c.speaking.map((q, i) => (
+                <Row key={i} first={i === 0}>
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="font-serif text-[16px] leading-snug">{q.question}</div>
+                    {q.hint && <div className="text-[13px] leading-relaxed text-muted">{q.hint}</div>}
+                  </div>
+                  <SpeakButton text={q.question} size={40} waves={1} label="播放题目" />
+                </Row>
+              ))}
+            </Section>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Section({ title, count, note, children }: { title: string; count: number; note?: string; children: ReactNode }) {
+  return (
+    <section className="mt-7">
+      <h2 className="m-0 text-[13px] font-semibold">
+        {title} <span className="font-normal text-muted">{count}</span>
+      </h2>
+      {note && <p className="mt-0.5 mb-0 text-xs text-muted">{note}</p>}
+      <div className="mt-2 overflow-hidden rounded-2xl border border-line-soft bg-surface">{children}</div>
+    </section>
+  )
+}
+
+function Row({ first, children }: { first: boolean; children: ReactNode }) {
+  return <div className={`flex items-start gap-2 py-3 pr-2 pl-4 ${first ? '' : 'border-t border-line-soft'}`}>{children}</div>
+}
+
+function AddButton({ done, onClick }: { done: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={done}
+      aria-label={done ? '已加入复习' : '加入复习'}
+      className={`flex h-9 w-9 items-center justify-center rounded-full border-0 bg-transparent ${done ? 'text-accent' : 'text-muted'}`}
+    >
+      {done ? <IconCheck size={18} /> : <IconPlusCircle size={20} />}
+    </button>
+  )
+}
+
+/* ---------------------------- 单句任务 ---------------------------- */
+
+function TaskStep({
+  lesson,
+  idx,
+  goal,
+  onGraded,
+  onRemember,
+  rememberAdded,
+}: {
+  lesson: Lesson
+  idx: number
+  goal: string
+  onGraded: (l: Lesson) => void
+  onRemember: (r: GradeResult['remember']) => void
+  rememberAdded: (text: string) => boolean
+}) {
+  const task = lesson.content.tasks[idx]
+  const history = lesson.submissions.filter((s) => s.idx === idx)
+  const last = history[history.length - 1]
+  const passed = history.some((s) => s.passed)
+  // 前一句提交过才展开下一句，保持“一句一句来”
+  const prevDone = idx === 0 || lesson.submissions.some((s) => s.idx === idx - 1)
+  const [open, setOpen] = useState(prevDone && !passed)
+  const [text, setText] = useState(last?.text ?? (lesson.level === 1 ? task.template : lesson.level === 2 ? task.template : ''))
+  const [busy, setBusy] = useState(false)
+  const [showOld, setShowOld] = useState(false)
+  const areaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (prevDone && !passed) setOpen(true)
+  }, [prevDone, passed])
+
+  useEffect(() => {
+    const el = areaRef.current
+    if (el) {
+      el.style.height = 'auto'
+      el.style.height = `${Math.max(el.scrollHeight, 88)}px`
+    }
+  }, [text, open])
+
+  const submit = async () => {
+    if (!text.trim() || busy) return
+    setBusy(true)
+    try {
+      const r = await api.submit(lesson.id, idx, text.trim())
+      onGraded(r.lesson)
+      const mine = r.lesson.submissions.filter((s) => s.idx === idx)
+      const res = mine[mine.length - 1]?.result
+      if (res?.reference) prefetch([res.reference])
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const status = passed ? '通过' : last ? '需修改' : prevDone ? '待提交' : '未开始'
+
+  return (
+    <div className={`overflow-hidden rounded-2xl border bg-surface ${open ? 'border-line' : 'border-line-soft'}`}>
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 border-0 bg-transparent px-4 py-3.5 text-left text-ink"
+      >
+        <span
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${
+            passed ? 'bg-accent text-on-accent' : 'bg-chip text-muted-2'
+          }`}
+        >
+          {passed ? <IconCheck size={14} /> : idx + 1}
+        </span>
+        <span className="flex-1 text-[15px] font-semibold">{goal}</span>
+        <span className={`text-xs ${passed ? 'text-accent' : last ? 'text-forgot-fg' : 'text-muted'}`}>{status}</span>
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          {task.prompt && <p className="m-0 text-[13px] leading-relaxed text-muted">{task.prompt}</p>}
+          {task.template && (
+            <div className="rounded-xl bg-chip px-3.5 py-2.5 font-serif text-[15px] leading-relaxed">
+              <span className="mr-1.5 font-sans text-xs text-muted">{lesson.level === 1 ? '模板' : '开头'}</span>
+              {task.template}
+            </div>
+          )}
+
+          {/* 之前的提交（折叠） */}
+          {history.length > 1 && (
+            <button
+              onClick={() => setShowOld(!showOld)}
+              className="self-start border-0 bg-transparent p-0 text-xs text-muted underline decoration-line underline-offset-4"
+            >
+              {showOld ? '收起之前的提交' : `之前提交过 ${history.length - 1} 次`}
+            </button>
+          )}
+          {showOld &&
+            history.slice(0, -1).map((s) => <GradeView key={s.id} sub={s} compact onRemember={onRemember} rememberAdded={rememberAdded} />)}
+          {last && <GradeView sub={last} onRemember={onRemember} rememberAdded={rememberAdded} />}
+
+          {/* 输入 */}
+          <div className="flex flex-col gap-2">
+            <label htmlFor={`task-${idx}`} className="text-xs text-muted">
+              {last ? (passed ? '还可以再改进一版' : '按提示改一改，再提交') : '你的句子'}
+              {lesson.level < 3 && <span className="text-faint"> · 写不出的地方可以先写中文，用括号括起来</span>}
+            </label>
+            <textarea
+              id={`task-${idx}`}
+              ref={areaRef}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={3}
+              autoCapitalize="sentences"
+              className="w-full resize-none overflow-hidden rounded-xl border border-line bg-bg px-3.5 py-3 font-serif text-[16px] leading-relaxed text-ink outline-none focus:border-muted"
+            />
+            <button
+              onClick={submit}
+              disabled={busy || !text.trim()}
+              className="flex h-12 items-center justify-center rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
+            >
+              {busy ? <span className="animate-shimmer">教练批改中…</span> : last ? '再次提交' : '提交批改'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ---------------------------- 批改结果 ---------------------------- */
+
+const SCORE_LABELS: [keyof GradeResult['scores'], string][] = [
+  ['content', '内容'],
+  ['grammar', '语法'],
+  ['naturalness', '自然'],
+  ['expression', '句式'],
+]
+
+function GradeView({
+  sub,
+  compact = false,
+  onRemember,
+  rememberAdded,
+}: {
+  sub: Submission
+  compact?: boolean
+  onRemember: (r: GradeResult['remember']) => void
+  rememberAdded: (text: string) => boolean
+}) {
+  const r = sub.result
+  const pass = r.verdict === 'pass'
+  return (
+    <div className={`flex flex-col gap-2.5 rounded-xl border px-3.5 py-3 ${compact ? 'border-line-soft opacity-80' : 'border-line-soft bg-bg'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span
+          className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap ${pass ? 'bg-accent-soft text-accent' : 'bg-forgot-bg text-forgot-fg'}`}
+        >
+          第 {sub.attempt} 次 · {pass ? '通过' : '需修改'}
+        </span>
+        <span className="tabular text-[11px] whitespace-nowrap text-muted">
+          {SCORE_LABELS.map(([k, label]) => `${label} ${r.scores[k]}`).join(' · ')}
+        </span>
+      </div>
+
+      <p className="m-0 font-serif text-[15px] leading-relaxed text-muted-2">{sub.text}</p>
+      {compact ? null : (
+        <>
+          {r.praise && <p className="m-0 text-[13px] leading-relaxed">{r.praise}</p>}
+
+          {r.corrections.length > 0 && (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {r.corrections.map((x, i) => (
+                <li key={i} className="text-[13px] leading-relaxed">
+                  <span className="font-serif text-[15px] text-forgot-fg line-through decoration-forgot-fg/50">{x.original}</span>
+                  <span className="mx-1.5 text-faint">→</span>
+                  <span className="font-serif text-[15px] font-medium text-accent">{x.fixed}</span>
+                  {x.reason && <div className="text-muted">{x.reason}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {r.translations.length > 0 && (
+            <div className="flex flex-col gap-1 text-[13px]">
+              {r.translations.map((t, i) => (
+                <div key={i}>
+                  <span className="text-muted">（{t.zh}）</span>
+                  <span className="mx-1.5 text-faint">→</span>
+                  <span className="font-serif text-[15px]">{t.en}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {r.keyPoint && (
+            <div className="rounded-lg bg-accent-soft px-3 py-2.5 text-[13px] leading-relaxed">
+              <div className="mb-0.5 text-xs font-semibold text-accent">最重要的一个改进点</div>
+              {r.keyPoint}
+            </div>
+          )}
+
+          {r.hint && (
+            <div className="rounded-lg bg-chip px-3 py-2.5 text-[13px] leading-relaxed">
+              <div className="mb-0.5 text-xs font-semibold text-muted-2">提示</div>
+              {r.hint}
+            </div>
+          )}
+
+          {r.reference ? (
+            <div className="flex items-start gap-2 rounded-lg border border-line-soft bg-surface px-3 py-2.5">
+              <div className="flex-1">
+                <div className="mb-0.5 text-xs font-semibold text-muted-2">参考版本</div>
+                <div className="font-serif text-[15px] leading-relaxed">{r.reference}</div>
+              </div>
+              <SpeakButton text={r.reference} size={36} variant="ghost" waves={1} label="播放参考版本" />
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs text-faint">
+              <IconLock size={14} />
+              通过或改过两次后显示参考版本
+            </div>
+          )}
+
+          {r.remember.text && (
+            <div className="flex items-start gap-2 rounded-lg bg-chip px-3 py-2.5">
+              <div className="flex-1 text-[13px] leading-relaxed">
+                <div className="mb-0.5 text-xs font-semibold text-muted-2">值得记</div>
+                <span className="font-serif text-[15px] font-medium">{r.remember.text}</span>
+                <span className="ml-1.5 text-muted">{r.remember.meaning}</span>
+                {r.remember.example && <div className="mt-0.5 font-serif text-[14px] text-muted">{r.remember.example}</div>}
+              </div>
+              <AddButton done={rememberAdded(r.remember.text)} onClick={() => onRemember(r.remember)} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}

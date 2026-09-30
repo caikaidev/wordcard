@@ -5,6 +5,8 @@ import { errMsg } from './ui'
 import { IconRefresh } from './icons'
 
 const KINDS: { id: string; label: string }[] = [
+  { id: 'lesson', label: '生成练习' },
+  { id: 'grade', label: '批改' },
   { id: 'enrich', label: 'AI 补全' },
   { id: 'remix', label: 'AI 重组' },
   { id: 'tts', label: '语音' },

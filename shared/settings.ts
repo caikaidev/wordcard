@@ -27,7 +27,13 @@ export interface Settings {
   textModel: string
   ttsModel: string
   voice: string
+  /** 练习默认档位 1/2/3 */
+  practiceLevel: 1 | 2 | 3
+  /** 教练设定：学习者背景、目标与原则，出题和批改都会带上 */
+  coachProfile: string
 }
+
+export const COACH_PROFILE_MAX = 3000
 
 /** 模型名/音色只允许字母数字和 . - _，防止拼进 URL 时出问题 */
 export const isSafeId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(v)

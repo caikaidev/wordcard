@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { speak } from '../audio'
-import { TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
+import { COACH_PROFILE_MAX, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
+import { LEVELS, type Level } from '../../shared/practice'
 import { Link } from '../router'
 import StorageCard from '../components/StorageCard'
 import CostCard from '../components/CostCard'
@@ -25,15 +26,15 @@ export default function Settings() {
       .catch((e) => toast(errMsg(e), 'error'))
   }, [])
 
-  const save = async (key: keyof S, value: string) => {
+  const save = async (key: keyof S, value: string | number, label = `已切换到 ${value}`) => {
     if (!cur || cur[key] === value) return
     const prev = cur
-    setCur({ ...cur, [key]: value })
+    setCur({ ...cur, [key]: value } as S)
     try {
-      const r = await api.saveSettings({ [key]: value === defaults?.[key] ? null : value })
+      const r = await api.saveSettings({ [key]: key !== 'practiceLevel' && value === defaults?.[key] ? null : value })
       setCur(r.current)
       setResult(null)
-      toast(`已切换到 ${value}`)
+      toast(label)
     } catch (e) {
       setCur(prev)
       toast(errMsg(e), 'error')
@@ -90,7 +91,47 @@ export default function Settings() {
         <div className="mx-4 mt-5 h-64 md:mx-6 animate-shimmer rounded-2xl bg-surface" />
       ) : (
         <>
-          <Section title="文本模型" desc="用于 AI 补全和 AI 重组">
+          <Section title="练习档位" desc="新建练习时的默认档位，每次新建时也可以临时切换">
+            <div className="overflow-hidden rounded-2xl border border-line-soft bg-surface" role="radiogroup">
+              {LEVELS.map((l, i) => {
+                const on = cur.practiceLevel === l.id
+                return (
+                  <button
+                    key={l.id}
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => save('practiceLevel', l.id as Level, `默认档位：${l.name}`)}
+                    className={`flex w-full items-start gap-3 border-0 bg-transparent px-4 py-3 text-left ${
+                      i ? 'border-t border-solid border-line-soft' : ''
+                    }`}
+                  >
+                    <span
+                      className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-[1.5px] ${
+                        on ? 'border-accent bg-accent text-on-accent' : 'border-faint'
+                      }`}
+                    >
+                      {on && <IconCheck size={12} />}
+                    </span>
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-[15px] font-medium text-ink">{l.name}</span>
+                      <span className="text-xs leading-relaxed text-muted">{l.desc}</span>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </Section>
+
+          <Section title="教练设定" desc="你的背景、目标和原则。出题和批改都会参考这段话，写得越具体，练习越贴合你">
+            <CoachProfile
+              value={cur.coachProfile}
+              isDefault={cur.coachProfile === defaults?.coachProfile}
+              onSave={(v) => save('coachProfile', v, '教练设定已保存')}
+              onReset={() => save('coachProfile', '', '已恢复默认设定')}
+            />
+          </Section>
+
+          <Section title="文本模型" desc="用于生成练习、批改、AI 补全和 AI 重组">
             <Options
               options={TEXT_MODELS}
               value={cur.textModel}
@@ -267,5 +308,50 @@ function Custom({
         使用
       </button>
     </form>
+  )
+}
+
+function CoachProfile({
+  value,
+  isDefault,
+  onSave,
+  onReset,
+}: {
+  value: string
+  isDefault: boolean
+  onSave: (v: string) => void
+  onReset: () => void
+}) {
+  const [text, setText] = useState(value)
+  useEffect(() => setText(value), [value])
+  const dirty = text.trim() !== value.trim()
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value.slice(0, COACH_PROFILE_MAX))}
+        rows={9}
+        aria-label="教练设定"
+        className="w-full resize-y rounded-2xl border border-line bg-surface px-4 py-3 text-[14px] leading-relaxed text-ink outline-none focus:border-muted"
+      />
+      <div className="flex items-center gap-2">
+        <span className="tabular flex-1 text-xs text-faint">
+          {text.length} / {COACH_PROFILE_MAX}
+          {isDefault && ' · 当前是默认设定'}
+        </span>
+        {!isDefault && (
+          <button onClick={onReset} className="h-10 rounded-xl border border-line bg-transparent px-3.5 text-[13px] text-muted">
+            恢复默认
+          </button>
+        )}
+        <button
+          onClick={() => onSave(text)}
+          disabled={!dirty || !text.trim()}
+          className="h-10 rounded-xl border-0 bg-invert-bg px-4 text-[13px] text-invert-fg disabled:opacity-40"
+        >
+          保存
+        </button>
+      </div>
+    </div>
   )
 }

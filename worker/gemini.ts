@@ -30,12 +30,12 @@ async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
   return data
 }
 
-interface GeminiPart {
+export interface GeminiPart {
   text?: string
   inlineData?: { mimeType: string; data: string }
 }
 
-export type UsageKind = 'enrich' | 'remix' | 'tts'
+export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade'
 
 /** 记录一次调用的 token 用量（失败不影响主流程） */
 async function recordUsage(env: Env, kind: UsageKind, model: string, input: number, output: number) {
@@ -60,11 +60,18 @@ async function generate(env: Env, model: string, body: unknown, kind: UsageKind)
   return parts
 }
 
-async function generateJson<T>(env: Env, prompt: string, schema: unknown, kind: UsageKind): Promise<T> {
+export async function generateJson<T>(
+  env: Env,
+  prompt: string | GeminiPart[],
+  schema: unknown,
+  kind: UsageKind,
+  temperature = 0.7,
+): Promise<T> {
+  const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: userParts }],
     generationConfig: {
-      temperature: 0.7,
+      temperature,
       responseMimeType: 'application/json',
       responseSchema: schema,
       // 3.x 模型用 thinkingLevel；卡片生成不需要深度思考，用 low 更快更省

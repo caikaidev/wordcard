@@ -114,3 +114,49 @@ export const IconGear = ({ size, ...p }: P) => (
     <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
   </svg>
 )
+export const IconPen = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />
+    <path d="M13.5 6.5l4 4" />
+  </svg>
+)
+export const IconLink = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" />
+    <path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />
+  </svg>
+)
+export const IconText = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M5 6h14M5 11h14M5 16h9" />
+  </svg>
+)
+export const IconImage = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" />
+    <circle cx="9" cy="10" r="1.6" />
+    <path d="M20.5 16l-5-5-8.5 8.5" />
+  </svg>
+)
+export const IconMic = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="9" y="3" width="6" height="11" rx="3" />
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+  </svg>
+)
+export const IconFlame = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.2 1-3.6 2-4.6.3 1.6 1.2 2.6 2.2 2.6C11 8.5 11.2 5.5 12 3z" />
+  </svg>
+)
+export const IconChevronRight = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M9 5l7 7-7 7" />
+  </svg>
+)
+export const IconLock = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
+    <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+  </svg>
+)
