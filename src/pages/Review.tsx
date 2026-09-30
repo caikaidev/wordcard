@@ -6,7 +6,8 @@ import { BLANK, clozeOf, type Cloze, type Grade, type Item, type ReviewMode } fr
 import { Link } from '../router'
 import { refreshStats, useStats } from '../store'
 import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconSparkle } from '../components/icons'
+import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconShare, IconSparkle } from '../components/icons'
+import { ShareSheet } from '../components/ShareSheet'
 
 const today = () => {
   const d = new Date()
@@ -16,6 +17,7 @@ const today = () => {
 export default function Review() {
   const [queue, setQueue] = useState<Item[] | null>(null)
   const [reviewed, setReviewed] = useState(0)
+  const [sharing, setSharing] = useState(false)
   // 本次跳过的卡片：不评分、不改复习时间，只在这一轮里先放一边
   const [skipped, setSkipped] = useState<Item[]>([])
   const [drag, setDrag] = useState(0)
@@ -247,15 +249,26 @@ export default function Review() {
                   : '到期的卡片会自动出现在这里。'
             }
             action={
-              <div className="flex gap-2.5">
-                <Link to="/add" className={`${btnGhost} no-underline`}>
-                  <IconPlusCircle size={18} /> 添加
-                </Link>
-                {stats && stats.active > 0 && (
-                  <Link to="/remix" className={`${btnPrimary} no-underline`}>
-                    <IconSparkle size={18} /> AI 重组
+              <div className="flex flex-col items-center gap-3">
+                <div className="flex gap-2.5">
+                  <Link to="/add" className={`${btnGhost} no-underline`}>
+                    <IconPlusCircle size={18} /> 添加
                   </Link>
+                  {stats && stats.active > 0 && (
+                    <Link to="/remix" className={`${btnPrimary} no-underline`}>
+                      <IconSparkle size={18} /> AI 重组
+                    </Link>
+                  )}
+                </div>
+                {reviewed > 0 && (
+                  <button
+                    onClick={() => setSharing(true)}
+                    className="flex h-10 items-center gap-1.5 rounded-xl border-0 bg-accent-soft px-4 text-[13px] font-medium text-accent"
+                  >
+                    <IconShare size={16} /> 生成分享卡片
+                  </button>
                 )}
+                <ShareSheet open={sharing} onClose={() => setSharing(false)} reviewed={reviewed} />
               </div>
             }
           />

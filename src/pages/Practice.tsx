@@ -3,7 +3,8 @@ import { api } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
 import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
-import { IconChevronRight, IconClose, IconFlame, IconImage, IconLink, IconSparkle, IconText } from '../components/icons'
+import { IconChevronRight, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
+import { ShareSheet } from '../components/ShareSheet'
 
 type Source = 'url' | 'text' | 'image'
 
@@ -32,7 +33,7 @@ export default function Practice() {
         <div className="mt-2 h-32 animate-shimmer rounded-2xl bg-surface" />
       ) : lessons.length === 0 ? (
         <p className="mt-1 text-[13px] leading-relaxed text-muted">
-          还没有练习。发一篇你感兴趣的英文文章（Android / Kotlin / AI 博客都很合适），开始第一次练习吧。
+          还没有练习。发一篇你感兴趣的英文文章（博客、新闻、Reddit 帖子都可以），开始第一次练习吧。
         </p>
       ) : (
         <div className="mt-1.5 overflow-hidden rounded-2xl border border-line-soft bg-surface">
@@ -88,8 +89,10 @@ function Progress({ passed, submitted }: { passed: number; submitted: number }) 
 /* ---------------------------- 打卡统计 ---------------------------- */
 
 function StatsCard({ stats }: { stats: PracticeStats | null }) {
+  const [sharing, setSharing] = useState(false)
   if (!stats) return <div className="mt-4 h-[168px] animate-shimmer rounded-2xl bg-surface md:mt-0" />
   const checked = new Set(stats.days)
+  const checkedToday = checked.has(stats.today)
   return (
     <section className="mt-4 rounded-2xl border border-line-soft bg-surface p-4 md:mt-0" aria-label="本月打卡">
       <div className="grid grid-cols-3 gap-2">
@@ -115,6 +118,16 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
           />
         ))}
       </div>
+
+      {checkedToday && (
+        <button
+          onClick={() => setSharing(true)}
+          className="mt-3.5 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border-0 bg-accent-soft text-[13px] font-medium text-accent"
+        >
+          <IconShare size={16} /> 今天已打卡，生成分享卡片
+        </button>
+      )}
+      <ShareSheet open={sharing} onClose={() => setSharing(false)} />
 
       {stats.missedYesterday && (
         <div className="mt-3 rounded-xl bg-forgot-bg px-3 py-2 text-[13px] text-forgot-fg">

@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "词句卡",
-  "short_name": "词句卡",
-  "description": "用 AI 补全与重组的英语词句复习卡片",
+  "name": "拾句 · Shiju",
+  "short_name": "拾句",
+  "description": "读到的好句子、写出的好句子，都拾起来：AI 英语写作练习与间隔复习",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",

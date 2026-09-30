@@ -160,3 +160,17 @@ export const IconLock = ({ size, ...p }: P) => (
     <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
   </svg>
 )
+export const IconShare = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M12 15V3.5" />
+    <path d="m7.5 8 4.5-4.5L16.5 8" />
+    <path d="M8 11H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-2" />
+  </svg>
+)
+export const IconDownload = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M12 3.5V15" />
+    <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
+    <path d="M4.5 19.5h15" />
+  </svg>
+)

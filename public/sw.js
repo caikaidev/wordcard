@@ -1,11 +1,11 @@
-/* 词句卡 Service Worker
+/* 拾句 Service Worker
  *
  * - 页面（HTML）：网络优先，断网时用缓存的最后一份 → 在线时总是最新，也不会绕过 Cloudflare Access 登录
  * - /assets/*（带 hash 的 JS/CSS/字体）：缓存优先，永不过期 → 秒开
  * - /api/tts 语音：缓存优先，最多保留 MAX_AUDIO 段 → 听过的再点瞬间播放，没网也能播
  * - 其它 /api：不经过缓存，始终走网络
  */
-const VERSION = 'v1'
+const VERSION = 'v2'
 const SHELL = `shell-${VERSION}`
 const ASSETS = `assets-${VERSION}`
 const AUDIO = `audio-${VERSION}`

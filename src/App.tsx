@@ -99,7 +99,7 @@ function DesktopHeader({ path }: { path: Path }) {
   return (
     <header className="z-40 hidden h-[72px] shrink-0 grid-cols-3 items-center border-b border-line bg-bg/95 px-10 backdrop-blur md:grid">
       <Link to="/" className="font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
-        词句卡
+        拾句
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
         {tabs.map((t) => {

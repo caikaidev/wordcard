@@ -40,6 +40,23 @@ for (const scheme of ['light', 'dark']) {
   await p.goto(`${base}/`); await p.waitForLoadState('networkidle'); await p.waitForTimeout(600)
   await p.getByText('candid', { exact: true }).first().click()
   await shot('4-review')
+  // 5 分享卡片：练习页“今天已打卡” → 生成卡片；两种样式各截一张
+  await p.goto(`${base}/practice`); await p.waitForLoadState('networkidle')
+  await p.getByRole('button', { name: /生成分享卡片/ }).click()
+  await p.getByRole('img', { name: '今日打卡卡片' }).waitFor()
+  await p.waitForTimeout(400)
+  await shot('5-share')
+  const img = p.getByRole('img', { name: '今日打卡卡片' })
+  for (const style of ['paper', 'indigo']) {
+    await p.getByRole('radio', { name: style === 'paper' ? '纸白' : '靛蓝' }).click()
+    await p.waitForTimeout(500)
+    const src = await img.getAttribute('src')
+    const b64 = await p.evaluate(async (u) => {
+      const r = await fetch(u); const buf = new Uint8Array(await r.arrayBuffer())
+      let s = ''; for (const x of buf) s += String.fromCharCode(x); return btoa(s)
+    }, src)
+    ;(await import('node:fs')).writeFileSync(`${out}/card-${style}-${scheme}.png`, Buffer.from(b64, 'base64'))
+  }
   await ctx.close()
 }
 await b.close()

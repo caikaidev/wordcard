@@ -117,5 +117,12 @@ for (let d = 1; d <= 9; d++) {
     `INSERT INTO submissions (lesson_id, idx, attempt, text, passed, result, created_at, user_id) VALUES (${[3, d % 3, d, 'demo', 1, JSON.stringify({ ...grade, verdict: 'pass' }), now - d * day, USER].map(q).join(', ')});`,
   )
 }
+// 今天写过、已通过的一句，分享卡片的“今日拾句”会优先用它
+sql.push(
+  `INSERT INTO submissions (lesson_id, idx, attempt, text, passed, result, created_at, user_id) VALUES (${[
+    3, 2, 1, 'In my last job, we held our one-on-ones on a walk, and people opened up in a way they never did in the office.', 1,
+    JSON.stringify({ ...grade, verdict: 'pass', corrections: [] }), now - 1_800_000, USER,
+  ].map(q).join(', ')});`,
+)
 sql.push(`INSERT INTO user_settings (user_id, key, value) VALUES ('${USER}', 'reviewMode', 'recognition');`)
 console.log(sql.join('\n'))

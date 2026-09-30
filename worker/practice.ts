@@ -12,6 +12,8 @@ import {
   type LessonSummary,
   type Level,
   type PracticeStats,
+  type ShareData,
+  type ShareQuote,
   type Submission,
 } from '../shared/practice'
 
@@ -57,7 +59,7 @@ function htmlToText(html: string) {
 async function fetchReddit(url: URL) {
   // Reddit 页面是 JS 渲染的，改用它的 JSON 接口取标题、正文和几条高赞评论
   const res = await fetch(`${url.origin}${url.pathname.replace(/\/$/, '')}.json?limit=5&sort=top`, {
-    headers: { 'user-agent': 'wordcard/1.0 (personal English practice)' },
+    headers: { 'user-agent': 'shiju/0.1 (+https://github.com/caikaidev/wordcard)' },
   })
   if (!res.ok) throw new Error(`reddit ${res.status}`)
   const data = (await res.json()) as {
@@ -165,13 +167,13 @@ ${LEVEL_RULES[level].task}
 - fit：这篇文章对学习者现阶段是否合适（ok / hard / easy）；fitNote：一两句中文说明，太难就直接说并建议换什么材料
 - summary：一句简单英文概括文章主旨
 - words：最多 5 个值得学的生词或短语，只选文章里出现过的；ipa 美式音标（短语可留空）；meaning 中文释义；quote 文章原句（可截取片段）
-- expressions：2–3 个能直接用在工作面试或职场沟通里的英文句式（pattern，用 ... 表示可替换部分），meaning 中文说明，example 贴近学习者工作的英文例句
+- expressions：2–3 个能直接用在学习者目标场景里的英文句式（目标场景以学习者设定为准，没写就按日常与职场沟通；pattern，用 ... 表示可替换部分），meaning 中文说明，example 贴近学习者生活或工作的英文例句
 - tasks：固定 3 个，依次是
   1. 讲清楚：文章讲了什么
   2. 有观点：同意或不同意什么，为什么
   3. 连到自己：和学习者的工作或经历有什么关系
   goal 分别填 "${TASK_GOALS.join('" "')}"；prompt 用中文说明这一句要写什么（可给思路提示）；template 按当前档位给出（挑战档留空字符串）
-- speaking：1–2 个英文口语题，模拟面试官提问方式，可在散步时用 1 分钟回答；hint 中文提示回答思路
+- speaking：1–2 个英文口语题，贴合学习者目标场景的提问方式（比如目标是面试就模拟面试官），可在散步时用 1 分钟回答；hint 中文提示回答思路
 - 回复简洁，适合手机阅读
 
 # 文章
@@ -478,7 +480,9 @@ practice.post('/lessons/:id/submit', async (c) => {
 
 /* ============================== 打卡统计 ============================== */
 
-practice.get('/stats', async (c) => {
+practice.get('/stats', async (c) => c.json(await practiceStats(c.env.DB, c.get('user'))))
+
+async function practiceStats(db: D1Database, user: string): Promise<PracticeStats> {
   const now = Date.now()
   const today = dayOf(now)
   const d = new Date(now + TZ)
@@ -486,11 +490,11 @@ practice.get('/stats', async (c) => {
   const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
 
   // 近 400 天有提交的日期（用来算连续天数）
-  const { results } = await c.env.DB.prepare(
+  const { results } = await db.prepare(
     `SELECT DISTINCT CAST((created_at + ?) / ? AS INTEGER) AS day FROM submissions
      WHERE user_id = ? AND created_at >= ? ORDER BY day DESC`,
   )
-    .bind(TZ, DAY, c.get('user'), now - 400 * DAY)
+    .bind(TZ, DAY, user, now - 400 * DAY)
     .all<{ day: number }>()
   const days = new Set(results.map((r) => r.day))
 
@@ -500,7 +504,7 @@ practice.get('/stats', async (c) => {
   const monthDays = [...days].filter((x) => x >= monthStartDay).map((x) => x - monthStartDay + 1).sort((a, b) => a - b)
 
   const monthStartTs = monthStartDay * DAY - TZ
-  const counts = await c.env.DB.prepare(
+  const counts = await db.prepare(
     `SELECT
        (SELECT COUNT(*) FROM submissions WHERE user_id = ?2 AND created_at >= ?1) AS submissions,
        (SELECT COUNT(*) FROM (
@@ -508,7 +512,7 @@ practice.get('/stats', async (c) => {
           HAVING COUNT(DISTINCT idx) = 3 AND MAX(created_at) >= ?1
        )) AS completed`,
   )
-    .bind(monthStartTs, c.get('user'))
+    .bind(monthStartTs, user)
     .first<{ submissions: number; completed: number }>()
 
   const stats: PracticeStats = {
@@ -522,5 +526,68 @@ practice.get('/stats', async (c) => {
     daysInMonth,
     targets: { days: 20, completed: 20 },
   }
-  return c.json(stats)
+  return stats
+}
+
+/* ============================== 分享卡片 ============================== */
+
+const HAS_CJK = /[\u3400-\u9fff]/
+
+/** 分享卡片用的数据：打卡统计 + 词库规模 + 今天可以展示的句子（自己写的优先） */
+practice.get('/share', async (c) => {
+  const user = c.get('user')
+  const now = Date.now()
+  const todayStart = dayOf(now) * DAY - TZ
+  const [stats, lib, subs, cards] = await Promise.all([
+    practiceStats(c.env.DB, user),
+    c.env.DB.prepare(
+      `SELECT SUM(status = 'active') AS active, SUM(status = 'done') AS done FROM items WHERE user_id = ?`,
+    )
+      .bind(user)
+      .first<{ active: number | null; done: number | null }>(),
+    c.env.DB.prepare(
+      `SELECT text, passed, result FROM submissions WHERE user_id = ? AND created_at >= ? ORDER BY passed DESC, created_at DESC LIMIT 30`,
+    )
+      .bind(user, todayStart)
+      .all<{ text: string; passed: number; result: string }>(),
+    c.env.DB.prepare(`SELECT text, meta FROM items WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 10`)
+      .bind(user, now - 3 * DAY)
+      .all<{ text: string; meta: string }>(),
+  ])
+
+  const quotes: ShareQuote[] = []
+  const seen = new Set<string>()
+  const push = (q: ShareQuote) => {
+    const key = q.text.trim().toLowerCase()
+    if (!q.text.trim() || q.text.length > 220 || HAS_CJK.test(q.text) || seen.has(key)) return
+    seen.add(key)
+    quotes.push({ ...q, text: q.text.trim() })
+  }
+  const remembers: ShareQuote[] = []
+  for (const s of subs.results) {
+    // 自己写的句子：只要不含中文（没写出来的部分）就能展示
+    push({ text: s.text, kind: 'mine' })
+    try {
+      const r = JSON.parse(s.result) as Partial<GradeResult>
+      if (r.remember?.example) remembers.push({ text: r.remember.example, note: `${r.remember.text} · ${r.remember.meaning}`, kind: 'remember' })
+    } catch {
+      /* 旧数据格式不对就跳过 */
+    }
+  }
+  remembers.forEach(push)
+  for (const it of cards.results) {
+    try {
+      const m = JSON.parse(it.meta) as { example?: string; exampleZh?: string }
+      push({ text: m.example || it.text, note: m.example ? m.exampleZh : undefined, kind: 'card' })
+    } catch {
+      push({ text: it.text, kind: 'card' })
+    }
+  }
+
+  const data: ShareData = {
+    stats,
+    library: { active: lib?.active ?? 0, done: lib?.done ?? 0 },
+    quotes: quotes.slice(0, 8),
+  }
+  return c.json(data)
 })

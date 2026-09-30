@@ -1,5 +1,5 @@
 import type { Settings } from '../shared/settings'
-import type { Lesson, LessonSummary, Level, PracticeStats } from '../shared/practice'
+import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, RemixResult } from '../shared/types'
 
 export class ApiError extends Error {
@@ -51,6 +51,7 @@ export const api = {
     req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),
   usage: () => req<UsageReport>('/usage'),
   practiceStats: () => req<PracticeStats>('/practice/stats'),
+  shareData: () => req<ShareData>('/practice/share'),
   lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
   lesson: (id: number) => req<{ lesson: Lesson }>(`/practice/lessons/${id}`),
   createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level: Level }) =>

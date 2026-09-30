@@ -80,8 +80,8 @@ def build(theme: str) -> str:
         for i, b64 in enumerate(frames)
     )
 
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="词句卡练习流程：发一篇文章、写三句话、AI 逐句批改、加入复习">
-  <title>词句卡：读一篇，写三句，记下来</title>
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="拾句练习流程：发一篇文章、写三句话、AI 逐句批改、加入复习">
+  <title>拾句：读一篇，写三句，记下来</title>
   <style>
     text {{ font-family: {FONT}; }}
     .serif {{ font-family: {SERIF}; }}
@@ -100,7 +100,7 @@ def build(theme: str) -> str:
   </defs>
   <rect width="{W}" height="{H}" rx="24" fill="{c['bg']}"/>
 
-  <text x="64" y="104" font-size="15" fill="{c['muted']}">词句卡 · wordcard</text>
+  <text x="64" y="104" font-size="15" fill="{c['muted']}">拾句 · Shiju</text>
   <text x="62" y="152" font-size="36" font-weight="600" fill="{c['ink']}">读一篇，写三句，记下来</text>
   <text x="64" y="190" font-size="15" fill="{c['muted']}">自部署的英语词句卡 + AI 写作教练，跑在你自己的 Cloudflare 上</text>
   {''.join(steps_svg)}
@@ -122,6 +122,10 @@ def main() -> None:
         for theme in THEMES:
             im = Image.open(RAW / f"{name}-{theme}.png").convert("RGB")
             im.save(OUT / f"{name}-{theme}.webp", "WEBP", quality=82, method=6)
+    # 分享卡片：两种样式，宽 540
+    for style in ["paper", "indigo"]:
+        im = Image.open(RAW / f"card-{style}-light.png").convert("RGB").resize((540, 720), Image.LANCZOS)
+        im.save(OUT / f"card-{style}.webp", "WEBP", quality=85, method=6)
     print("screenshots:", sum((OUT / f"{n}-{t}.webp").stat().st_size for n in FRAMES for t in THEMES) // 1024, "KB")
 
 

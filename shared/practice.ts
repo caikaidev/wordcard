@@ -120,3 +120,18 @@ export const DEFAULT_COACH_PROFILE = `我是中文母语的英语学习者，目
 - 时间：每次练习 15–30 分钟
 - 原则：目标是"能说出来"；先读后查；记句子不记单词
 - 反馈：讲解用中文，示例和改写用英文；严格但鼓励；简洁，适合手机阅读`
+
+/** 分享卡片上的一句话 */
+export interface ShareQuote {
+  text: string
+  /** 中文释义或补充说明 */
+  note?: string
+  /** mine 自己写的 / remember 批改里值得记的 / card 新收的卡片 */
+  kind: 'mine' | 'remember' | 'card'
+}
+
+export interface ShareData {
+  stats: PracticeStats
+  library: { active: number; done: number }
+  quotes: ShareQuote[]
+}
