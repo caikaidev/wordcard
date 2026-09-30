@@ -42,6 +42,9 @@
     "DAILY_TTS_LIMIT": "90",
     "PER_MINUTE_LIMIT": "40",
     "TTS_PER_MINUTE_LIMIT": "8",
+    // 多用户：普通成员每人每天的额度（管理员只受上面的全站上限约束）；管理员邮箱用 GitHub Secret ADMIN_EMAILS 配置
+    "USER_DAILY_TEXT_LIMIT": "60",
+    "USER_DAILY_TTS_LIMIT": "15",
     "AI_DISABLED": "false",
     // Cloudflare Access（Worker → Access 页面的“应用程序值”），不是密码，可以公开
     "ACCESS_TEAM_DOMAIN": "caikai.cloudflareaccess.com",

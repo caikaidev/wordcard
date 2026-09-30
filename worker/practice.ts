@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Env } from './env'
+import type { AppEnv, Env } from './env'
 import { generateJson, GeminiError, type GeminiPart } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import {
@@ -15,7 +15,7 @@ import {
   type Submission,
 } from '../shared/practice'
 
-export const practice = new Hono<{ Bindings: Env }>()
+export const practice = new Hono<AppEnv>()
 
 const DAY = 86_400_000
 const TZ = 8 * 3600_000 // 按北京时间算“哪一天”
@@ -213,7 +213,8 @@ function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
 
 practice.post('/lessons', async (c) => {
   const body = await c.req.json<{ url?: unknown; text?: unknown; images?: unknown; level?: unknown }>()
-  const settings = await loadSettings(c.env)
+  const user = c.get('user')
+  const settings = await loadSettings(c.env, user)
   const level: Level = isLevel(Number(body.level)) ? (Number(body.level) as Level) : settings.practiceLevel
 
   const images = Array.isArray(body.images)
@@ -246,14 +247,14 @@ practice.post('/lessons', async (c) => {
     { text: prompt },
     ...images.map((i) => ({ inlineData: { mimeType: i.mime as string, data: i.data as string } })),
   ]
-  const raw = await generateJson<Partial<LessonContent>>(await aiEnv(c.env), parts, lessonSchema, 'lesson')
+  const raw = await generateJson<Partial<LessonContent>>(await aiEnv(c.env, user, c.get('admin')), parts, lessonSchema, 'lesson')
   const content = cleanLesson(raw, level)
   if (fetchedTitle && (!content.title || content.title === 'Untitled')) content.title = fetchedTitle
 
   const row = await c.env.DB.prepare(
-    'INSERT INTO lessons (created_at, level, source_url, title, content) VALUES (?, ?, ?, ?, ?) RETURNING id',
+    'INSERT INTO lessons (created_at, level, source_url, title, content, user_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
   )
-    .bind(Date.now(), level, sourceUrl, content.title, JSON.stringify(content))
+    .bind(Date.now(), level, sourceUrl, content.title, JSON.stringify(content), user)
     .first<{ id: number }>()
   return c.json({ id: row!.id }, 201)
 })
@@ -266,8 +267,11 @@ practice.get('/lessons', async (c) => {
             COUNT(DISTINCT CASE WHEN s.passed = 1 THEN s.idx END) AS passed,
             COUNT(DISTINCT s.idx) AS submitted
      FROM lessons l LEFT JOIN submissions s ON s.lesson_id = l.id
+     WHERE l.user_id = ?
      GROUP BY l.id ORDER BY l.created_at DESC LIMIT 100`,
-  ).all<LessonSummary>()
+  )
+    .bind(c.get('user'))
+    .all<LessonSummary>()
   return c.json({ lessons: results })
 })
 
@@ -287,9 +291,9 @@ function visibleSubmissions(rows: (Omit<Submission, 'passed' | 'result'> & { pas
   })
 }
 
-async function loadLesson(env: Env, id: number): Promise<Lesson | null> {
-  const l = await env.DB.prepare('SELECT * FROM lessons WHERE id = ?')
-    .bind(id)
+async function loadLesson(env: Env, id: number, user: string): Promise<Lesson | null> {
+  const l = await env.DB.prepare('SELECT * FROM lessons WHERE id = ? AND user_id = ?')
+    .bind(id, user)
     .first<{ id: number; created_at: number; level: number; source_url: string | null; title: string; content: string }>()
   if (!l) return null
   const { results } = await env.DB.prepare(
@@ -309,16 +313,17 @@ async function loadLesson(env: Env, id: number): Promise<Lesson | null> {
 }
 
 practice.get('/lessons/:id', async (c) => {
-  const lesson = await loadLesson(c.env, Number(c.req.param('id')))
+  const lesson = await loadLesson(c.env, Number(c.req.param('id')), c.get('user'))
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
   return c.json({ lesson })
 })
 
 practice.delete('/lessons/:id', async (c) => {
   const id = Number(c.req.param('id'))
+  const user = c.get('user')
   await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM submissions WHERE lesson_id = ?').bind(id),
-    c.env.DB.prepare('DELETE FROM lessons WHERE id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user),
+    c.env.DB.prepare('DELETE FROM lessons WHERE id = ? AND user_id = ?').bind(id, user),
   ])
   return c.body(null, 204)
 })
@@ -440,7 +445,8 @@ practice.post('/lessons/:id/submit', async (c) => {
   if (![0, 1, 2].includes(idx)) return c.json({ error: 'idx 只能是 0、1、2' }, 400)
   if (!text) return c.json({ error: '先写点什么再提交' }, 400)
 
-  const lesson = await loadLesson(c.env, id)
+  const user = c.get('user')
+  const lesson = await loadLesson(c.env, id, user)
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
   // 批改时需要看到完整的历史（包括参考版本），所以从库里重新读原始结果
   const { results } = await c.env.DB.prepare(
@@ -450,9 +456,9 @@ practice.post('/lessons/:id/submit', async (c) => {
     .all<Omit<Submission, 'passed' | 'result'> & { passed: number; result: string }>()
   const history: Submission[] = results.map((r) => ({ ...r, passed: !!r.passed, result: JSON.parse(r.result) }))
 
-  const settings = await loadSettings(c.env)
+  const settings = await loadSettings(c.env, user)
   const raw = await generateJson<Partial<GradeResult>>(
-    await aiEnv(c.env),
+    await aiEnv(c.env, user, c.get('admin')),
     gradePrompt(settings.coachProfile, lesson, idx, text, history),
     gradeSchema,
     'grade',
@@ -461,12 +467,12 @@ practice.post('/lessons/:id/submit', async (c) => {
   const result = cleanGrade(raw)
   const attempt = history.length + 1
   await c.env.DB.prepare(
-    'INSERT INTO submissions (lesson_id, idx, attempt, text, passed, result, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO submissions (lesson_id, idx, attempt, text, passed, result, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
   )
-    .bind(id, idx, attempt, text, result.verdict === 'pass' ? 1 : 0, JSON.stringify(result), Date.now())
+    .bind(id, idx, attempt, text, result.verdict === 'pass' ? 1 : 0, JSON.stringify(result), Date.now(), user)
     .run()
 
-  const fresh = await loadLesson(c.env, id)
+  const fresh = await loadLesson(c.env, id, user)
   return c.json({ lesson: fresh })
 })
 
@@ -481,9 +487,10 @@ practice.get('/stats', async (c) => {
 
   // 近 400 天有提交的日期（用来算连续天数）
   const { results } = await c.env.DB.prepare(
-    `SELECT DISTINCT CAST((created_at + ?) / ? AS INTEGER) AS day FROM submissions WHERE created_at >= ? ORDER BY day DESC`,
+    `SELECT DISTINCT CAST((created_at + ?) / ? AS INTEGER) AS day FROM submissions
+     WHERE user_id = ? AND created_at >= ? ORDER BY day DESC`,
   )
-    .bind(TZ, DAY, now - 400 * DAY)
+    .bind(TZ, DAY, c.get('user'), now - 400 * DAY)
     .all<{ day: number }>()
   const days = new Set(results.map((r) => r.day))
 
@@ -495,13 +502,13 @@ practice.get('/stats', async (c) => {
   const monthStartTs = monthStartDay * DAY - TZ
   const counts = await c.env.DB.prepare(
     `SELECT
-       (SELECT COUNT(*) FROM submissions WHERE created_at >= ?1) AS submissions,
+       (SELECT COUNT(*) FROM submissions WHERE user_id = ?2 AND created_at >= ?1) AS submissions,
        (SELECT COUNT(*) FROM (
-          SELECT lesson_id FROM submissions GROUP BY lesson_id
+          SELECT lesson_id FROM submissions WHERE user_id = ?2 GROUP BY lesson_id
           HAVING COUNT(DISTINCT idx) = 3 AND MAX(created_at) >= ?1
        )) AS completed`,
   )
-    .bind(monthStartTs)
+    .bind(monthStartTs, c.get('user'))
     .first<{ submissions: number; completed: number }>()
 
   const stats: PracticeStats = {

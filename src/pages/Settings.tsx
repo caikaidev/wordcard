@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { api } from '../api'
+import { api, type Me } from '../api'
 import { speak } from '../audio'
 import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
@@ -12,6 +12,7 @@ import { IconBack, IconCheck, IconPlay, IconSparkle } from '../components/icons'
 export default function Settings() {
   const [cur, setCur] = useState<S | null>(null)
   const [defaults, setDefaults] = useState<S | null>(null)
+  const [me, setMe] = useState<Me | null>(null)
   const [testing, setTesting] = useState<'text' | 'tts' | null>(null)
   const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
@@ -22,6 +23,7 @@ export default function Settings() {
       .then((r) => {
         setCur(r.current)
         setDefaults(r.defaults)
+        setMe(r.me)
       })
       .catch((e) => toast(errMsg(e), 'error'))
   }, [])
@@ -83,7 +85,18 @@ export default function Settings() {
         </Link>
       </div>
       <div className="px-4 pt-1 md:px-6">
-        <div className="text-[13px] tracking-wide text-muted">复习 · 练习 · 模型 · 费用</div>
+        <div className="text-[13px] tracking-wide text-muted">
+          {me ? (
+            <>
+              {me.email}
+              <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] ${me.admin ? 'bg-accent-soft text-accent' : 'bg-chip text-muted-2'}`}>
+                {me.admin ? '管理员' : '成员'}
+              </span>
+            </>
+          ) : (
+            '复习 · 练习 · 模型 · 费用'
+          )}
+        </div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">设置</h1>
       </div>
 
@@ -152,6 +165,8 @@ export default function Settings() {
             />
           </Section>
 
+          {me?.admin ? (
+            <>
           <Section title="文本模型" desc="用于生成练习、批改、AI 补全和 AI 重组">
             <Options
               options={TEXT_MODELS}
@@ -190,6 +205,16 @@ export default function Settings() {
               })}
             </div>
           </Section>
+            </>
+          ) : (
+            <Section title="模型与音色" desc="全站共用，由管理员统一设置">
+              <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
+                文本 <span className="font-mono text-ink">{cur.textModel}</span>
+                <br />
+                语音 <span className="font-mono text-ink">{cur.ttsModel}</span> · {cur.voice}
+              </div>
+            </Section>
+          )}
 
           <Section title="测试" desc="用当前设置跑一次，看看速度和效果。同一段语音第二次会命中缓存。">
             <div className="grid grid-cols-2 gap-2.5">
@@ -242,8 +267,8 @@ export default function Settings() {
       <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">费用</div>
       <CostCard refreshKey={usageKey} />
 
-      <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">存储</div>
-      <StorageCard />
+      {me?.admin && <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">存储</div>}
+      {me?.admin && <StorageCard />}
     </div>
   )
 }

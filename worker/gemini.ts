@@ -30,10 +30,13 @@ export function aiLimits(env: Env) {
     tts: n(env.DAILY_TTS_LIMIT, 600),
     perMinute: n(env.PER_MINUTE_LIMIT, 40),
     ttsPerMinute: n(env.TTS_PER_MINUTE_LIMIT, 8),
+    // 普通用户的个人每日上限（管理员只受全站上限约束）
+    userText: n(env.USER_DAILY_TEXT_LIMIT, 60),
+    userTts: n(env.USER_DAILY_TTS_LIMIT, 15),
   }
 }
 
-/** 今天（北京时间）和最近一分钟的调用次数；失败的调用也计入 */
+/** 今天（北京时间）和最近一分钟的调用次数（全站 + 当前用户）；失败的调用也计入 */
 export async function aiCallCounts(env: Env) {
   const now = Date.now()
   const dayStart = Math.floor((now + TZ) / DAY) * DAY - TZ
@@ -42,12 +45,21 @@ export async function aiCallCounts(env: Env) {
        COALESCE(SUM(CASE WHEN ts >= ?1 AND kind != 'tts' THEN 1 ELSE 0 END), 0) AS text,
        COALESCE(SUM(CASE WHEN ts >= ?1 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS tts,
        COALESCE(SUM(CASE WHEN ts >= ?2 THEN 1 ELSE 0 END), 0) AS minute,
-       COALESCE(SUM(CASE WHEN ts >= ?2 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS minuteTts
+       COALESCE(SUM(CASE WHEN ts >= ?2 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS minuteTts,
+       COALESCE(SUM(CASE WHEN ts >= ?1 AND kind != 'tts' AND user_id = ?3 THEN 1 ELSE 0 END), 0) AS userText,
+       COALESCE(SUM(CASE WHEN ts >= ?1 AND kind = 'tts' AND user_id = ?3 THEN 1 ELSE 0 END), 0) AS userTts
      FROM usage WHERE ts >= MIN(?1, ?2)`,
   )
-    .bind(dayStart, now - 60_000)
-    .first<{ text: number; tts: number; minute: number; minuteTts: number }>()
-  return { text: r?.text ?? 0, tts: r?.tts ?? 0, minute: r?.minute ?? 0, minuteTts: r?.minuteTts ?? 0 }
+    .bind(dayStart, now - 60_000, env.USER_ID ?? '')
+    .first<{ text: number; tts: number; minute: number; minuteTts: number; userText: number; userTts: number }>()
+  return {
+    text: r?.text ?? 0,
+    tts: r?.tts ?? 0,
+    minute: r?.minute ?? 0,
+    minuteTts: r?.minuteTts ?? 0,
+    userText: r?.userText ?? 0,
+    userTts: r?.userTts ?? 0,
+  }
 }
 
 async function guard(env: Env, kind: UsageKind) {
@@ -56,6 +68,15 @@ async function guard(env: Env, kind: UsageKind) {
   const c = await aiCallCounts(env)
   if (c.minute >= limits.perMinute) throw new GeminiError('调用太频繁了，歇一分钟再试', 429)
   if (kind === 'tts' && c.minuteTts >= limits.ttsPerMinute) throw new GeminiError('语音生成太频繁了，歇一分钟再试', 429)
+  // 普通用户先检查个人额度，保护全站额度不被一个人用完
+  if (!env.IS_ADMIN) {
+    if (kind === 'tts' && c.userTts >= limits.userTts) {
+      throw new GeminiError(`你今天的新语音额度（${limits.userTts} 段）用完了，已缓存的语音照常能播`, 429)
+    }
+    if (kind !== 'tts' && c.userText >= limits.userText) {
+      throw new GeminiError(`你今天的 AI 调用额度（${limits.userText} 次）用完了，明天再来`, 429)
+    }
+  }
   if (kind === 'tts' ? c.tts >= limits.tts : c.text >= limits.text) {
     throw new GeminiError(
       kind === 'tts'
@@ -123,8 +144,8 @@ export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade'
 /** 记录一次调用的 token 用量（失败不影响主流程） */
 async function recordUsage(env: Env, kind: UsageKind, model: string, input: number, output: number) {
   try {
-    await env.DB.prepare('INSERT INTO usage (ts, kind, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)')
-      .bind(Date.now(), kind, model, Math.round(input) || 0, Math.round(output) || 0)
+    await env.DB.prepare('INSERT INTO usage (ts, kind, model, input_tokens, output_tokens, user_id) VALUES (?, ?, ?, ?, ?, ?)')
+      .bind(Date.now(), kind, model, Math.round(input) || 0, Math.round(output) || 0, env.USER_ID ?? '')
       .run()
   } catch (e) {
     console.error('recordUsage failed', e)

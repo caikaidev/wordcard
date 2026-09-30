@@ -1,5 +1,5 @@
-import { Hono } from 'hono'
-import type { Env } from './env'
+import { Hono, type Context } from 'hono'
+import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
 import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
 import { lookup, SOURCE_LABEL } from './dictionary'
@@ -44,7 +44,12 @@ const cleanText = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+
 const isType = (v: unknown): v is ItemType => v === 'word' || v === 'sentence'
 const isStatus = (v: unknown): v is ItemStatus => v === 'active' || v === 'done'
 
-const app = new Hono<{ Bindings: Env }>().basePath('/api')
+const app = new Hono<AppEnv>().basePath('/api')
+
+type Ctx = Context<AppEnv>
+/** 当前登录用户（邮箱）与是否管理员 */
+const who = (c: Ctx) => ({ user: c.get('user'), admin: c.get('admin') })
+const ai = (c: Ctx) => aiEnv(c.env, c.get('user'), c.get('admin'))
 
 app.use('*', requireAccess)
 
@@ -63,9 +68,9 @@ app.get('/stats', async (c) => {
        SUM(status = 'active') AS active,
        SUM(status = 'done') AS done,
        SUM(status = 'active' AND due_at <= ?) AS due
-     FROM items`,
+     FROM items WHERE user_id = ?`,
   )
-    .bind(now)
+    .bind(now, who(c).user)
     .first<{ active: number | null; done: number | null; due: number | null }>()
   return c.json({ active: r?.active ?? 0, done: r?.done ?? 0, due: r?.due ?? 0 })
 })
@@ -75,8 +80,8 @@ app.get('/stats', async (c) => {
 app.get('/items', async (c) => {
   const status = c.req.query('status')
   const q = c.req.query('q')?.trim()
-  const where: string[] = []
-  const args: unknown[] = []
+  const where: string[] = ['user_id = ?']
+  const args: unknown[] = [who(c).user]
   if (isStatus(status)) {
     where.push('status = ?')
     args.push(status)
@@ -85,7 +90,7 @@ app.get('/items', async (c) => {
     where.push('(text LIKE ? OR meta LIKE ?)')
     args.push(`%${q}%`, `%${q}%`)
   }
-  const sql = `SELECT * FROM items ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+  const sql = `SELECT * FROM items WHERE ${where.join(' AND ')}
                ORDER BY ${status === 'done' ? 'updated_at DESC' : 'due_at ASC'} LIMIT 500`
   const { results } = await c.env.DB.prepare(sql)
     .bind(...args)
@@ -101,10 +106,10 @@ app.post('/items', async (c) => {
   const now = Date.now()
   try {
     const row = await c.env.DB.prepare(
-      `INSERT INTO items (type, text, meta, due_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO items (type, text, meta, due_at, created_at, updated_at, user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
-      .bind(type, text, JSON.stringify(safeMeta(body.meta)), now, now, now)
+      .bind(type, text, JSON.stringify(safeMeta(body.meta)), now, now, now, who(c).user)
       .first<Row>()
     return c.json({ item: toItem(row!) }, 201)
   } catch (e) {
@@ -139,8 +144,8 @@ app.patch('/items/:id', async (c) => {
   }
   if (!sets.length) return c.json({ error: '没有要修改的内容' }, 400)
   sets.push('updated_at = ?')
-  args.push(Date.now(), id)
-  const row = await c.env.DB.prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ? RETURNING *`)
+  args.push(Date.now(), id, who(c).user)
+  const row = await c.env.DB.prepare(`UPDATE items SET ${sets.join(', ')} WHERE id = ? AND user_id = ? RETURNING *`)
     .bind(...args)
     .first<Row>()
   if (!row) return c.json({ error: '找不到这一条' }, 404)
@@ -150,24 +155,24 @@ app.patch('/items/:id', async (c) => {
 /** 老卡片补查英英释义 */
 app.post('/items/:id/define', async (c) => {
   const id = Number(c.req.param('id'))
-  const row = await c.env.DB.prepare('SELECT * FROM items WHERE id = ?').bind(id).first<Row>()
+  const row = await c.env.DB.prepare('SELECT * FROM items WHERE id = ? AND user_id = ?').bind(id, who(c).user).first<Row>()
   if (!row) return c.json({ error: '找不到这一条' }, 404)
   const item = toItem(row)
   if (item.type !== 'word') return c.json({ error: '句子没有词典释义' }, 400)
-  const env = await aiEnv(c.env)
+  const env = await ai(c)
   const dict = await lookup(env, item.text)
   if (!dict) return c.json({ error: '词典里没查到这个词' }, 404)
   const pick = await pickSense(env, item.text, dict, item.meta.meaning, item.meta.example)
   if (!pick) return c.json({ error: '词典义项和这张卡的意思对不上，先不填了' }, 404)
   const meta = { ...item.meta, definitionEn: pick.def, definitionSrc: SOURCE_LABEL[dict.source] }
-  const updated = await c.env.DB.prepare('UPDATE items SET meta = ?, updated_at = ? WHERE id = ? RETURNING *')
-    .bind(JSON.stringify(safeMeta(meta)), Date.now(), id)
+  const updated = await c.env.DB.prepare('UPDATE items SET meta = ?, updated_at = ? WHERE id = ? AND user_id = ? RETURNING *')
+    .bind(JSON.stringify(safeMeta(meta)), Date.now(), id, who(c).user)
     .first<Row>()
   return c.json({ item: toItem(updated!) })
 })
 
 app.delete('/items/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM items WHERE id = ?').bind(Number(c.req.param('id'))).run()
+  await c.env.DB.prepare('DELETE FROM items WHERE id = ? AND user_id = ?').bind(Number(c.req.param('id')), who(c).user).run()
   return c.body(null, 204)
 })
 
@@ -175,9 +180,9 @@ app.delete('/items/:id', async (c) => {
 
 app.get('/review', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT * FROM items WHERE status = 'active' AND due_at <= ? ORDER BY due_at ASC LIMIT 200`,
+    `SELECT * FROM items WHERE user_id = ? AND status = 'active' AND due_at <= ? ORDER BY due_at ASC LIMIT 200`,
   )
-    .bind(Date.now())
+    .bind(who(c).user, Date.now())
     .all<Row>()
   return c.json({ items: results.map(toItem) })
 })
@@ -186,7 +191,9 @@ app.post('/review/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const { grade } = await c.req.json<{ grade?: unknown }>()
   if (grade !== 0 && grade !== 1 && grade !== 2) return c.json({ error: 'grade 必须是 0/1/2' }, 400)
-  const cur = await c.env.DB.prepare('SELECT interval FROM items WHERE id = ?').bind(id).first<{ interval: number }>()
+  const cur = await c.env.DB.prepare('SELECT interval FROM items WHERE id = ? AND user_id = ?')
+    .bind(id, who(c).user)
+    .first<{ interval: number }>()
   if (!cur) return c.json({ error: '找不到这一条' }, 404)
   const now = Date.now()
   const next = schedule(cur.interval, grade as Grade, now)
@@ -205,7 +212,7 @@ app.post('/enrich', async (c) => {
   const body = await c.req.json<{ text?: unknown; type?: unknown }>()
   const text = cleanText(body.text)
   if (!text) return c.json({ error: '内容不能为空' }, 400)
-  const env = await aiEnv(c.env)
+  const env = await ai(c)
   const hint = isType(body.type) ? body.type : undefined
   const dict = hint === 'sentence' ? null : await lookup(env, text)
   const r = await enrich(env, text, hint, dict)
@@ -224,32 +231,35 @@ app.post('/remix', async (c) => {
   const notIn = exclude.length ? `AND id NOT IN (${exclude.map(() => '?').join(',')})` : ''
 
   // 优先用今天到期的词，不够 3 个再从其它进行中的词里随机补
+  const user = who(c).user
   const due = await c.env.DB.prepare(
-    `SELECT * FROM items WHERE status = 'active' AND due_at <= ? ${notIn} ORDER BY RANDOM() LIMIT 5`,
+    `SELECT * FROM items WHERE user_id = ? AND status = 'active' AND due_at <= ? ${notIn} ORDER BY RANDOM() LIMIT 5`,
   )
-    .bind(Date.now(), ...exclude)
+    .bind(user, Date.now(), ...exclude)
     .all<Row>()
   let rows = due.results
   if (rows.length < 3) {
     const taken = [...exclude, ...rows.map((r) => r.id)]
     const notIn2 = taken.length ? `AND id NOT IN (${taken.map(() => '?').join(',')})` : ''
     const more = await c.env.DB.prepare(
-      `SELECT * FROM items WHERE status = 'active' ${notIn2} ORDER BY RANDOM() LIMIT ?`,
+      `SELECT * FROM items WHERE user_id = ? AND status = 'active' ${notIn2} ORDER BY RANDOM() LIMIT ?`,
     )
-      .bind(...taken, 5 - rows.length)
+      .bind(user, ...taken, 5 - rows.length)
       .all<Row>()
     rows = rows.concat(more.results)
   }
   if (!rows.length && exclude.length) {
     // 换一组时没有别的词了，就不再排除，从全部进行中的词里重新抽
-    const all = await c.env.DB.prepare(`SELECT * FROM items WHERE status = 'active' ORDER BY RANDOM() LIMIT 5`).all<Row>()
+    const all = await c.env.DB.prepare(`SELECT * FROM items WHERE user_id = ? AND status = 'active' ORDER BY RANDOM() LIMIT 5`)
+      .bind(user)
+      .all<Row>()
     rows = all.results
   }
   if (!rows.length) return c.json({ error: '词库里还没有进行中的词，先去添加几个吧' }, 400)
 
   const items = rows.map(toItem)
   const sentences = await remix(
-    await aiEnv(c.env),
+    await ai(c),
     items.map((i) => ({ text: i.text, meaning: i.meta.meaning })),
   )
   return c.json({ words: items.map((i) => ({ id: i.id, text: i.text })), sentences })
@@ -260,7 +270,7 @@ app.get('/tts', async (c) => {
   if (!text) return c.json({ error: 'text 不能为空' }, 400)
   const slow = c.req.query('slow') === '1'
 
-  const env = await aiEnv(c.env)
+  const env = await ai(c)
   const key = await ttsKey(env, text, slow)
 
   const headers = {
@@ -280,13 +290,15 @@ app.get('/tts', async (c) => {
 /* ------------------------------ 设置 ------------------------------ */
 
 app.get('/settings', async (c) => {
-  return c.json({ current: await loadSettings(c.env), defaults: defaultSettings(c.env) })
+  const { user, admin } = who(c)
+  return c.json({ current: await loadSettings(c.env, user), defaults: defaultSettings(c.env), me: { email: user, admin } })
 })
 
 app.put('/settings', async (c) => {
-  const err = await saveSettings(c.env, await c.req.json<Record<string, unknown>>())
-  if (err) return c.json({ error: err }, 400)
-  return c.json({ current: await loadSettings(c.env) })
+  const { user, admin } = who(c)
+  const err = await saveSettings(c.env, user, admin, await c.req.json<Record<string, unknown>>())
+  if (err) return c.json({ error: err }, err.includes('管理员') ? 403 : 400)
+  return c.json({ current: await loadSettings(c.env, user), me: { email: user, admin } })
 })
 
 app.route('/practice', practice)
@@ -304,14 +316,29 @@ app.get('/usage', async (c) => {
   const now = Date.now()
   const thisMonth = monthStart(now)
   const lastMonth = monthStart(now, 1)
-  // 按 天 × 模型 × 类型 汇总（单价可能随日期变化），再在这里算钱
-  const { results } = await c.env.DB.prepare(
-    `SELECT kind, model, CAST((ts + ?) / 86400000 AS INTEGER) AS day, COUNT(*) AS calls,
+  const { user, admin } = who(c)
+  // 按 用户 × 天 × 模型 × 类型 汇总（单价可能随日期变化），再在这里算钱
+  const { results: all } = await c.env.DB.prepare(
+    `SELECT user_id, kind, model, CAST((ts + ?) / 86400000 AS INTEGER) AS day, COUNT(*) AS calls,
             SUM(input_tokens) AS input, SUM(output_tokens) AS output
-     FROM usage WHERE ts >= ? GROUP BY kind, model, day`,
+     FROM usage WHERE ts >= ? ${admin ? '' : 'AND user_id = ?'} GROUP BY user_id, kind, model, day`,
   )
-    .bind(TZ_OFFSET, lastMonth)
-    .all<{ kind: string; model: string; day: number; calls: number; input: number; output: number }>()
+    .bind(TZ_OFFSET, lastMonth, ...(admin ? [] : [user]))
+    .all<{ user_id: string; kind: string; model: string; day: number; calls: number; input: number; output: number }>()
+  const results = all.filter((r) => r.user_id === user)
+
+  // 管理员额外看到：本月每个人花了多少
+  const byUser = new Map<string, { calls: number; cost: number }>()
+  if (admin) {
+    for (const r of all) {
+      const ts = r.day * 86400000 - TZ_OFFSET + 12 * 3600_000
+      if (ts < thisMonth) continue
+      const u = byUser.get(r.user_id) ?? { calls: 0, cost: 0 }
+      u.calls += r.calls
+      u.cost += costOf(r.model, ts, r.input, r.output) ?? 0
+      byUser.set(r.user_id, u)
+    }
+  }
 
   type Bucket = { calls: number; input: number; output: number; cost: number; unpriced: number }
   const empty = (): Bucket => ({ calls: 0, input: 0, output: 0, cost: 0, unpriced: 0 })
@@ -335,13 +362,19 @@ app.get('/usage', async (c) => {
   const nextMonth = monthStart(now, -1)
   const elapsed = Math.max((now - thisMonth) / 86400000, 1)
   const days = (nextMonth - thisMonth) / 86400000
-  const counts = await aiCallCounts(c.env)
+  const counts = await aiCallCounts(await ai(c))
   const limits = aiLimits(c.env)
   return c.json({
     month: cur,
     lastMonth: prev,
     projected: (cur.total.cost / elapsed) * days,
-    today: { text: counts.text, tts: counts.tts, textLimit: limits.text, ttsLimit: limits.tts, disabled: limits.disabled },
+    // 管理员看全站额度；普通用户看自己的个人额度
+    today: admin
+      ? { text: counts.text, tts: counts.tts, textLimit: limits.text, ttsLimit: limits.tts, disabled: limits.disabled }
+      : { text: counts.userText, tts: counts.userTts, textLimit: limits.userText, ttsLimit: limits.userTts, disabled: limits.disabled },
+    users: admin
+      ? [...byUser.entries()].map(([email, v]) => ({ email: email || '（未归属）', ...v })).sort((a, b) => b.cost - a.cost)
+      : undefined,
   })
 })
 
@@ -368,7 +401,7 @@ async function listAudio(bucket: R2Bucket) {
   return objects
 }
 
-/** 词库里（进行中 + DONE）所有词条正在用的音频 key */
+/** 词库里（所有人的进行中 + DONE）所有词条正在用的音频 key —— 缓存是共享的 */
 async function usedKeys(env: Env) {
   const { results } = await env.DB.prepare('SELECT text, meta FROM items').all<{ text: string; meta: string }>()
   const keys = new Set<string>()
@@ -382,8 +415,12 @@ async function usedKeys(env: Env) {
   return keys
 }
 
+/** 音频缓存是全站共用的，统计和清理只有管理员能做 */
+app.use('/storage/*', async (c, next) => (c.get('admin') ? next() : c.json({ error: '只有管理员可以管理音频缓存' }, 403)))
+app.use('/storage', async (c, next) => (c.get('admin') ? next() : c.json({ error: '只有管理员可以管理音频缓存' }, 403)))
+
 app.get('/storage', async (c) => {
-  const [objects, used] = await Promise.all([listAudio(c.env.AUDIO), usedKeys(await aiEnv(c.env))])
+  const [objects, used] = await Promise.all([listAudio(c.env.AUDIO), usedKeys(await ai(c))])
   const unused = objects.filter((o) => !used.has(o.key))
   const sum = (l: { size: number }[]) => l.reduce((n, o) => n + o.size, 0)
   return c.json({
@@ -399,7 +436,7 @@ app.post('/storage/cleanup', async (c) => {
   const { mode } = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }))
   if (mode !== 'unused' && mode !== 'all') return c.json({ error: 'mode 必须是 unused 或 all' }, 400)
   const objects = await listAudio(c.env.AUDIO)
-  const used = mode === 'unused' ? await usedKeys(await aiEnv(c.env)) : new Set<string>()
+  const used = mode === 'unused' ? await usedKeys(await ai(c)) : new Set<string>()
   const doomed = objects.filter((o) => !used.has(o.key))
   for (let i = 0; i < doomed.length; i += 1000) {
     await c.env.AUDIO.delete(doomed.slice(i, i + 1000).map((o) => o.key))

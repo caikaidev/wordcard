@@ -102,12 +102,25 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <Quota label="今日 AI 调用" used={data.today.text} limit={data.today.textLimit} />
-            <Quota label="今日新语音" used={data.today.tts} limit={data.today.ttsLimit} />
+            <Quota label={data.users ? '全站今日 AI' : '今日 AI 调用'} used={data.today.text} limit={data.today.textLimit} />
+            <Quota label={data.users ? '全站今日语音' : '今日新语音'} used={data.today.tts} limit={data.today.ttsLimit} />
           </div>
           {data.today.disabled && (
             <div className="mt-2 rounded-xl bg-forgot-bg px-3.5 py-2.5 text-[13px] text-forgot-fg">
               AI 功能已暂停（AI_DISABLED），已缓存的语音照常能播
+            </div>
+          )}
+
+          {data.users && data.users.length > 0 && (
+            <div className="mt-3 overflow-hidden rounded-xl border border-line-soft">
+              <div className="bg-chip px-3.5 py-2 text-xs font-medium text-muted-2">本月各成员</div>
+              {data.users.map((u) => (
+                <div key={u.email} className="flex items-center gap-3 border-t border-line-soft px-3.5 py-2.5 text-[13px]">
+                  <span className="min-w-0 flex-1 truncate">{u.email}</span>
+                  <span className="tabular text-muted">{u.calls} 次</span>
+                  <span className="tabular w-16 text-right font-medium">{usd(u.cost)}</span>
+                </div>
+              ))}
             </div>
           )}
 

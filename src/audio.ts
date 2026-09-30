@@ -29,12 +29,16 @@ function audio() {
       f?.()
     })
     el.addEventListener('ended', () => done(true))
-    el.addEventListener('error', () => done(false))
+    // 云端语音失败（额度用完、网络问题等）→ 改用系统自带朗读
+    el.addEventListener('error', () => {
+      if (current) fallback(current.text, current.slow)
+    })
   }
   return el
 }
 
 function done(ok: boolean) {
+  current = null
   set({ text: null, loading: false })
   const f = finish
   finish = null
@@ -88,16 +92,57 @@ export function prefetch(texts: (string | undefined | null)[]) {
 }
 
 /** 播放一段文本；返回的 Promise 在播放结束（或被打断）时 resolve */
+/* ---------------------------- 系统朗读兜底 ---------------------------- */
+
+let current: { text: string; slow: boolean } | null = null
+let notified = false
+
+function pickVoice() {
+  const voices = window.speechSynthesis?.getVoices() ?? []
+  return voices.find((v) => v.lang === 'en-US') ?? voices.find((v) => v.lang.startsWith('en')) ?? null
+}
+
+function fallback(text: string, slow: boolean) {
+  current = null
+  const synth = window.speechSynthesis
+  if (!synth) return done(false)
+  if (!notified) {
+    notified = true
+    import('./components/ui').then((m) => m.toast('云端语音暂时不可用（可能是今日额度用完），已改用系统朗读'))
+  }
+  synth.cancel()
+  const u = new SpeechSynthesisUtterance(text)
+  u.lang = 'en-US'
+  u.rate = slow ? 0.75 : 0.95
+  const v = pickVoice()
+  if (v) u.voice = v
+  u.onstart = () => {
+    set({ ...state, loading: false })
+    const f = onPlaying
+    onPlaying = null
+    f?.()
+  }
+  u.onend = () => done(true)
+  u.onerror = () => done(false)
+  synth.speak(u)
+}
+
 export function speak(text: string, slow = false, playing?: () => void): Promise<boolean> {
   const a = audio()
   if (finish) done(false)
+  window.speechSynthesis?.cancel()
+  current = { text, slow }
   onPlaying = playing ?? null
   set({ text, loading: true })
   const local = !slow && ready.get(text.trim())
   a.src = local || ttsUrl(text, slow)
   const p = new Promise<boolean>((resolve) => {
     finish = resolve
-    a.play().catch(() => done(false))
+    a.play().catch((e: DOMException) => {
+      // 被浏览器拦截自动播放时不兜底；其它失败（加载不了音频）改用系统朗读
+      if (e?.name === 'NotAllowedError') done(false)
+      else if (current) fallback(current.text, current.slow)
+    })
   })
   // 直接从网络播的，播完顺手存进本地缓存，下次（包括重新打开 App 后）秒播
   if (!local && !slow) p.then((ok) => ok && prefetch([text]))
@@ -105,7 +150,9 @@ export function speak(text: string, slow = false, playing?: () => void): Promise
 }
 
 export function stop() {
+  current = null
   el?.pause()
+  window.speechSynthesis?.cancel()
   if (finish || state.text) done(false)
 }
 

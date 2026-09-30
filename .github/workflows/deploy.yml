@@ -70,10 +70,11 @@ jobs:
           ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
           MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
           MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
         run: |
           {
             echo "names<<EOF"
-            for n in GEMINI_API_KEY ACCESS_TEAM_DOMAIN ACCESS_AUD MW_LEARNERS_KEY MW_COLLEGIATE_KEY; do
+            for n in GEMINI_API_KEY ACCESS_TEAM_DOMAIN ACCESS_AUD MW_LEARNERS_KEY MW_COLLEGIATE_KEY ADMIN_EMAILS; do
               if [ -n "${!n}" ]; then echo "$n"; else echo "::warning::Secret $n 未设置，本次跳过" >&2; fi
             done
             echo "EOF"
@@ -94,3 +95,4 @@ jobs:
           ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
           MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
           MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}

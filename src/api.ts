@@ -46,9 +46,9 @@ export const api = {
   review: () => req<{ items: Item[] }>('/review'),
   grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType) => req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type }) }),
-  settings: () => req<{ current: Settings; defaults: Settings }>('/settings'),
+  settings: () => req<{ current: Settings; defaults: Settings; me: Me }>('/settings'),
   saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
-    req<{ current: Settings }>('/settings', { method: 'PUT', body: json(patch) }),
+    req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),
   usage: () => req<UsageReport>('/usage'),
   practiceStats: () => req<PracticeStats>('/practice/stats'),
   lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
@@ -74,4 +74,8 @@ export type UsageReport = {
   lastMonth: UsageBucket
   projected: number
   today: { text: number; tts: number; textLimit: number; ttsLimit: number; disabled: boolean }
+  /** 仅管理员：本月每个人的调用次数与费用 */
+  users?: { email: string; calls: number; cost: number }[]
 }
+
+export type Me = { email: string; admin: boolean }

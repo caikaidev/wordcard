@@ -1,4 +1,15 @@
 export interface Env {
+  /** 当前请求的用户（登录邮箱）；由 aiEnv() 注入，供记账和限额使用 */
+  USER_ID?: string
+  IS_ADMIN?: boolean
+  /** 管理员邮箱，逗号分隔（GitHub Secret，不写进代码） */
+  ADMIN_EMAILS?: string
+  /** 普通用户每天最多几次文本类 AI 调用 */
+  USER_DAILY_TEXT_LIMIT?: string
+  /** 普通用户每天最多生成几段新语音 */
+  USER_DAILY_TTS_LIMIT?: string
+  /** 仅本地开发：AUTH_DISABLED 时模拟的登录邮箱 */
+  DEV_USER?: string
   DB: D1Database
   AUDIO: R2Bucket
   ASSETS: Fetcher
@@ -31,3 +42,6 @@ export interface Env {
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }
+
+/** Hono 上下文：Bindings 是 Worker 环境，Variables 是鉴权中间件放进去的当前用户 */
+export type AppEnv = { Bindings: Env; Variables: { user: string; admin: boolean } }

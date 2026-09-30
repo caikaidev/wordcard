@@ -91,6 +91,13 @@ npx wrangler r2 bucket create wordcard-audio
 
 Worker 里的 `requireAccess` 会校验每个 `/api` 请求上的 Access JWT（签名、签发方、AUD），所以就算有人绕开 Access 直接打接口，也拿不到数据、刷不了你的 Gemini 额度。
 
+## 多用户（小范围分享）
+
+- **谁能进**：Cloudflare Access 的放行名单（邮箱验证码登录，免费版最多 50 人）。
+- **数据隔离**：词库、复习进度、练习、用量都按登录邮箱隔离；语音缓存全站共享。
+- **管理员**：GitHub Secret `ADMIN_EMAILS`（逗号分隔）。管理员可改模型/音色、管理音频缓存、查看各成员费用；多用户改造前的旧数据会在管理员首次访问时自动归到其名下。
+- **额度**：成员每人每天 `USER_DAILY_TEXT_LIMIT` 次 AI 调用、`USER_DAILY_TTS_LIMIT` 段新语音；全站仍受 `DAILY_*` 总上限约束。云端语音不可用（如额度用完）时自动改用系统朗读。
+
 ## 本地开发
 
 ```bash
@@ -99,6 +106,7 @@ npm run db:migrate:local
 npm run build                    # wrangler dev 需要 dist/ 存在
 npm run dev:api                  # 终端 1：Worker + 本地 D1/R2，端口 8787
 npm run dev                      # 终端 2：Vite 前端，/api 自动转发到 8787
+# 测多用户：.dev.vars 里设 ADMIN_EMAILS / DEV_USER，请求头 x-dev-user 可临时切换身份
 ```
 
 ## 可调的配置
