@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { prefetch, speak, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
-import type { Grade, Item } from '../../shared/types'
+import { BLANK, clozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
 import { Link } from '../router'
 import { refreshStats, useStats } from '../store'
 import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
@@ -24,6 +24,13 @@ export default function Review() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const stats = useStats()
+  const [mode, setMode] = useState<ReviewMode>('mixed')
+  useEffect(() => {
+    api
+      .settings()
+      .then((r) => setMode(r.current.reviewMode))
+      .catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     setError(null)
@@ -44,6 +51,9 @@ export default function Review() {
   }, [load])
 
   const card = queue?.[0]
+  // 这张卡用哪种方式：混合模式下新卡先认读，之后认读 / 产出交替（按复习次数奇偶）
+  const cloze = card ? clozeOf(card) : null
+  const production = !!cloze && (mode === 'production' || (mode === 'mixed' && card!.reps % 2 === 1))
   const total = reviewed + (queue?.length ?? 0) + skipped.length
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
@@ -265,12 +275,17 @@ export default function Review() {
               {flipped ? (
                 <Back
                   item={card}
+                  cloze={production ? cloze : null}
                   onDone={markDone}
                   busy={busy}
                   onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? item : x)) : q))}
                 />
               ) : (
-                <Front item={card} onFlip={() => setFlipped(true)} />
+                production && cloze ? (
+                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} />
+                ) : (
+                  <Front item={card} onFlip={() => setFlipped(true)} />
+                )
               )}
             </Card>
           </div>
@@ -332,13 +347,55 @@ function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
   )
 }
 
+/** 产出正面：中文情境 + 挖空句子，先说出空里的表达 */
+function ProductionFront({ cloze, onFlip }: { cloze: Cloze; onFlip: () => void }) {
+  const [hint, setHint] = useState(false)
+  const [before, after] = cloze.sentence.split(BLANK)
+  // 提示：每个词只露首字母，如 "pose a risk to" → "p… a r… t…"
+  const hintText = cloze.answer
+    .split(/\s+/)
+    .map((w) => (w.length <= 1 ? w : `${w[0]}…`))
+    .join(' ')
+  return (
+    <div className="flex flex-1 flex-col px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+      <div className="flex items-center justify-between">
+        <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent">产出 · 说出来</span>
+      </div>
+      <div className="flex flex-1 flex-col justify-center gap-5">
+        {cloze.scene && <p className="m-0 text-[15px] leading-relaxed text-muted-2 md:text-[17px]">{cloze.scene}</p>}
+        <p className="m-0 font-serif text-[22px] leading-normal md:text-[28px]">
+          {before}
+          <span className="mx-0.5 inline-block min-w-[3.5em] border-b-2 border-accent text-center text-accent">
+            {hint ? hintText : '\u00a0'}
+          </span>
+          {after}
+        </p>
+        {!hint && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setHint(true)
+            }}
+            className="self-start border-0 bg-transparent p-0 text-[13px] text-muted underline decoration-line underline-offset-4"
+          >
+            提示首字母
+          </button>
+        )}
+      </div>
+      <div className="text-center text-[13px] text-muted">先大声说出空里的表达，再看答案</div>
+    </div>
+  )
+}
+
 function Back({
   item,
+  cloze,
   onDone,
   busy,
   onUpdate,
 }: {
   item: Item
+  cloze?: Cloze | null
   onDone: () => void
   busy: boolean
   onUpdate: (item: Item) => void
@@ -356,8 +413,20 @@ function Back({
   }
   const m = item.meta
   const isWord = item.type === 'word'
+  const filled = cloze ? cloze.sentence.replace(BLANK, cloze.answer) : ''
   return (
     <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-5 pb-3 md:px-12 md:py-10">
+      {cloze && (
+        <div className="mb-4 flex items-start gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-3 md:mb-6">
+          <div className="flex-1">
+            <div className="mb-1 text-xs text-muted">{cloze.scene}</div>
+            <div className="font-serif text-[18px] leading-normal md:text-[21px]">
+              <Highlighted text={filled} marks={[cloze.answer]} />
+            </div>
+          </div>
+          <SpeakButton text={filled} size={36} variant="ghost" waves={1} label="播放整句" />
+        </div>
+      )}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1 md:flex-row md:items-baseline md:gap-4">
           <div

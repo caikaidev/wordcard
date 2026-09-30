@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { prefetch } from '../audio'
-import type { CardMeta, EnrichResult } from '../../shared/types'
+import { BLANK, type CardMeta, type EnrichResult } from '../../shared/types'
 import { refreshStats } from '../store'
-import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
+import { Card, Chip, EnglishDefinition, Highlighted, MerriamWebsterLogo, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconArrowRight, IconClose, IconRefresh, IconSparkle } from '../components/icons'
 
 const emptyMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
@@ -184,12 +184,15 @@ export default function Add() {
                 />
               </div>
               {draft.meta.definitionEn && (
-                <EnglishDefinition
-                  text={draft.meta.definitionEn}
-                  source={draft.meta.definitionSrc}
-                  word={draft.text}
-                  className="text-[15px]"
-                />
+                <div className="flex items-start gap-3">
+                  <EnglishDefinition
+                    text={draft.meta.definitionEn}
+                    source={draft.meta.definitionSrc}
+                    word={draft.text}
+                    className="flex-1 text-[15px]"
+                  />
+                  {draft.meta.definitionSrc?.startsWith('Merriam') && <MerriamWebsterLogo size={50} />}
+                </div>
               )}
             </Field>
 
@@ -210,6 +213,17 @@ export default function Add() {
                 label="例句翻译"
               />
             </Field>
+
+            {draft.meta.cloze && (
+              <Field label="产出练习（复习时会用到）">
+                <div className="text-[13px] text-muted">{draft.meta.cloze.scene}</div>
+                <div className="font-serif text-[17px] leading-normal">
+                  {draft.meta.cloze.sentence.split(BLANK)[0]}
+                  <span className="font-medium text-accent">{draft.meta.cloze.answer}</span>
+                  {draft.meta.cloze.sentence.split(BLANK)[1]}
+                </div>
+              </Field>
+            )}
 
             {draft.meta.phrases.length > 0 && (
               <Field label={draft.type === 'word' ? '搭配' : '重点短语'}>

@@ -21,7 +21,33 @@ export interface CardMeta {
   definitionEn?: string
   /** 英英释义出处，如 Merriam-Webster */
   definitionSrc?: string
+  /** 产出练习：看中文情境，说出空里的表达（与原例句不同的新情境） */
+  cloze?: Cloze
 }
+
+export interface Cloze {
+  /** 中文情境 + 想表达的意思 */
+  scene: string
+  /** 英文句子，目标表达处为 ____ */
+  sentence: string
+  /** 被挖掉的原文 */
+  answer: string
+}
+
+export const BLANK = '____'
+
+/** 产出练习题：优先用 AI 生成的新情境；老卡片退回用原例句挖空 */
+export function clozeOf(item: { type: ItemType; meta: CardMeta }): Cloze | null {
+  const c = item.meta.cloze
+  if (c && c.answer && c.sentence.includes(BLANK)) return c
+  const m = item.meta
+  if (m.example && m.highlight && m.example.includes(m.highlight)) {
+    return { scene: m.exampleZh || m.meaning, sentence: m.example.replace(m.highlight, BLANK), answer: m.highlight }
+  }
+  return null
+}
+
+export type ReviewMode = 'mixed' | 'recognition' | 'production'
 
 export interface Item {
   id: number

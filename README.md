@@ -112,7 +112,9 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 | `GEMINI_VOICE` | `Kore` | 音色，可换 `Puck`、`Charon`、`Aoede` 等 |
 | `GEMINI_BASE_URL` | Google 官方地址 | 想走 Cloudflare AI Gateway 时填网关地址 |
 
-**英英释义**：添加单词时先查词典，AI 只负责从词典义项里选出和语境对应的那一条，释义本身是词典原文。查询顺序：Merriam-Webster 学习者词典（Secret `MW_LEARNERS_KEY`）→ Merriam-Webster 大学词典（`MW_COLLEGIATE_KEY`）→ [Free Dictionary API](https://dictionaryapi.dev/)（Wiktionary 数据，无需 key）。Merriam-Webster 的 key 在 [dictionaryapi.com](https://dictionaryapi.com/) 免费申请（非商业、每天 1000 次）。
+**产出型复习**：除了"看英文想意思"，卡片还会以"看中文情境、说出空里的英文表达"的方式出现（AI 补全时生成一个与原例句不同的新情境；老卡片用原例句挖空）。设置里可选：混合（默认，新卡先认读、之后交替）/ 只认读 / 只产出。
+
+**英英释义**：添加单词时先查词典，AI 只负责从词典义项里选出和语境对应的那一条，释义本身是词典原文。查询顺序：Merriam-Webster 学习者词典（Secret `MW_LEARNERS_KEY`）→ Merriam-Webster 大学词典（`MW_COLLEGIATE_KEY`）→ [Free Dictionary API](https://dictionaryapi.dev/)（Wiktionary 数据，无需 key）。Merriam-Webster 的 key 在 [dictionaryapi.com](https://dictionaryapi.com/) 免费申请（非商业、每天 1000 次）。按其[品牌规范](https://dictionaryapi.com/info/branding-guidelines)，应用内展示官方标志（设置页「词典来源」与添加预览，50px，原样不改），出处使用产品全称；标志文件在 CI 构建时从官网下载，不随仓库分发。
 
 **关于地区**：Gemini API 不对中国大陆和香港开放，而大陆访问 Cloudflare 常落在香港节点。所以 `wrangler.jsonc` 里用 `placement.region = "gcp:us-central1"` 把 Worker 固定在美国执行，避免 `User location is not supported`。
 

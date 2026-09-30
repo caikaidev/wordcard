@@ -1,12 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { speak } from '../audio'
-import { COACH_PROFILE_MAX, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
+import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { Link } from '../router'
 import StorageCard from '../components/StorageCard'
 import CostCard from '../components/CostCard'
-import { errMsg, toast } from '../components/ui'
+import { MerriamWebsterLogo, errMsg, toast } from '../components/ui'
 import { IconBack, IconCheck, IconPlay, IconSparkle } from '../components/icons'
 
 export default function Settings() {
@@ -83,7 +83,7 @@ export default function Settings() {
         </Link>
       </div>
       <div className="px-4 pt-1 md:px-6">
-        <div className="text-[13px] tracking-wide text-muted">模型 · 语音 · 费用 · 存储</div>
+        <div className="text-[13px] tracking-wide text-muted">复习 · 练习 · 模型 · 费用</div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">设置</h1>
       </div>
 
@@ -91,6 +91,27 @@ export default function Settings() {
         <div className="mx-4 mt-5 h-64 md:mx-6 animate-shimmer rounded-2xl bg-surface" />
       ) : (
         <>
+          <Section title="复习方式" desc="产出：看中文情境说出英文表达，练的是“能说出来”">
+            <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-line-soft p-1" role="radiogroup" aria-label="复习方式">
+              {REVIEW_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  role="radio"
+                  aria-checked={cur.reviewMode === m.id}
+                  onClick={() => save('reviewMode', m.id, `复习方式：${m.name}`)}
+                  className={`h-10 rounded-[10px] border-0 text-sm ${
+                    cur.reviewMode === m.id ? 'bg-surface font-semibold text-ink shadow-sm' : 'bg-transparent text-muted-2'
+                  }`}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 mb-0 text-xs leading-relaxed text-muted">
+              {REVIEW_MODES.find((m) => m.id === cur.reviewMode)?.desc}
+            </p>
+          </Section>
+
           <Section title="练习档位" desc="新建练习时的默认档位，每次新建时也可以临时切换">
             <div className="overflow-hidden rounded-2xl border border-line-soft bg-surface" role="radiogroup">
               {LEVELS.map((l, i) => {
@@ -201,6 +222,22 @@ export default function Settings() {
           </Section>
         </>
       )}
+
+      <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">词典来源</div>
+      <section className="mx-4 mt-2.5 flex items-center gap-4 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6">
+        <MerriamWebsterLogo size={50} />
+        <p className="m-0 flex-1 text-[13px] leading-relaxed text-muted">
+          英英释义来自{' '}
+          <a href="https://www.merriam-webster.com/" target="_blank" rel="noreferrer" className="text-accent">
+            Merriam-Webster&apos;s Collegiate® Dictionary
+          </a>
+          ，查不到的词使用{' '}
+          <a href="https://en.wiktionary.org/" target="_blank" rel="noreferrer" className="text-accent">
+            Wiktionary
+          </a>{' '}
+          数据。中文释义、例句和练习由 AI 生成，重要表达请以词典为准。
+        </p>
+      </section>
 
       <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">费用</div>
       <CostCard refreshKey={usageKey} />

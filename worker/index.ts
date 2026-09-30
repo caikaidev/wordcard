@@ -33,6 +33,10 @@ function safeMeta(raw: unknown): CardMeta {
       : [],
     definitionEn: s(m.definitionEn, 600),
     definitionSrc: s(m.definitionSrc, 60),
+    cloze:
+      m.cloze && typeof m.cloze === 'object' && s(m.cloze.answer, 200) && s(m.cloze.sentence, 400).includes('____')
+        ? { scene: s(m.cloze.scene, 300), sentence: s(m.cloze.sentence, 400), answer: s(m.cloze.answer, 200) }
+        : undefined,
   }
 }
 

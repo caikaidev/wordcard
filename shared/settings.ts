@@ -31,7 +31,15 @@ export interface Settings {
   practiceLevel: 1 | 2 | 3
   /** 教练设定：学习者背景、目标与原则，出题和批改都会带上 */
   coachProfile: string
+  /** 复习方式：混合 / 只认读 / 只产出 */
+  reviewMode: 'mixed' | 'recognition' | 'production'
 }
+
+export const REVIEW_MODES: { id: Settings['reviewMode']; name: string; desc: string }[] = [
+  { id: 'mixed', name: '混合', desc: '新卡先认读，之后认读和产出交替出现' },
+  { id: 'recognition', name: '只认读', desc: '看英文，回想意思' },
+  { id: 'production', name: '只产出', desc: '看中文情境，说出空里的英文表达' },
+]
 
 export const COACH_PROFILE_MAX = 3000
 

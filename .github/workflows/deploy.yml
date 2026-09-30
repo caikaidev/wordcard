@@ -21,6 +21,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: 下载 Merriam-Webster 官方标志（按其品牌规范原样使用，不提交进仓库）
+        run: |
+          for v in LightBG DarkBG; do
+            curl -fsSL --retry 2 -o "dist/mw-logo-$(echo $v | tr A-Z a-z).png" \
+              "https://dictionaryapi.com/images/info/branding-guidelines/MWLogo_${v}_120x120_2x.png" \
+              || echo "::warning::$v 标志下载失败，页面会回退到官网图片地址"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: dist

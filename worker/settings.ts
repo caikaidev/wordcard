@@ -13,8 +13,11 @@ export async function loadSettings(env: Env): Promise<Settings> {
     voice: isSafeId(m.voice) ? m.voice : env.GEMINI_VOICE,
     practiceLevel: isLevel(level) ? level : 1,
     coachProfile: typeof m.coachProfile === 'string' && m.coachProfile.trim() ? m.coachProfile : DEFAULT_COACH_PROFILE,
+    reviewMode: isReviewMode(m.reviewMode) ? m.reviewMode : 'mixed',
   }
 }
+
+const isReviewMode = (v: unknown): v is Settings['reviewMode'] => v === 'mixed' || v === 'recognition' || v === 'production'
 
 export function defaultSettings(env: Env): Settings {
   return {
@@ -23,6 +26,7 @@ export function defaultSettings(env: Env): Settings {
     voice: env.GEMINI_VOICE,
     practiceLevel: 1,
     coachProfile: DEFAULT_COACH_PROFILE,
+    reviewMode: 'mixed',
   }
 }
 
@@ -50,6 +54,10 @@ export async function saveSettings(env: Env, body: Record<string, unknown>): Pro
     const lv = Number(body.practiceLevel)
     if (!isLevel(lv)) return 'practiceLevel 只能是 1、2、3'
     stmts.push(upsert('practiceLevel', String(lv)))
+  }
+  if (body.reviewMode !== undefined) {
+    if (!isReviewMode(body.reviewMode)) return 'reviewMode 只能是 mixed / recognition / production'
+    stmts.push(upsert('reviewMode', body.reviewMode))
   }
   if (body.coachProfile !== undefined) {
     const v = body.coachProfile

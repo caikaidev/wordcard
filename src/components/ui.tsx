@@ -135,8 +135,10 @@ export function errMsg(e: unknown) {
 }
 
 /** 英英释义（词典原文）+ 出处 */
-export function EnglishDefinition({ text, source, word, className = '' }: { text: string; source?: string; word?: string; className?: string }) {
+export function EnglishDefinition({ text, source: rawSource, word, className = '' }: { text: string; source?: string; word?: string; className?: string }) {
   if (!text) return null
+  // 早期卡片存的是简称，统一显示为产品全称
+  const source = rawSource === 'Merriam-Webster' ? "Merriam-Webster's Collegiate® Dictionary" : rawSource
   const href =
     source?.startsWith('Merriam') && word
       ? `https://www.merriam-webster.com/dictionary/${encodeURIComponent(word)}`
@@ -159,5 +161,29 @@ export function EnglishDefinition({ text, source, word, className = '' }: { text
         </span>
       )}
     </div>
+  )
+}
+
+const MW_REMOTE = 'https://dictionaryapi.com/images/info/branding-guidelines/'
+
+/**
+ * Merriam-Webster 官方标志：按品牌规范原样显示（50 / 100 / 125 px，不改动，保留 ®），
+ * 浅色 / 深色背景各用对应版本。文件在构建时从官网下载，失败则回退到官网地址。
+ */
+export function MerriamWebsterLogo({ size = 50 }: { size?: 50 | 100 | 125 }) {
+  const [dark, setDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const [remote, setRemote] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const on = () => setDark(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  const file = dark ? 'MWLogo_DarkBG_120x120_2x.png' : 'MWLogo_LightBG_120x120_2x.png'
+  const src = remote ? MW_REMOTE + file : dark ? '/mw-logo-darkbg.png' : '/mw-logo-lightbg.png'
+  return (
+    <a href="https://www.merriam-webster.com/" target="_blank" rel="noreferrer" className="inline-flex shrink-0" aria-label="Merriam-Webster">
+      <img src={src} width={size} height={size} alt="Merriam-Webster" onError={() => setRemote(true)} style={{ width: size, height: size }} />
+    </a>
   )
 }

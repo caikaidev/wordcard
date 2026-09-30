@@ -191,6 +191,11 @@ const enrichSchema = {
     exampleZh: { type: 'STRING' },
     highlight: { type: 'STRING' },
     senseIndex: { type: 'INTEGER' },
+    cloze: {
+      type: 'OBJECT',
+      properties: { scene: { type: 'STRING' }, sentence: { type: 'STRING' }, answer: { type: 'STRING' } },
+      required: ['scene', 'sentence', 'answer'],
+    },
     phrases: {
       type: 'ARRAY',
       items: {
@@ -200,7 +205,7 @@ const enrichSchema = {
       },
     },
   },
-  required: ['type', 'text', 'ipa', 'pos', 'meaning', 'example', 'exampleZh', 'highlight', 'phrases', 'senseIndex'],
+  required: ['type', 'text', 'ipa', 'pos', 'meaning', 'example', 'exampleZh', 'highlight', 'phrases', 'senseIndex', 'cloze'],
 }
 
 const senseList = (senses: DictSense[]) => senses.map((s, i) => `${i + 1}. (${s.pos || '—'}) ${s.def}`).join('\n')
@@ -222,6 +227,10 @@ ${hint ? `用户指定类型：${hint}` : ''}
 - exampleZh: 例句的中文翻译
 - highlight: example 中要高亮的那个词或短语，必须与 example 中的写法一字不差（包括大小写和词形变化）
 - phrases: 单词给 2~3 个常见搭配；句子给 1~3 个值得记的重点短语。每项包含英文 text 和中文 meaning
+- cloze: 产出练习（看情境说出表达），必须换一个和 example 不同的新情境，贴近职场或日常：
+  scene 用中文写情境并点明想表达的意思（如"项目依赖可能拖慢进度，想说它'构成风险'"）；
+  sentence 是这个情境下自然的英文句子，把目标词/短语挖成 ____（四个下划线，其余照写）；
+  answer 是被挖掉的原文（可以有词形变化）。句子类型也照做，挖掉其中最值得记的表达
 - senseIndex: ${
     dict
       ? `下面是词典（${SOURCE_LABEL[dict.source]}）给出的英英义项。选出与你给的 meaning 和 example 最一致的一条，填它的编号（从 1 开始）；都不合适填 0。meaning 和 example 应优先围绕最常用的那个义项：
@@ -247,6 +256,10 @@ ${senseList(dict.senses)}`
     // 英英释义只用词典原文，AI 只负责“选哪一条”
     definitionEn: pick?.def ?? '',
     definitionSrc: pick && dict ? SOURCE_LABEL[dict.source] : '',
+    cloze:
+      r.cloze?.answer && r.cloze.sentence?.includes('____')
+        ? { scene: r.cloze.scene ?? '', sentence: r.cloze.sentence, answer: r.cloze.answer }
+        : undefined,
   }
   return { type: r.type === 'sentence' ? 'sentence' : 'word', text: (r.text || input).trim(), meta }
 }

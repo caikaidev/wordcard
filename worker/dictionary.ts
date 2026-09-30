@@ -14,9 +14,10 @@ export interface DictResult {
   senses: DictSense[]
 }
 
+/** 出处名称按 Merriam-Webster 品牌规范使用产品全称 */
 export const SOURCE_LABEL: Record<DictResult['source'], string> = {
-  'mw-learners': "Merriam-Webster Learner's",
-  'mw-collegiate': 'Merriam-Webster',
+  'mw-learners': "Merriam-Webster's Learner's Dictionary",
+  'mw-collegiate': "Merriam-Webster's Collegiate® Dictionary",
   wiktionary: 'Wiktionary',
 }
 
