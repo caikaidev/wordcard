@@ -93,11 +93,15 @@ export function speak(text: string, slow = false, playing?: () => void): Promise
   if (finish) done(false)
   onPlaying = playing ?? null
   set({ text, loading: true })
-  a.src = (!slow && ready.get(text.trim())) || ttsUrl(text, slow)
-  return new Promise<boolean>((resolve) => {
+  const local = !slow && ready.get(text.trim())
+  a.src = local || ttsUrl(text, slow)
+  const p = new Promise<boolean>((resolve) => {
     finish = resolve
     a.play().catch(() => done(false))
   })
+  // 直接从网络播的，播完顺手存进本地缓存，下次（包括重新打开 App 后）秒播
+  if (!local && !slow) p.then((ok) => ok && prefetch([text]))
+  return p
 }
 
 export function stop() {

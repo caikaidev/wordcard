@@ -8,11 +8,17 @@ export class ApiError extends Error {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    ...init,
-    credentials: 'same-origin',
-    headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
-  })
+  let res: Response
+  try {
+    res = await fetch(`/api${path}`, {
+      ...init,
+      credentials: 'same-origin',
+      headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
+    })
+  } catch {
+    // 断网，或 Cloudflare Access 登录过期（请求被重定向到登录页）
+    throw new ApiError(navigator.onLine ? '登录可能已过期，请刷新页面重新登录' : '网络断开了，联网后再试', 0)
+  }
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => null)
   if (!res.ok) {

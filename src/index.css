@@ -69,8 +69,9 @@
   --color-invert-bg: var(--invert-bg);
   --color-invert-fg: var(--invert-fg);
 
-  --font-sans: 'Noto Sans SC', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+  /* 中文用系统字体（苹方 / HarmonyOS / MiSans / 雅黑），不再下载几 MB 的中文网络字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'HarmonyOS Sans SC', 'MiSans', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Newsreader Variable', Georgia, 'Times New Roman', serif;
 
   --shadow-card: var(--shadow-card);
   --animate-flip: flip 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
