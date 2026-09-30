@@ -6,7 +6,7 @@ import type { Grade, Item } from '../../shared/types'
 import { Link } from '../router'
 import { refreshStats, useStats } from '../store'
 import { Card, Chip, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconCheckCircle, IconPlusCircle, IconSparkle } from '../components/icons'
+import { IconAlert, IconCheckCircle, IconPlusCircle, IconSparkle } from '../components/icons'
 
 const today = () => {
   const d = new Date()
@@ -138,14 +138,14 @@ export default function Review() {
             style={{ width: total ? `${Math.round((reviewed / total) * 100)}%` : '0%' }}
           />
         </div>
-        <div className="tabular hidden text-[13px] text-muted md:block">
+        <div className={`tabular hidden text-[13px] text-muted ${total ? 'md:block' : ''}`}>
           {Math.min(reviewed + 1, total)} / {total}
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col pt-5 pb-4 md:flex-none">
         {error ? (
-          <Empty title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
+          <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue ? (
           <Card className="flex-1 animate-shimmer md:h-[440px]" />
         ) : !card ? (
@@ -320,11 +320,27 @@ function GradeButton(p: { k: string; label: string; hint: string; cls: string; o
   )
 }
 
-function Empty({ title, desc, action }: { title: string; desc: string; action?: ReactNode }) {
+function Empty({
+  title,
+  desc,
+  action,
+  icon = <IconCheckCircle size={26} />,
+  tone = 'ok',
+}: {
+  title: string
+  desc: string
+  action?: ReactNode
+  icon?: ReactNode
+  tone?: 'ok' | 'error'
+}) {
   return (
     <Card className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center md:h-[440px]">
-      <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-accent-soft text-accent">
-        <IconCheckCircle size={26} />
+      <div
+        className={`mb-2 flex h-14 w-14 items-center justify-center rounded-full ${
+          tone === 'error' ? 'bg-forgot-bg text-forgot-fg' : 'bg-accent-soft text-accent'
+        }`}
+      >
+        {icon}
       </div>
       <div className="text-xl font-semibold">{title}</div>
       <div className="max-w-[320px] text-sm leading-relaxed text-muted">{desc}</div>
