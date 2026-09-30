@@ -3,7 +3,7 @@ import { api } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
 import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
-import { IconChevronRight, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
+import { IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
 
 type Source = 'url' | 'text' | 'image'
@@ -218,6 +218,23 @@ function Composer() {
     }
   }
 
+  /** 一键粘贴：剪贴板里有链接就填链接，是一大段英文就填正文 */
+  const paste = async () => {
+    try {
+      const clip = (await navigator.clipboard.readText()).trim()
+      const link = /https?:\/\/\S+/.exec(clip)?.[0]
+      if (link) {
+        setSource('url')
+        setUrl(link)
+      } else if (clip.length > 80) {
+        setSource('text')
+        setText(clip)
+      } else toast(clip ? '剪贴板里不是链接或文章' : '剪贴板是空的')
+    } catch {
+      toast('没有读取剪贴板的权限，可以长按输入框粘贴', 'error')
+    }
+  }
+
   const create = async () => {
     if (!ready || busy) return
     setBusy(true)
@@ -273,6 +290,7 @@ function Composer() {
 
       <div className="mt-3">
         {source === 'url' && (
+          <div className="relative">
           <input
             type="url"
             inputMode="url"
@@ -283,8 +301,15 @@ function Composer() {
             autoCapitalize="off"
             autoComplete="off"
             spellCheck={false}
-            className="h-12 w-full rounded-xl border border-line bg-bg px-3.5 text-[15px] text-ink outline-none placeholder:text-faint focus:border-muted"
+            className="h-12 w-full rounded-xl border border-line bg-bg pr-20 pl-3.5 text-[15px] text-ink outline-none placeholder:text-faint focus:border-muted"
           />
+            <button
+              onClick={paste}
+              className="absolute top-1.5 right-1.5 flex h-9 items-center gap-1 rounded-lg border-0 bg-chip px-3 text-[13px] font-medium text-ink"
+            >
+              <IconClipboard size={15} /> 粘贴
+            </button>
+          </div>
         )}
         {source === 'text' && (
           <textarea

@@ -180,3 +180,10 @@ export const IconBook = ({ size, ...p }: P) => (
     <path d="M12 6.5v13" />
   </svg>
 )
+export const IconClipboard = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect x="6" y="4.5" width="12" height="16" rx="2" />
+    <path d="M9.5 4.5V4a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v.5" />
+    <path d="M9.5 11h5M9.5 14.5h3.5" />
+  </svg>
+)
