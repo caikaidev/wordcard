@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { AppEnv, Env } from './env'
 import { generateJson, type GeminiPart } from './gemini'
 import { fetchArticle, MAX_SOURCE_CHARS } from './article'
+import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import {
   LEVEL_RULES,
@@ -135,7 +136,7 @@ function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
 }
 
 practice.post('/lessons', async (c) => {
-  const body = await c.req.json<{ url?: unknown; text?: unknown; images?: unknown; level?: unknown }>()
+  const body = await c.req.json<{ url?: unknown; text?: unknown; images?: unknown; level?: unknown; savedId?: unknown }>()
   const user = c.get('user')
   const settings = await loadSettings(c.env, user)
   const level: Level = isLevel(Number(body.level)) ? (Number(body.level) as Level) : settings.practiceLevel
@@ -146,13 +147,21 @@ practice.post('/lessons', async (c) => {
         .slice(0, 6)
     : []
   const url = typeof body.url === 'string' ? body.url.trim() : ''
+  const savedId = Number(body.savedId) || 0
   const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_SOURCE_CHARS) : ''
 
   const ai = await aiEnv(c.env, user, c.get('admin'))
   let source = ''
   let sourceUrl: string | null = null
   let fetchedTitle = ''
-  if (pasted) source = pasted
+  if (savedId) {
+    // 从“稍后学”生成：用保存时读到的原文，没读到就现在读
+    const s = await loadSaved(c.env, ai, savedId, user)
+    if (!s) return c.json({ error: '找不到这篇稍后学的文章' }, 404)
+    source = s.text
+    sourceUrl = s.url
+    fetchedTitle = s.title
+  } else if (pasted) source = pasted
   else if (url) {
     const a = await fetchArticle(ai, url)
     source = a.text
@@ -182,6 +191,7 @@ practice.post('/lessons', async (c) => {
   )
     .bind(Date.now(), level, sourceUrl, content.title, JSON.stringify(content), user, source || null)
     .first<{ id: number }>()
+  if (savedId) await c.env.DB.prepare('DELETE FROM saved WHERE id = ? AND user_id = ?').bind(savedId, user).run()
   return c.json({ id: row!.id }, 201)
 })
 
@@ -419,6 +429,127 @@ practice.post('/lessons/:id/submit', async (c) => {
 
   const fresh = await loadLesson(c.env, id, user)
   return c.json({ lesson: fresh })
+})
+
+/* ============================== 稍后学 ============================== */
+
+const MAX_SAVED = 50
+
+/** 读取一篇稍后学的文章；原文还没有时现在读取（允许 Gemini 兜底）并保存 */
+async function loadSaved(env: Env, ai: Env, id: number, user: string) {
+  const s = await env.DB.prepare('SELECT id, url, title, text FROM saved WHERE id = ? AND user_id = ?')
+    .bind(id, user)
+    .first<{ id: number; url: string | null; title: string; text: string | null }>()
+  if (!s) return null
+  if (s.text) return { ...s, text: s.text }
+  if (!s.url) return null
+  const a = await fetchArticle(ai, s.url)
+  const title = s.title || a.title
+  await env.DB.prepare('UPDATE saved SET text = ?, title = ? WHERE id = ? AND user_id = ?').bind(a.text, title, id, user).run()
+  return { ...s, title, text: a.text }
+}
+
+practice.get('/saved', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, url, title, created_at, LENGTH(text) AS chars FROM saved WHERE user_id = ? ORDER BY created_at LIMIT ${MAX_SAVED}`,
+  )
+    .bind(c.get('user'))
+    .all<{ id: number; url: string | null; title: string; created_at: number; chars: number | null }>()
+  return c.json({ saved: results })
+})
+
+/** 保存：只直接抓取 / 浏览器渲染，不调 AI；读不到正文也先把链接存下 */
+practice.post('/saved', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json<{ url?: unknown; text?: unknown }>()
+  const url = typeof body.url === 'string' ? body.url.trim() : ''
+  const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_SOURCE_CHARS) : ''
+  if (!url && pasted.length < 80) return c.json({ error: '请提供链接或一段英文正文' }, 400)
+  const n = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM saved WHERE user_id = ?').bind(user).first<{ n: number }>()
+  if ((n?.n ?? 0) >= MAX_SAVED) return c.json({ error: `稍后学最多存 ${MAX_SAVED} 篇，先学掉或删掉几篇吧` }, 400)
+  if (url) {
+    const dup = await c.env.DB.prepare('SELECT id FROM saved WHERE user_id = ? AND url = ?').bind(user, url).first()
+    if (dup) return c.json({ error: '这篇已经在稍后学里了' }, 409)
+  }
+
+  let title = ''
+  let text: string | null = pasted || null
+  let finalUrl: string | null = url || null
+  if (url) {
+    try {
+      const a = await fetchArticle(c.env, url, { allowAi: false })
+      title = a.title
+      text = a.text
+      finalUrl = a.url
+    } catch {
+      // 读不到（比如被网站拦截）：先存链接，打开或生成练习时再用 AI 读
+      title = url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 80)
+    }
+  } else {
+    title = pasted.split('\n')[0].slice(0, 80)
+  }
+  const row = await c.env.DB.prepare('INSERT INTO saved (user_id, url, title, text, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id')
+    .bind(user, finalUrl, title, text, Date.now())
+    .first<{ id: number }>()
+  return c.json({ id: row!.id, title, hasText: !!text }, 201)
+})
+
+practice.get('/saved/:id/source', async (c) => {
+  const user = c.get('user')
+  const s = await loadSaved(c.env, await aiEnv(c.env, user, c.get('admin')), Number(c.req.param('id')), user)
+  if (!s) return c.json({ error: '找不到这篇文章' }, 404)
+  return c.json({ title: s.title, text: s.text, url: s.url })
+})
+
+practice.delete('/saved/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM saved WHERE id = ? AND user_id = ?').bind(Number(c.req.param('id')), c.get('user')).run()
+  return c.body(null, 204)
+})
+
+/* ============================== 段落翻译 ============================== */
+
+async function sha(text: string) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** 批量翻译段落：先查缓存，缺的一次性交给 AI，结果存起来 */
+practice.post('/translate', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json<{ paragraphs?: unknown }>()
+  const paras = (Array.isArray(body.paragraphs) ? body.paragraphs : [])
+    .filter((p): p is string => typeof p === 'string')
+    .map((p) => p.trim().slice(0, 3000))
+    .slice(0, 30)
+  if (!paras.length) return c.json({ error: '没有要翻译的段落' }, 400)
+
+  const hashes = await Promise.all(paras.map(sha))
+  const found = new Map<string, string>()
+  const uniq = [...new Set(hashes)]
+  for (let i = 0; i < uniq.length; i += 50) {
+    const chunk = uniq.slice(i, i + 50)
+    const { results } = await c.env.DB.prepare(
+      `SELECT hash, zh FROM translations WHERE user_id = ? AND hash IN (${chunk.map(() => '?').join(',')})`,
+    )
+      .bind(user, ...chunk)
+      .all<{ hash: string; zh: string }>()
+    results.forEach((r) => found.set(r.hash, r.zh))
+  }
+
+  const missing = paras.map((p, i) => ({ p, h: hashes[i] })).filter((x, i, a) => !found.has(x.h) && a.findIndex((y) => y.h === x.h) === i)
+  if (missing.length) {
+    const zh = await translateParagraphs(await aiEnv(c.env, user, c.get('admin')), missing.map((m) => m.p))
+    const now = Date.now()
+    const stmts = missing
+      .map((m, i) => ({ ...m, zh: zh[i] }))
+      .filter((m) => m.zh)
+      .map((m) => {
+        found.set(m.h, m.zh)
+        return c.env.DB.prepare('INSERT OR REPLACE INTO translations (user_id, hash, zh, created_at) VALUES (?, ?, ?, ?)').bind(user, m.h, m.zh, now)
+      })
+    if (stmts.length) await c.env.DB.batch(stmts)
+  }
+  return c.json({ translations: hashes.map((h) => found.get(h) ?? '') })
 })
 
 /* ============================== 打卡统计 ============================== */

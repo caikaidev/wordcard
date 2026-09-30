@@ -126,7 +126,8 @@ const done = (a: { title: string; text: string }, url: string, via: Article['via
   via,
 })
 
-export async function fetchArticle(env: Env, raw: string): Promise<Article> {
+export async function fetchArticle(env: Env, raw: string, opts: { allowAi?: boolean } = {}): Promise<Article> {
+  const allowAi = opts.allowAi ?? true
   let url: URL
   try {
     url = new URL(raw)
@@ -163,8 +164,8 @@ export async function fetchArticle(env: Env, raw: string): Promise<Article> {
   const rendered = await viaBrowser(env, finalUrl.toString())
   if (rendered && rendered.text.length >= MIN_ARTICLE_CHARS) return done(rendered, finalUrl.toString(), 'browser')
 
-  // 3. Gemini 读取
-  try {
+  // 3. Gemini 读取（“稍后学”保存时不用，避免花钱）
+  if (allowAi) try {
     const viaAi = await readUrl(env, url.toString())
     if (viaAi.text.length >= MIN_ARTICLE_CHARS) return done(viaAi, url.toString(), 'gemini')
   } catch (e) {

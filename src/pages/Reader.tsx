@@ -1,31 +1,41 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api, ApiError } from '../api'
 import type { Lesson } from '../../shared/practice'
-import { Link } from '../router'
+import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
 import { EnglishDefinition, MerriamWebsterLogo, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconBack, IconCheck, IconClose, IconPlusCircle } from '../components/icons'
+import { IconBack, IconCheck, IconClose, IconPlusCircle, IconSparkle } from '../components/icons'
 
-/** 读原文：点单词查词典（不花 AI 额度），长按选中短语或句子；想记的一键加入复习（AI 结合原句补全） */
-export default function Reader({ id }: { id: number }) {
+type Source = { title: string; text: string; url?: string | null }
+
+/**
+ * 读原文：点单词查词典（不花 AI 额度），长按选中短语或句子；想记的一键加入复习（AI 结合原句补全）。
+ * 每段末尾可以点「译」看这段中文；难的文章可以打开「对照」整篇显示中文。
+ * kind = lesson：练习的原文；kind = saved：稍后学的文章（底部可以直接生成练习）
+ */
+export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: number }) {
   const [lesson, setLesson] = useState<Lesson | null>(null)
-  const [source, setSource] = useState<{ title: string; text: string } | null>(null)
+  const [source, setSource] = useState<Source | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pick, setPick] = useState<{ text: string; context: string } | null>(null)
   const [selection, setSelection] = useState<{ text: string; context: string } | null>(null)
   const [saved, setSaved] = useState<Set<string>>(new Set())
+  // 翻译：zh[i] 是第 i 段的中文；open 是展开的段；peeked 统计“主动看了哪几段”
+  const [zh, setZh] = useState<Record<number, string>>({})
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const [loading, setLoading] = useState<Set<number>>(new Set())
+  const [peeked, setPeeked] = useState<Set<number>>(new Set())
+  const [bilingual, setBilingual] = useState(false)
+  const [creating, setCreating] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    api.lesson(id).then((r) => setLesson(r.lesson)).catch(() => {})
-    api
-      .lessonSource(id)
-      .then(setSource)
-      .catch((e) => setError(errMsg(e)))
-  }, [id])
+    if (kind === 'lesson') api.lesson(id).then((r) => setLesson(r.lesson)).catch(() => {})
+    ;(kind === 'lesson' ? api.lessonSource(id) : api.savedSource(id)).then(setSource).catch((e) => setError(errMsg(e)))
+  }, [kind, id])
 
-  // 长按选中一段文字：底部出现“加入复习”
+  // 长按选中一段文字：底部出现“查义 / 收藏”
   useEffect(() => {
     const onChange = () => {
       const sel = window.getSelection()
@@ -41,6 +51,46 @@ export default function Reader({ id }: { id: number }) {
 
   // 这份练习里 AI 挑出来的生词，在原文里标出来
   const marked = useMemo(() => new Set((lesson?.content.words ?? []).map((w) => w.word.toLowerCase().split(/\s+/)[0])), [lesson])
+  const paragraphs = useMemo(() => (source ? splitArticle(source.text) : []), [source])
+  const translatable = useMemo(() => paragraphs.map((p) => p.join(' ').split(/\s+/).length >= 4), [paragraphs])
+  const total = translatable.filter(Boolean).length
+
+  /** 翻译一批段落（已有的跳过），失败时提示 */
+  const fetchZh = useCallback(
+    async (idx: number[]) => {
+      const need = idx.filter((i) => zh[i] === undefined && !loading.has(i))
+      if (!need.length) return true
+      setLoading((s) => new Set([...s, ...need]))
+      try {
+        const r = await api.translate(need.map((i) => paragraphs[i].join(' ')))
+        setZh((m) => ({ ...m, ...Object.fromEntries(need.map((i, k) => [i, r.translations[k] ?? ''])) }))
+        return true
+      } catch (e) {
+        toast(errMsg(e), 'error')
+        return false
+      } finally {
+        setLoading((s) => new Set([...s].filter((i) => !need.includes(i))))
+      }
+    },
+    [zh, loading, paragraphs],
+  )
+
+  const toggleZh = useCallback(
+    async (i: number) => {
+      if (open.has(i)) return setOpen((s) => new Set([...s].filter((x) => x !== i)))
+      setPeeked((s) => new Set(s).add(i))
+      if (await fetchZh([i])) setOpen((s) => new Set(s).add(i))
+    },
+    [open, fetchZh],
+  )
+
+  // 对照模式：整篇按 20 段一批翻译，边翻边显示
+  const toggleBilingual = async () => {
+    if (bilingual) return setBilingual(false)
+    setBilingual(true)
+    const all = paragraphs.map((_, i) => i).filter((i) => translatable[i])
+    for (let k = 0; k < all.length; k += 20) if (!(await fetchZh(all.slice(k, k + 20)))) break
+  }
 
   const onTap = (e: React.MouseEvent) => {
     const sel = window.getSelection()
@@ -51,15 +101,46 @@ export default function Reader({ id }: { id: number }) {
     setPick({ text: word, context: sentenceOf(t) })
   }
 
-  const paragraphs = useMemo(() => (source ? splitArticle(source.text) : []), [source])
+  const createLesson = async () => {
+    if (creating) return
+    setCreating(true)
+    try {
+      const r = await api.createLesson({ savedId: id })
+      navigate(`/practice/${r.id}`)
+    } catch (e) {
+      toast(errMsg(e), 'error')
+      setCreating(false)
+    }
+  }
+
+  const title = lesson?.title || source?.title
+  const link = lesson?.source_url ?? source?.url
 
   return (
-    <div className="pt-safe flex flex-1 flex-col pb-24 md:pt-8">
-      <div className="flex items-center justify-between px-2 pr-4 md:px-6">
-        <Link to={`/practice/${id}`} aria-label="返回练习" className="flex h-11 w-11 items-center justify-center text-ink md:-ml-3">
+    <div className="pt-safe flex flex-1 flex-col pb-28 md:pt-8">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-bg/95 px-2 pr-4 backdrop-blur md:px-6">
+        <Link
+          to={kind === 'lesson' ? `/practice/${id}` : '/practice'}
+          aria-label="返回"
+          className="flex h-11 w-11 items-center justify-center text-ink md:-ml-3"
+        >
           <IconBack size={22} />
         </Link>
-        <span className="text-xs text-muted">点单词查义 · 长按选中短语</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted">
+          {peeked.size > 0 ? `看了 ${peeked.size} / ${total} 段翻译` : '点单词查义 · 长按选中短语'}
+        </span>
+        {source && total > 0 && (
+          <button
+            role="switch"
+            aria-checked={bilingual}
+            onClick={toggleBilingual}
+            className={`flex h-8 items-center rounded-full border px-3 text-xs font-medium ${
+              bilingual ? 'border-accent bg-accent-soft text-accent' : 'border-line bg-surface text-muted-2'
+            }`}
+          >
+            中英对照
+          </button>
+        )}
       </div>
 
       <article className="px-5 md:px-6">
@@ -74,20 +155,44 @@ export default function Reader({ id }: { id: number }) {
           </div>
         ) : (
           <>
-            <h1 className="m-0 mt-1 font-serif text-[26px] leading-tight font-medium tracking-tight">{lesson?.title || source.title}</h1>
-            {lesson?.source_url && (
-              <a href={lesson.source_url} target="_blank" rel="noreferrer" className="mt-1.5 block truncate text-xs text-accent">
-                {lesson.source_url}
+            <h1 className="m-0 mt-1 font-serif text-[26px] leading-tight font-medium tracking-tight">{title}</h1>
+            {link && (
+              <a href={link} target="_blank" rel="noreferrer" className="mt-1.5 block truncate text-xs text-accent">
+                {link}
               </a>
             )}
             <div ref={bodyRef} onClick={onTap} className="mt-5 font-serif text-[18px] leading-[1.75] text-ink">
               {paragraphs.map((p, i) => (
-                <Paragraph key={i} sentences={p} marked={marked} saved={saved} />
+                <Paragraph
+                  key={i}
+                  idx={i}
+                  sentences={p}
+                  marked={marked}
+                  saved={saved}
+                  canTranslate={translatable[i]}
+                  zh={bilingual || open.has(i) ? zh[i] : undefined}
+                  showZh={bilingual || open.has(i)}
+                  zhOpen={open.has(i)}
+                  loading={loading.has(i)}
+                  onToggleZh={toggleZh}
+                />
               ))}
             </div>
           </>
         )}
       </article>
+
+      {kind === 'saved' && source && !selection && !pick && (
+        <div className="fixed inset-x-0 bottom-0 z-30 flex justify-center bg-gradient-to-t from-bg via-bg/90 to-transparent px-4 pt-6 pb-[max(env(safe-area-inset-bottom),16px)]">
+          <button
+            onClick={createLesson}
+            disabled={creating}
+            className="flex h-12 w-full max-w-[560px] items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-60"
+          >
+            {creating ? <span className="animate-shimmer">正在生成练习…</span> : <><IconSparkle size={18} /> 读完了，生成练习</>}
+          </button>
+        </div>
+      )}
 
       {selection && !pick && (
         <SelectionBar
@@ -129,29 +234,73 @@ function sentenceOf(node: Node): string {
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
-const Paragraph = memo(function Paragraph({ sentences, marked, saved }: { sentences: string[]; marked: Set<string>; saved: Set<string> }) {
+const Paragraph = memo(function Paragraph({
+  idx,
+  sentences,
+  marked,
+  saved,
+  canTranslate,
+  zh,
+  showZh,
+  zhOpen,
+  loading,
+  onToggleZh,
+}: {
+  idx: number
+  sentences: string[]
+  marked: Set<string>
+  saved: Set<string>
+  canTranslate: boolean
+  zh?: string
+  showZh: boolean
+  zhOpen: boolean
+  loading: boolean
+  onToggleZh: (i: number) => void
+}) {
   return (
-    <p className="mt-0 mb-5">
-      {sentences.map((s, i) => (
-        <span key={i} data-s="">
-          {s.split(/([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])/).map((tok, j) => {
-            if (j % 2 === 0) return tok
-            const key = tok.toLowerCase()
-            const cls = saved.has(key)
-              ? 'underline decoration-accent decoration-2 underline-offset-4'
-              : marked.has(key)
-                ? 'underline decoration-accent/60 decoration-dotted decoration-2 underline-offset-4'
-                : ''
-            return (
-              <span key={j} data-w={tok} className={`cursor-pointer rounded-[3px] active:bg-accent-soft ${cls}`}>
-                {tok}
-              </span>
-            )
-          })}
-          {i < sentences.length - 1 ? ' ' : ''}
-        </span>
-      ))}
-    </p>
+    <div className="mb-5">
+      <p className="m-0">
+        {sentences.map((s, i) => (
+          <span key={i} data-s="">
+            {s.split(/([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])/).map((tok, j) => {
+              if (j % 2 === 0) return tok
+              const key = tok.toLowerCase()
+              const cls = saved.has(key)
+                ? 'underline decoration-accent decoration-2 underline-offset-4'
+                : marked.has(key)
+                  ? 'underline decoration-accent/60 decoration-dotted decoration-2 underline-offset-4'
+                  : ''
+              return (
+                <span key={j} data-w={tok} className={`cursor-pointer rounded-[3px] active:bg-accent-soft ${cls}`}>
+                  {tok}
+                </span>
+              )
+            })}
+            {i < sentences.length - 1 ? ' ' : ''}
+          </span>
+        ))}
+        {canTranslate && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleZh(idx)
+            }}
+            aria-label={zhOpen ? '收起翻译' : '看这段翻译'}
+            aria-expanded={zhOpen}
+            className={`ml-1.5 inline-flex h-6 items-center rounded-md border-0 px-1.5 align-[2px] font-sans text-[11px] font-medium ${
+              zhOpen ? 'bg-accent-soft text-accent' : 'bg-chip text-muted'
+            } ${loading ? 'animate-shimmer' : ''}`}
+          >
+            译
+          </button>
+        )}
+      </p>
+      {showZh && canTranslate && (
+        <p className={`m-0 mt-1.5 font-sans text-[14px] leading-relaxed ${zhOpen ? 'text-muted-2' : 'text-muted'}`}>
+          {zh ?? <span className="inline-block h-4 w-2/3 animate-shimmer rounded bg-surface align-middle" />}
+        </p>
+      )}
+    </div>
   )
 })
 

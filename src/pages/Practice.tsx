@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { api } from '../api'
+import { api, type SavedArticle } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
 import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
-import { IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
+import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
 
 type Source = 'url' | 'text' | 'image'
@@ -11,9 +11,16 @@ type Source = 'url' | 'text' | 'image'
 export default function Practice() {
   const [stats, setStats] = useState<PracticeStats | null>(null)
   const [lessons, setLessons] = useState<LessonSummary[] | null>(null)
+  const [saved, setSaved] = useState<SavedArticle[]>([])
+  const loadSaved = () =>
+    api
+      .saved()
+      .then((r) => setSaved(r.saved))
+      .catch(() => {})
 
   useEffect(() => {
     api.practiceStats().then(setStats).catch((e) => toast(errMsg(e), 'error'))
+    loadSaved()
     api
       .lessons()
       .then((r) => setLessons(r.lessons))
@@ -26,7 +33,8 @@ export default function Practice() {
         <PageTitle eyebrow="英语教练" title="练习" />
       </div>
       <StatsCard stats={stats} />
-      <Composer />
+      <Composer onSaved={loadSaved} />
+      {saved.length > 0 && <SavedList items={saved} onChange={setSaved} />}
 
       <h2 className="mt-6 mb-1 text-[13px] font-semibold">最近的练习</h2>
       {!lessons ? (
@@ -59,6 +67,63 @@ export default function Practice() {
       )}
     </div>
   )
+}
+
+/* ---------------------------- 稍后学 ---------------------------- */
+
+function SavedList({ items, onChange }: { items: SavedArticle[]; onChange: (l: SavedArticle[]) => void }) {
+  const remove = async (id: number) => {
+    const prev = items
+    onChange(items.filter((x) => x.id !== id))
+    try {
+      await api.deleteSaved(id)
+    } catch (e) {
+      onChange(prev)
+      toast(errMsg(e), 'error')
+    }
+  }
+  return (
+    <>
+      <h2 className="mt-6 mb-0 flex items-baseline gap-1.5 text-[13px] font-semibold">
+        稍后学 <span className="font-normal text-muted">{items.length}</span>
+      </h2>
+      {items.length > 10 && <p className="mt-0.5 mb-0 text-xs text-muted">攒得有点多了，先消化几篇吧 · 最早存的在最上面</p>}
+      <div className="mt-1.5 overflow-hidden rounded-2xl border border-line-soft bg-surface">
+        {items.map((s, i) => (
+          <div key={s.id} className={`flex items-center gap-1 pr-1.5 ${i ? 'border-t border-line-soft' : ''}`}>
+            <Link to={`/practice/saved/${s.id}`} className="flex min-w-0 flex-1 flex-col gap-1 py-3.5 pl-4 text-ink no-underline">
+              <div className="truncate font-serif text-[17px] leading-snug">{s.title || s.url}</div>
+              <div className="flex items-center gap-2 text-xs text-muted">
+                <span>{dateLabel(s.created_at)}</span>
+                {s.url && (
+                  <>
+                    <span>·</span>
+                    <span className="truncate">{hostOf(s.url)}</span>
+                  </>
+                )}
+                {s.chars === null && <span className="shrink-0 text-faint">· 打开时读取正文</span>}
+              </div>
+            </Link>
+            <button
+              onClick={() => remove(s.id)}
+              aria-label={`删除：${s.title}`}
+              className="flex h-10 w-10 shrink-0 items-center justify-center border-0 bg-transparent text-faint"
+            >
+              <IconClose size={16} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
+const hostOf = (u: string) => {
+  try {
+    return new URL(u).hostname.replace(/^www\./, '')
+  } catch {
+    return u
+  }
 }
 
 function dateLabel(ts: number) {
@@ -181,7 +246,7 @@ function sharedInput(): { url: string; text: string } | null {
   return { url, text }
 }
 
-function Composer() {
+function Composer({ onSaved }: { onSaved: () => void }) {
   const [shared] = useState(sharedInput)
   const [source, setSource] = useState<Source>(shared && !shared.url && shared.text.length > 80 ? 'text' : 'url')
   const [url, setUrl] = useState(shared?.url ?? '')
@@ -215,6 +280,24 @@ function Composer() {
       setImages((l) => [...l, ...out])
     } catch {
       toast('图片读取失败，换一张试试', 'error')
+    }
+  }
+
+  /** 稍后学：只保存原文，不调 AI */
+  const [saving, setSaving] = useState(false)
+  const later = async () => {
+    if (!ready || saving) return
+    setSaving(true)
+    try {
+      const r = await api.save(source === 'url' ? { url: url.trim() } : { text: text.trim() })
+      toast(r.hasText ? '已存进稍后学' : '已存下链接，正文打开时再读')
+      setUrl('')
+      setText('')
+      onSaved()
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -379,17 +462,24 @@ function Composer() {
       </div>
       {level && <p className="mt-1.5 mb-0 text-xs leading-relaxed text-muted">{LEVELS[level - 1].desc}</p>}
 
-      <button
-        onClick={create}
-        disabled={!ready || busy}
-        className="mt-3.5 flex h-12 w-full items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
-      >
-        {busy ? (
-          <span className="animate-shimmer">AI 正在读文章、出练习…（10–20 秒）</span>
-        ) : (
-          '生成练习'
+      <div className="mt-3.5 flex gap-2.5">
+        {source !== 'image' && !busy && (
+          <button
+            onClick={later}
+            disabled={!ready || saving}
+            className="flex h-12 shrink-0 items-center justify-center gap-1.5 rounded-[14px] border border-line bg-surface px-4 text-[15px] font-medium text-ink disabled:opacity-40"
+          >
+            {saving ? <span className="animate-shimmer">保存中…</span> : <><IconBookmark size={17} /> 稍后学</>}
+          </button>
         )}
-      </button>
+        <button
+          onClick={create}
+          disabled={!ready || busy}
+          className="flex h-12 flex-1 items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
+        >
+          {busy ? <span className="animate-shimmer">AI 正在读文章、出练习…（10–20 秒）</span> : '生成练习'}
+        </button>
+      </div>
     </section>
   )
 }

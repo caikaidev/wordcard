@@ -33,6 +33,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 const json = (body: unknown) => JSON.stringify(body)
 
+export interface SavedArticle {
+  id: number
+  url: string | null
+  title: string
+  created_at: number
+  /** 已保存的原文字数；null 表示还没读到，打开时再读 */
+  chars: number | null
+}
+
 export const api = {
   stats: () => req<{ active: number; done: number; due: number }>('/stats'),
   items: (status: ItemStatus, q = '') =>
@@ -49,6 +58,13 @@ export const api = {
     req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
   lookup: (word: string) => req<{ source: string; senses: { pos: string; def: string }[] }>(`/lookup?word=${encodeURIComponent(word)}`),
   lessonSource: (id: number) => req<{ title: string; text: string }>(`/practice/lessons/${id}/source`),
+  saved: () => req<{ saved: SavedArticle[] }>('/practice/saved'),
+  save: (input: { url?: string; text?: string }) =>
+    req<{ id: number; title: string; hasText: boolean }>('/practice/saved', { method: 'POST', body: json(input) }),
+  savedSource: (id: number) => req<{ title: string; text: string; url: string | null }>(`/practice/saved/${id}/source`),
+  deleteSaved: (id: number) => req<void>(`/practice/saved/${id}`, { method: 'DELETE' }),
+  translate: (paragraphs: string[]) =>
+    req<{ translations: string[] }>('/practice/translate', { method: 'POST', body: json({ paragraphs }) }),
   settings: () => req<{ current: Settings; defaults: Settings; me: Me }>('/settings'),
   saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
     req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),
@@ -57,7 +73,7 @@ export const api = {
   shareData: () => req<ShareData>('/practice/share'),
   lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
   lesson: (id: number) => req<{ lesson: Lesson }>(`/practice/lessons/${id}`),
-  createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level: Level }) =>
+  createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level?: Level; savedId?: number }) =>
     req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }),
   deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),
   submit: (id: number, idx: number, text: string) =>

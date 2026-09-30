@@ -139,7 +139,7 @@ export interface GeminiPart {
   inlineData?: { mimeType: string; data: string }
 }
 
-export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade'
+export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade' | 'translate'
 
 /** 记录一次调用的 token 用量（失败不影响主流程） */
 async function recordUsage(env: Env, kind: UsageKind, model: string, input: number, output: number) {
@@ -240,6 +240,26 @@ Rules:
   if (!ok || !out || out.startsWith(NO_ACCESS)) throw new GeminiError('读不到这个网页', 400)
   const [first, ...rest] = out.split('\n')
   return { title: first.replace(/^#+\s*/, '').trim(), text: rest.join('\n').trim() }
+}
+
+/* ------------------------------ 段落翻译 ------------------------------ */
+
+/** 按段翻译成中文（阅读时对照用）；返回与输入等长的数组 */
+export async function translateParagraphs(env: Env, paras: string[]): Promise<string[]> {
+  const prompt = `把下面的英文段落逐段翻译成自然、准确的简体中文，给中国的英语学习者对照阅读。
+要求：意思忠实，不增不减；技术术语保留常见译法，必要时括号里保留英文原词；列表项开头的 "•" 照样保留。
+返回 JSON：translations 数组，长度必须是 ${paras.length}，第 i 项对应第 i 段。
+
+${paras.map((p, i) => `[${i + 1}] ${p}`).join('\n\n')}`
+  const r = await generateJson<{ translations?: string[] }>(
+    env,
+    prompt,
+    { type: 'OBJECT', properties: { translations: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['translations'] },
+    'translate',
+    0.2,
+  )
+  const out = Array.isArray(r.translations) ? r.translations : []
+  return paras.map((_, i) => (typeof out[i] === 'string' ? out[i].trim() : ''))
 }
 
 /* ------------------------------ 补全卡片 ------------------------------ */

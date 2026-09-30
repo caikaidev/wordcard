@@ -9,6 +9,7 @@ const KINDS: { id: string; label: string }[] = [
   { id: 'grade', label: '批改' },
   { id: 'enrich', label: 'AI 补全' },
   { id: 'remix', label: 'AI 重组' },
+  { id: 'translate', label: '段落翻译' },
   { id: 'tts', label: '语音' },
 ]
 

@@ -187,3 +187,8 @@ export const IconClipboard = ({ size, ...p }: P) => (
     <path d="M9.5 11h5M9.5 14.5h3.5" />
   </svg>
 )
+export const IconBookmark = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M6.5 4.5A1.5 1.5 0 0 1 8 3h8a1.5 1.5 0 0 1 1.5 1.5V21L12 17l-5.5 4z" />
+  </svg>
+)
