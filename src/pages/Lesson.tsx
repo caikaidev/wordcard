@@ -5,7 +5,7 @@ import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
 import { Chip, Highlighted, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconBack, IconCheck, IconLock, IconPlusCircle, IconTrash } from '../components/icons'
+import { IconArrowRight, IconBack, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
 
 const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
 
@@ -225,6 +225,13 @@ function AddButton({ done, onClick }: { done: boolean; onClick: () => void }) {
 
 /* ---------------------------- 单句任务 ---------------------------- */
 
+/** 模板里的空：___（三个及以上下划线） */
+const BLANK_RE = /_{2,}/g
+/** 句子开头模板末尾的省略号，预填时去掉，光标直接接着写 */
+const trimStarter = (t: string) => t.replace(/\s*(\.{3}|…)\s*$/, ' ').replace(/^\s+/, '')
+/** 空里写了中文但没加括号时自动加上，批改时按“不会的部分”处理 */
+const wrapCjk = (v: string) => v.replace(/(^|[^(（])([\u3400-\u9fff][\u3400-\u9fff\s，、。]*[\u3400-\u9fff]|[\u3400-\u9fff])(?![)）])/g, '$1($2)')
+
 function TaskStep({
   lesson,
   idx,
@@ -247,10 +254,19 @@ function TaskStep({
   // 前一句提交过才展开下一句，保持“一句一句来”
   const prevDone = idx === 0 || lesson.submissions.some((s) => s.idx === idx - 1)
   const [open, setOpen] = useState(prevDone && !passed)
-  const [text, setText] = useState(last?.text ?? (lesson.level === 1 ? task.template : lesson.level === 2 ? task.template : ''))
+  const blanks = !last && lesson.level === 1 && /_{2,}/.test(task.template)
+  // 第一次写：填空档用行内填空；其它情况用整句输入框（引导档预填句子开头）
+  const [mode, setMode] = useState<'blanks' | 'free'>(blanks ? 'blanks' : 'free')
+  const [text, setText] = useState(last?.text ?? (lesson.level === 2 ? trimStarter(task.template) : ''))
+  const [fills, setFills] = useState<string[]>(() => Array(task.template.split(BLANK_RE).length - 1).fill(''))
+  // 有批改结果时先收起输入框，看完结果再点“改一改”
+  const [editing, setEditing] = useState(!last)
   const [busy, setBusy] = useState(false)
   const [showOld, setShowOld] = useState(false)
   const areaRef = useRef<HTMLTextAreaElement>(null)
+  const resultRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
+  const justGraded = useRef(false)
 
   useEffect(() => {
     if (prevDone && !passed) setOpen(true)
@@ -262,13 +278,29 @@ function TaskStep({
       el.style.height = 'auto'
       el.style.height = `${Math.max(el.scrollHeight, 88)}px`
     }
-  }, [text, open])
+  }, [text, open, editing, mode])
+
+  // 批改回来后，把视线带到新结果的顶部（结果出现在输入框上方，不滚动的话看不到）
+  useEffect(() => {
+    if (!justGraded.current || !last) return
+    justGraded.current = false
+    requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }, [last?.id])
+
+  const parts = task.template.split(BLANK_RE)
+  const composed = mode === 'blanks' ? parts.map((p, i) => p + (i < fills.length ? wrapCjk(fills[i].trim()) : '')).join('') : text
+  const missing = mode === 'blanks' ? fills.filter((f) => !f.trim()).length : 0
+  const canSubmit = !busy && !!composed.trim() && missing === 0
 
   const submit = async () => {
-    if (!text.trim() || busy) return
+    if (!canSubmit) return
     setBusy(true)
     try {
-      const r = await api.submit(lesson.id, idx, text.trim())
+      const r = await api.submit(lesson.id, idx, composed.replace(/\s+/g, ' ').trim())
+      justGraded.current = true
+      setText(composed.replace(/\s+/g, ' ').trim())
+      setMode('free')
+      setEditing(false)
       onGraded(r.lesson)
     } catch (e) {
       toast(errMsg(e), 'error')
@@ -277,10 +309,26 @@ function TaskStep({
     }
   }
 
+  const startEditing = () => {
+    setEditing(true)
+    requestAnimationFrame(() => {
+      editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      areaRef.current?.focus({ preventScroll: true })
+    })
+  }
+
+  const goNext = () => {
+    const next = document.getElementById(`task-step-${idx + 1}`)
+    next?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   const status = passed ? '通过' : last ? '需修改' : prevDone ? '待提交' : '未开始'
 
   return (
-    <div className={`overflow-hidden rounded-2xl border bg-surface ${open ? 'border-line' : 'border-line-soft'}`}>
+    <div
+      id={`task-step-${idx}`}
+      className={`scroll-mt-3 overflow-hidden rounded-2xl border bg-surface ${open ? 'border-line' : 'border-line-soft'}`}
+    >
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
@@ -300,7 +348,7 @@ function TaskStep({
       {open && (
         <div className="flex flex-col gap-3 px-4 pb-4">
           {task.prompt && <p className="m-0 text-[13px] leading-relaxed text-muted">{task.prompt}</p>}
-          {task.template && (
+          {task.template && !(editing && mode === 'blanks') && (
             <div className="rounded-xl bg-chip px-3.5 py-2.5 font-serif text-[15px] leading-relaxed">
               <span className="mr-1.5 font-sans text-xs text-muted">{lesson.level === 1 ? '模板' : '开头'}</span>
               {task.template}
@@ -318,33 +366,170 @@ function TaskStep({
           )}
           {showOld &&
             history.slice(0, -1).map((s) => <GradeView key={s.id} sub={s} compact onRemember={onRemember} rememberAdded={rememberAdded} />)}
-          {last && <GradeView sub={last} onRemember={onRemember} rememberAdded={rememberAdded} />}
+          {last && (
+            <div ref={resultRef} className="scroll-mt-3">
+              <GradeView sub={last} onRemember={onRemember} rememberAdded={rememberAdded} />
+            </div>
+          )}
+
+          {/* 看完结果：改一改 / 下一句 */}
+          {last && !editing && (
+            <div className="flex gap-2.5">
+              <button
+                onClick={startEditing}
+                className={`flex h-11 flex-1 items-center justify-center gap-1.5 rounded-[14px] text-[15px] font-medium ${
+                  passed ? 'border border-line bg-surface text-ink' : 'border-0 bg-invert-bg text-invert-fg'
+                }`}
+              >
+                <IconPen size={17} /> {passed ? '再改进一版' : '改一改'}
+              </button>
+              {idx < 2 && (
+                <button
+                  onClick={goNext}
+                  className={`flex h-11 flex-1 items-center justify-center gap-1.5 rounded-[14px] text-[15px] font-medium ${
+                    passed ? 'border-0 bg-invert-bg text-invert-fg' : 'border border-line bg-surface text-ink'
+                  }`}
+                >
+                  下一句 <IconArrowRight size={17} />
+                </button>
+              )}
+            </div>
+          )}
 
           {/* 输入 */}
-          <div className="flex flex-col gap-2">
-            <label htmlFor={`task-${idx}`} className="text-xs text-muted">
-              {last ? (passed ? '还可以再改进一版' : '按提示改一改，再提交') : '你的句子'}
-              {lesson.level < 3 && <span className="text-faint"> · 写不出的地方可以先写中文，用括号括起来</span>}
-            </label>
-            <textarea
-              id={`task-${idx}`}
-              ref={areaRef}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              rows={3}
-              autoCapitalize="sentences"
-              className="w-full resize-none overflow-hidden rounded-xl border border-line bg-bg px-3.5 py-3 font-serif text-[16px] leading-relaxed text-ink outline-none focus:border-muted"
-            />
-            <button
-              onClick={submit}
-              disabled={busy || !text.trim()}
-              className="flex h-12 items-center justify-center rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
-            >
-              {busy ? <span className="animate-shimmer">教练批改中…</span> : last ? '再次提交' : '提交批改'}
-            </button>
-          </div>
+          {editing && (
+            <div ref={editorRef} className="flex scroll-mt-3 flex-col gap-2">
+              <div className="flex items-baseline justify-between gap-2">
+                <label htmlFor={`task-${idx}`} className="text-xs text-muted">
+                  {last ? (passed ? '再改进一版' : '按提示改一改，再提交') : mode === 'blanks' ? '把空填上' : '你的句子'}
+                  {lesson.level < 3 && <span className="text-faint"> · 写不出的地方可以先写中文</span>}
+                </label>
+                {mode === 'blanks' && (
+                  <button
+                    onClick={() => {
+                      setText(composed.replace(BLANK_RE, '').replace(/\s+/g, ' ').trim())
+                      setMode('free')
+                    }}
+                    className="shrink-0 border-0 bg-transparent p-0 text-xs text-muted underline decoration-line underline-offset-4"
+                  >
+                    改成整句自己写
+                  </button>
+                )}
+              </div>
+
+              {mode === 'blanks' ? (
+                <BlankFill parts={parts} fills={fills} onChange={setFills} onSubmit={submit} />
+              ) : (
+                <textarea
+                  id={`task-${idx}`}
+                  ref={areaRef}
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  rows={3}
+                  autoCapitalize="sentences"
+                  className="w-full resize-none overflow-hidden rounded-xl border border-line bg-bg px-3.5 py-3 font-serif text-[16px] leading-relaxed text-ink outline-none focus:border-muted"
+                />
+              )}
+
+              <button
+                onClick={submit}
+                disabled={!canSubmit}
+                className="flex h-12 items-center justify-center rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
+              >
+                {busy ? (
+                  <span className="animate-shimmer">教练批改中…</span>
+                ) : missing > 0 && fills.some((f) => f.trim()) ? (
+                  `还有 ${missing} 个空没填`
+                ) : last ? (
+                  '再次提交'
+                ) : (
+                  '提交批改'
+                )}
+              </button>
+              {last && (
+                <button onClick={() => setEditing(false)} className="self-center border-0 bg-transparent p-1 text-xs text-muted">
+                  先不改了
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
+    </div>
+  )
+}
+
+/** 行内填空：模板原样显示，空的位置直接输入（可换行的行内输入框） */
+function BlankFill({
+  parts,
+  fills,
+  onChange,
+  onSubmit,
+}: {
+  parts: string[]
+  fills: string[]
+  onChange: (f: string[]) => void
+  onSubmit: () => void
+}) {
+  const refs = useRef<(HTMLSpanElement | null)[]>([])
+  const focusBlank = (i: number) => {
+    const el = refs.current[i]
+    if (!el) return
+    el.focus()
+    // 光标放到末尾
+    const r = document.createRange()
+    r.selectNodeContents(el)
+    r.collapse(false)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(r)
+  }
+  return (
+    <div
+      className="rounded-xl border border-line bg-bg px-3.5 py-3 font-serif text-[17px] leading-[2.1] text-ink"
+      onClick={(e) => {
+        // 点在空白处：跳到第一个没填的空
+        if (e.target === e.currentTarget) focusBlank(Math.max(0, fills.findIndex((f) => !f.trim())))
+      }}
+    >
+      {parts.map((p, i) => (
+        <span key={i}>
+          {p}
+          {i < fills.length && (
+            <span
+              ref={(el) => {
+                refs.current[i] = el
+              }}
+              role="textbox"
+              aria-label={`第 ${i + 1} 个空`}
+              contentEditable
+              suppressContentEditableWarning
+              autoCapitalize="off"
+              spellCheck
+              inputMode="text"
+              enterKeyHint={i === fills.length - 1 ? 'send' : 'next'}
+              onInput={(e) => {
+                const next = [...fills]
+                next[i] = e.currentTarget.textContent ?? ''
+                onChange(next)
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                e.preventDefault()
+                if (i < fills.length - 1) focusBlank(i + 1)
+                else onSubmit()
+              }}
+              onPaste={(e) => {
+                e.preventDefault()
+                document.execCommand('insertText', false, e.clipboardData.getData('text/plain').replace(/\s+/g, ' '))
+              }}
+              className={`mx-0.5 inline-block min-w-[4.5em] rounded-md border-b-2 px-1.5 align-baseline leading-normal whitespace-pre-wrap outline-none focus:border-accent focus:bg-accent-soft ${
+                fills[i]?.trim() ? 'border-accent/60 bg-accent-soft/60' : 'border-muted/50 bg-chip'
+              }`}
+            />
+          )}
+        </span>
+      ))}
     </div>
   )
 }
@@ -389,6 +574,13 @@ function GradeView({
         <>
           {r.praise && <p className="m-0 text-[13px] leading-relaxed">{r.praise}</p>}
 
+          {r.keyPoint && (
+            <div className="rounded-lg bg-accent-soft px-3 py-2.5 text-[13px] leading-relaxed">
+              <div className="mb-0.5 text-xs font-semibold text-accent">最重要的一个改进点</div>
+              {r.keyPoint}
+            </div>
+          )}
+
           {r.corrections.length > 0 && (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {r.corrections.map((x, i) => (
@@ -411,13 +603,6 @@ function GradeView({
                   <span className="font-serif text-[15px]">{t.en}</span>
                 </div>
               ))}
-            </div>
-          )}
-
-          {r.keyPoint && (
-            <div className="rounded-lg bg-accent-soft px-3 py-2.5 text-[13px] leading-relaxed">
-              <div className="mb-0.5 text-xs font-semibold text-accent">最重要的一个改进点</div>
-              {r.keyPoint}
             </div>
           )}
 
