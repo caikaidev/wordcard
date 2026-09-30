@@ -35,12 +35,58 @@ function done(ok: boolean) {
   f?.(ok)
 }
 
+/* ---------------------------- 预取 ---------------------------- */
+// Gemini 生成一段语音要几秒；卡片一出现就在后台把音频下好，点播放时直接用本地 blob
+
+const ready = new Map<string, string>() // text -> blob URL
+const pending = new Set<string>()
+const queue: string[] = []
+let running = 0
+const MAX_READY = 80
+
+function pump() {
+  while (running < 2 && queue.length) {
+    const text = queue.shift()!
+    running++
+    fetch(ttsUrl(text))
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!b) return
+        ready.set(text, URL.createObjectURL(b))
+        if (ready.size > MAX_READY) {
+          const [oldest, url] = ready.entries().next().value!
+          if (oldest !== state.text) {
+            URL.revokeObjectURL(url)
+            ready.delete(oldest)
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        pending.delete(text)
+        running--
+        pump()
+      })
+  }
+}
+
+/** 在后台准备这些文本的语音（已准备或正在准备的会跳过） */
+export function prefetch(texts: (string | undefined | null)[]) {
+  for (const t of texts) {
+    const text = t?.trim()
+    if (!text || ready.has(text) || pending.has(text)) continue
+    pending.add(text)
+    queue.push(text)
+  }
+  pump()
+}
+
 /** 播放一段文本；返回的 Promise 在播放结束（或被打断）时 resolve */
 export function speak(text: string, slow = false): Promise<boolean> {
   const a = audio()
   if (finish) done(false)
   set({ text, loading: true })
-  a.src = ttsUrl(text, slow)
+  a.src = (!slow && ready.get(text.trim())) || ttsUrl(text, slow)
   return new Promise<boolean>((resolve) => {
     finish = resolve
     a.play().catch(() => done(false))

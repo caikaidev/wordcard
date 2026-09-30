@@ -221,7 +221,8 @@ app.get('/tts', async (c) => {
   if (!text) return c.json({ error: 'text 不能为空' }, 400)
   const slow = c.req.query('slow') === '1'
 
-  const keySource = `${c.env.GEMINI_TTS_MODEL}|${c.env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
+  // v2：旧缓存里的音频带了朗读说明前缀，换个 key 让它们失效
+  const keySource = `v2|${c.env.GEMINI_TTS_MODEL}|${c.env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keySource))
   const key = `tts/${[...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')}.wav`
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
+import { prefetch } from '../audio'
 import type { CardMeta, EnrichResult } from '../../shared/types'
 import { refreshStats } from '../store'
 import { Card, Chip, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
@@ -27,7 +28,11 @@ export default function Add() {
     setLoading(true)
     try {
       const r = await api.enrich(t, draft?.text === t ? draft.type : undefined)
-      if (id === reqId.current) setDraft(r)
+      if (id === reqId.current) {
+        setDraft(r)
+        // 大概率会保存，先把发音准备好（复习时也直接命中缓存）
+        prefetch([r.text])
+      }
     } catch (e) {
       if (id === reqId.current) toast(errMsg(e), 'error')
     } finally {

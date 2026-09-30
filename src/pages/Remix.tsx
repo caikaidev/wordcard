@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { speak, stop } from '../audio'
+import { prefetch, speak, stop } from '../audio'
 import type { RemixResult } from '../../shared/types'
 import { Link } from '../router'
 import { Highlighted, SpeakButton, errMsg } from '../components/ui'
@@ -23,6 +23,7 @@ export default function Remix() {
     setError(null)
     try {
       const r = await api.remix(exclude)
+      prefetch(r.sentences.map((x) => x.en))
       cache = r
       setData(r)
     } catch (e) {

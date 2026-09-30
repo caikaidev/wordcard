@@ -191,7 +191,8 @@ const style = (slow: boolean) =>
 
 async function ttsGenerateContent(env: Env, text: string, slow: boolean) {
   const parts = await generate(env, env.GEMINI_TTS_MODEL, {
-    contents: [{ role: 'user', parts: [{ text: `${style(slow)}: ${text}` }] }],
+    // 只发原文：TTS 模型会把前面的风格说明也一起读出来
+    contents: [{ role: 'user', parts: [{ text: slow ? `${style(true)}: ${text}` : text }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice(env) } } },

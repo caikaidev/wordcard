@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
-import { speak, stop } from '../audio'
+import { prefetch, speak, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
 import type { Grade, Item } from '../../shared/types'
 import { Link } from '../router'
@@ -40,6 +40,13 @@ export default function Review() {
 
   const card = queue?.[0]
   const total = reviewed + (queue?.length ?? 0)
+
+  // 提前准备当前卡片和下一张的语音，点播放时基本秒出
+  useEffect(() => {
+    if (!queue?.length) return
+    const [cur, next] = queue
+    prefetch([cur.text, cur.meta.example, next?.text, next?.meta.example])
+  }, [queue])
 
   const advance = (requeue?: Item) => {
     stop()
