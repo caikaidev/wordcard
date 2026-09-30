@@ -6,7 +6,7 @@ import type { Grade, Item } from '../../shared/types'
 import { Link } from '../router'
 import { refreshStats, useStats } from '../store'
 import { Card, Chip, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconAlert, IconCheckCircle, IconPlusCircle, IconSparkle } from '../components/icons'
+import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconSparkle } from '../components/icons'
 
 const today = () => {
   const d = new Date()
@@ -16,6 +16,10 @@ const today = () => {
 export default function Review() {
   const [queue, setQueue] = useState<Item[] | null>(null)
   const [reviewed, setReviewed] = useState(0)
+  // 本次跳过的卡片：不评分、不改复习时间，只在这一轮里先放一边
+  const [skipped, setSkipped] = useState<Item[]>([])
+  const [drag, setDrag] = useState(0)
+  const touch = useRef<{ x: number; y: number; horizontal?: boolean } | null>(null)
   const [flipped, setFlipped] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -27,6 +31,7 @@ export default function Review() {
       const { items } = await api.review()
       setQueue(items)
       setReviewed(0)
+      setSkipped([])
       setFlipped(false)
     } catch (e) {
       setError(errMsg(e))
@@ -39,7 +44,7 @@ export default function Review() {
   }, [load])
 
   const card = queue?.[0]
-  const total = reviewed + (queue?.length ?? 0)
+  const total = reviewed + (queue?.length ?? 0) + skipped.length
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
   // Gemini TTS 每天只有 100 次额度，所以只预取最常点的单词发音，例句等你点了再生成
@@ -56,6 +61,43 @@ export default function Review() {
     })
     setReviewed((n) => n + (requeue ? 0 : 1))
     setFlipped(false)
+  }
+
+  const skip = () => {
+    if (!card || busy) return
+    stop()
+    setSkipped((l) => [...l, card])
+    setQueue((q) => (q ? q.slice(1) : q))
+    setFlipped(false)
+    setDrag(0)
+  }
+
+  const restoreSkipped = () => {
+    setQueue((q) => [...(q ?? []), ...skipped])
+    setSkipped([])
+    setFlipped(false)
+  }
+
+  // 手机上把卡片往左滑 = 跳过
+  const onTouchStart = (e: React.TouchEvent) => {
+    touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+  }
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = touch.current
+    if (!t) return
+    const dx = e.touches[0].clientX - t.x
+    const dy = e.touches[0].clientY - t.y
+    if (t.horizontal === undefined) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
+      t.horizontal = Math.abs(dx) > Math.abs(dy)
+    }
+    if (t.horizontal) setDrag(Math.min(0, dx))
+  }
+  const onTouchEnd = () => {
+    const horizontal = touch.current?.horizontal
+    touch.current = null
+    if (horizontal && drag < -90) skip()
+    else setDrag(0)
   }
 
   const grade = async (g: Grade) => {
@@ -105,6 +147,8 @@ export default function Review() {
       speak(card.text)
     } else if (k === 'd' && flipped) {
       markDone()
+    } else if (k === 's' || k === 'arrowright') {
+      skip()
     }
   }
   useEffect(() => {
@@ -145,8 +189,21 @@ export default function Review() {
           />
         </div>
         <div className={`tabular text-xs text-muted md:text-[13px] ${total ? '' : 'invisible'}`}>
-          {Math.min(reviewed + 1, total)} / {total}
+          {card ? Math.min(reviewed + 1, total) : reviewed} / {total}
+          {skipped.length > 0 && <span className="text-faint"> · 跳过 {skipped.length}</span>}
         </div>
+        {card && (
+          <button
+            onClick={skip}
+            disabled={busy}
+            aria-label="跳过这张（仅本次）"
+            title="跳过这张，仅本次有效（手机上也可以左滑卡片）"
+            className="-my-1 flex h-8 items-center gap-1 rounded-full border border-line bg-surface px-3 text-xs text-muted-2 disabled:opacity-40"
+          >
+            跳过
+            <IconChevronRight size={14} />
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col pt-3 pb-3 md:flex-none md:pt-5 md:pb-4">
@@ -154,6 +211,21 @@ export default function Review() {
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue ? (
           <Card className="min-h-[300px] flex-1 animate-shimmer md:h-[440px] md:flex-none" />
+        ) : !card && skipped.length > 0 ? (
+          <Empty
+            title={`还有 ${skipped.length} 张跳过的卡片`}
+            desc={`${reviewed ? `本轮已复习 ${reviewed} 张。` : ''}跳过的卡片不会改变复习时间，下次打开还会出现。`}
+            action={
+              <div className="flex gap-2.5">
+                <Link to="/practice" className={`${btnGhost} no-underline`}>
+                  先到这里
+                </Link>
+                <button className={btnPrimary} onClick={restoreSkipped}>
+                  现在复习它们
+                </button>
+              </div>
+            }
+          />
         ) : !card ? (
           <Empty
             title={reviewed ? '今天的复习完成了' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
@@ -178,13 +250,25 @@ export default function Review() {
             }
           />
         ) : (
-          <Card key={`${card.id}-${flipped}-${reviewed}`} className="flex min-h-[300px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none">
-            {flipped ? (
-              <Back item={card} onDone={markDone} busy={busy} />
-            ) : (
-              <Front item={card} onFlip={() => setFlipped(true)} />
-            )}
-          </Card>
+          <div
+            className={`flex min-h-0 flex-1 flex-col md:flex-none ${drag ? '' : 'transition-transform duration-200'}`}
+            style={{ transform: drag ? `translateX(${drag}px) rotate(${drag / 40}deg)` : undefined, opacity: drag ? Math.max(0.4, 1 + drag / 300) : undefined, touchAction: 'pan-y' }}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+            onTouchCancel={onTouchEnd}
+          >
+            <Card
+              key={`${card.id}-${flipped}-${reviewed}-${skipped.length}`}
+              className="flex min-h-[300px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none"
+            >
+              {flipped ? (
+                <Back item={card} onDone={markDone} busy={busy} />
+              ) : (
+                <Front item={card} onFlip={() => setFlipped(true)} />
+              )}
+            </Card>
+          </div>
         )}
       </div>
 
@@ -205,7 +289,7 @@ export default function Review() {
             </div>
           )}
           <div className="mt-5 hidden text-center text-xs text-muted md:block">
-            空格 翻转 · 1 / 2 / 3 评分 · P 播放 · D 标记 DONE
+            空格 翻转 · 1 / 2 / 3 评分 · P 播放 · D 标记 DONE · S 跳过
           </div>
         </div>
       )}
