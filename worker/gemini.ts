@@ -211,12 +211,13 @@ export async function readUrl(env: Env, url: string): Promise<{ title: string; t
   const prompt = `Read the web page at ${url} and output its main article content as plain text.
 Rules:
 - First line: the article title. Then an empty line. Then the article body, keeping paragraph breaks.
+- Output the COMPLETE article from beginning to end. Do not summarize, shorten or skip sections.
 - Keep the author's original wording. Leave out navigation, ads, cookie notices, related links and comments.
 - If the page cannot be retrieved or has no readable article, output exactly: ${NO_ACCESS}`
   const body = (thinking: boolean) => ({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     tools: [{ url_context: {} }],
-    generationConfig: { temperature: 0, maxOutputTokens: 8192, ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) },
+    generationConfig: { temperature: 0, maxOutputTokens: 16384, ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) },
   })
   type Resp = {
     candidates?: {

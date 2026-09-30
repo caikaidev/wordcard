@@ -25,6 +25,8 @@ export interface Env {
   MW_COLLEGIATE_KEY?: string
   /** 仅本地测试：把词典请求指向模拟服务 */
   DICT_TEST_BASE?: string
+  /** 可选：Cloudflare Browser Run，渲染需要执行 JS 的页面 */
+  BROWSER?: Fetcher
   /** Zero Trust 团队域名，如 yourteam.cloudflareaccess.com */
   ACCESS_TEAM_DOMAIN?: string
   /** Access 应用的 Application Audience (AUD) Tag */

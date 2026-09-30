@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env } from './env'
-import { generateJson, GeminiError, readUrl, type GeminiPart } from './gemini'
+import { generateJson, type GeminiPart } from './gemini'
+import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { aiEnv, loadSettings } from './settings'
 import {
   LEVEL_RULES,
@@ -25,96 +26,8 @@ const dayOf = (ts: number) => Math.floor((ts + TZ) / DAY)
 
 /* ============================== 读文章 ============================== */
 
+/** 生成练习时给 AI 的原文长度上限（原文本身完整保存，见 article.ts） */
 const MAX_ARTICLE_CHARS = 14_000
-
-function decodeEntities(s: string) {
-  return s
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
-}
-
-/** 粗略地把 HTML 变成正文：去掉脚本/导航，优先取 <article>/<main> */
-function htmlToText(html: string) {
-  const title = decodeEntities(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? '')
-  let body = html.replace(/<(script|style|noscript|svg|nav|footer|header|aside|form|iframe)\b[\s\S]*?<\/\1>/gi, ' ')
-  const main = /<article\b[\s\S]*?<\/article>/i.exec(body)?.[0] ?? /<main\b[\s\S]*?<\/main>/i.exec(body)?.[0]
-  if (main && main.length > 1500) body = main
-  const text = decodeEntities(
-    body
-      .replace(/<(br|\/p|\/h[1-6]|\/li|\/div|\/pre|\/blockquote|\/tr)\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, ' '),
-  )
-    .replace(/[ \t\f\v]+/g, ' ')
-    .replace(/\n\s*\n+/g, '\n\n')
-    .trim()
-  return { title, text }
-}
-
-async function fetchReddit(url: URL) {
-  // Reddit 页面是 JS 渲染的，改用它的 JSON 接口取标题、正文和几条高赞评论
-  const res = await fetch(`${url.origin}${url.pathname.replace(/\/$/, '')}.json?limit=5&sort=top`, {
-    headers: { 'user-agent': 'shiju/0.1 (+https://github.com/caikaidev/wordcard)' },
-  })
-  if (!res.ok) throw new Error(`reddit ${res.status}`)
-  const data = (await res.json()) as {
-    data: { children: { data: { title?: string; selftext?: string; body?: string } }[] }
-  }[]
-  const post = data[0]?.data.children[0]?.data
-  const comments = (data[1]?.data.children ?? [])
-    .map((c) => c.data.body)
-    .filter(Boolean)
-    .slice(0, 5)
-  return {
-    title: post?.title ?? '',
-    text: [post?.title, post?.selftext, ...comments.map((c, i) => `Comment ${i + 1}: ${c}`)].filter(Boolean).join('\n\n'),
-  }
-}
-
-async function fetchArticle(env: Env, raw: string) {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    throw new GeminiError('链接格式不对', 400)
-  }
-  if (!/^https?:$/.test(url.protocol)) throw new GeminiError('只支持 http(s) 链接', 400)
-  const res = await fetch(url.toString(), {
-    redirect: 'follow',
-    headers: {
-      'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-      accept: 'text/html,application/xhtml+xml',
-      'accept-language': 'en-US,en;q=0.9',
-    },
-  }).catch(() => null)
-  const finalUrl = res?.url ? new URL(res.url) : url
-  if (/(^|\.)reddit\.com$/.test(finalUrl.hostname)) {
-    try {
-      return { ...(await fetchReddit(finalUrl)), url: finalUrl.toString() }
-    } catch {
-      /* 落到下面的通用处理 */
-    }
-  }
-  let direct: { title: string; text: string } | null = null
-  if (res?.ok) direct = htmlToText(await res.text())
-  if (direct && direct.text.length >= 300) return { ...direct, text: direct.text.slice(0, MAX_ARTICLE_CHARS), url: finalUrl.toString() }
-
-  // 直接抓取被拦（常见 403：网站拦截云服务器请求）或是动态页面 → 让 Gemini 用 URL context 读一次
-  try {
-    const viaAi = await readUrl(env, url.toString())
-    if (viaAi.text.length >= 300) return { ...viaAi, text: viaAi.text.slice(0, MAX_ARTICLE_CHARS), url: url.toString() }
-  } catch (e) {
-    // 额度用完之类的错误原样告诉用户；“读不到”则落到下面的统一提示
-    if (e instanceof GeminiError && e.status === 429) throw e
-  }
-  const why = !res ? '网络错误' : !res.ok ? `网站拒绝了访问（${res.status}）` : '页面里没有可读的正文'
-  throw new GeminiError(`这个链接读不到：${why}。可以在浏览器里打开原文，全选复制后用「正文」粘贴，或者用「截图」`, 400)
-}
 
 /* ============================== 生成练习 ============================== */
 
@@ -233,7 +146,7 @@ practice.post('/lessons', async (c) => {
         .slice(0, 6)
     : []
   const url = typeof body.url === 'string' ? body.url.trim() : ''
-  const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_ARTICLE_CHARS) : ''
+  const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_SOURCE_CHARS) : ''
 
   const ai = await aiEnv(c.env, user, c.get('admin'))
   let source = ''
@@ -252,7 +165,9 @@ practice.post('/lessons', async (c) => {
   const prompt = lessonPrompt(
     settings.coachProfile,
     level,
-    images.length ? `${source ? source + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）` : source,
+    images.length
+      ? `${source ? source.slice(0, MAX_ARTICLE_CHARS) + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）`
+      : source.slice(0, MAX_ARTICLE_CHARS),
   )
   const parts: GeminiPart[] = [
     { text: prompt },

@@ -24,6 +24,14 @@
 - 卡片补全、练习题、批改和语音由部署者自己的 Gemini API key 生成，受 [Gemini API 条款](https://ai.google.dev/gemini-api/terms)约束。
 - 注意：Gemini 免费层级的数据可能会被 Google 用于改进产品。部署给别人用时，建议使用付费层级，并在你自己的隐私说明里告知用户。
 
+## 网页正文提取
+
+- [Defuddle](https://github.com/kepano/defuddle)（MIT）：从网页里提取正文。
+- [linkedom](https://github.com/WebReflection/linkedom)（ISC）：在 Worker 里解析 HTML。
+- [@cloudflare/puppeteer](https://github.com/cloudflare/puppeteer)（Apache-2.0）：可选，通过 Cloudflare Browser Run 渲染需要执行 JS 的页面。
+
+读取到的文章只保存在部署者自己的数据库里，供本人阅读和练习使用。版权归原作者所有，请勿用本工具转载或再分发他人的文章。
+
 ## 字体
 
 - [Newsreader](https://github.com/productiontype/Newsreader)（通过 `@fontsource-variable/newsreader` 打包），SIL Open Font License 1.1。

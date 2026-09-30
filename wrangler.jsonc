@@ -33,6 +33,10 @@
 
   "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "wordcard-audio" }],
 
+  // Browser Run（原 Browser Rendering）：读链接时，直接抓取读不到正文的页面用真实浏览器渲染。
+  // 免费版每天 10 分钟浏览器时间；不想用可以删掉这一段，读取会跳过这一步。
+  "browser": { "binding": "BROWSER" },
+
   "vars": {
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
     "GEMINI_TTS_MODEL": "gemini-3.8-flash-tts",
