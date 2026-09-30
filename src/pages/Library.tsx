@@ -3,8 +3,9 @@ import { api } from '../api'
 import { dueLabel } from '../../shared/srs'
 import type { Item, ItemStatus } from '../../shared/types'
 import { refreshStats, useStats } from '../store'
+import { Link } from '../router'
 import { Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconCheck, IconCheckCircle, IconSearch, IconTrash, IconUndo } from '../components/icons'
+import { IconCheck, IconCheckCircle, IconGear, IconSearch, IconTrash, IconUndo } from '../components/icons'
 
 const ACTION_W = 88
 
@@ -75,7 +76,19 @@ export default function Library() {
   return (
     <div className="pt-safe flex flex-1 flex-col md:pt-10">
       <div className="px-6 md:hidden">
-        <PageTitle eyebrow={`共 ${total ?? '–'} 条`} title="词库" />
+        <PageTitle
+          eyebrow={`共 ${total ?? '–'} 条`}
+          title="词库"
+          right={
+            <Link
+              to="/settings"
+              aria-label="设置"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface text-ink"
+            >
+              <IconGear />
+            </Link>
+          }
+        />
       </div>
 
       <div className="flex flex-col gap-3 px-6 pt-5 md:pt-0">
@@ -140,6 +153,7 @@ export default function Library() {
           ))
         )}
       </div>
+
     </div>
   )
 }

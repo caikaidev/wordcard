@@ -2,11 +2,12 @@ import { useEffect, type ReactNode } from 'react'
 import { Link, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Toaster } from './components/ui'
-import { IconCards, IconList, IconPlusCircle, IconSparkle } from './components/icons'
+import { IconCards, IconGear, IconList, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
 import Add from './pages/Add'
 import Library from './pages/Library'
 import Remix from './pages/Remix'
+import Settings from './pages/Settings'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={24} /> },
@@ -28,8 +29,9 @@ export default function App() {
         {path === '/add' && <Add />}
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
+        {path === '/settings' && <Settings />}
       </main>
-      {path !== '/remix' && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && <MobileTabBar path={path} />}
       <Toaster />
     </div>
   )
@@ -97,6 +99,15 @@ function DesktopHeader({ path }: { path: Path }) {
         >
           <IconSparkle size={16} />
           AI 重组
+        </Link>
+        <Link
+          to="/settings"
+          aria-label="设置"
+          className={`flex h-10 w-10 items-center justify-center rounded-full border border-line ${
+            path === '/settings' ? 'bg-invert-bg text-invert-fg' : 'bg-surface text-ink'
+          }`}
+        >
+          <IconGear size={18} />
         </Link>
         <div className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-4 text-sm text-invert-fg">
           <span className="opacity-70">今日到期</span>

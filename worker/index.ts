@@ -4,6 +4,7 @@ import { requireAccess } from './auth'
 import { enrich, remix, tts, GeminiError } from './gemini'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
+import { isSafeId, type Settings } from '../shared/settings'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -33,6 +34,22 @@ function safeMeta(raw: unknown): CardMeta {
 const cleanText = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, 500) : '')
 const isType = (v: unknown): v is ItemType => v === 'word' || v === 'sentence'
 const isStatus = (v: unknown): v is ItemStatus => v === 'active' || v === 'done'
+
+/** 读取页面上保存的设置，覆盖 wrangler.jsonc 的默认值 */
+async function loadSettings(env: Env): Promise<Settings> {
+  const { results } = await env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>()
+  const m = Object.fromEntries(results.map((r) => [r.key, r.value]))
+  return {
+    textModel: isSafeId(m.textModel) ? m.textModel : env.GEMINI_TEXT_MODEL,
+    ttsModel: isSafeId(m.ttsModel) ? m.ttsModel : env.GEMINI_TTS_MODEL,
+    voice: isSafeId(m.voice) ? m.voice : env.GEMINI_VOICE,
+  }
+}
+
+async function aiEnv(env: Env): Promise<Env> {
+  const s = await loadSettings(env)
+  return { ...env, GEMINI_TEXT_MODEL: s.textModel, GEMINI_TTS_MODEL: s.ttsModel, GEMINI_VOICE: s.voice }
+}
 
 const app = new Hono<{ Bindings: Env }>().basePath('/api')
 
@@ -176,7 +193,7 @@ app.post('/enrich', async (c) => {
   const body = await c.req.json<{ text?: unknown; type?: unknown }>()
   const text = cleanText(body.text)
   if (!text) return c.json({ error: '内容不能为空' }, 400)
-  return c.json(await enrich(c.env, text, isType(body.type) ? body.type : undefined))
+  return c.json(await enrich(await aiEnv(c.env), text, isType(body.type) ? body.type : undefined))
 })
 
 app.post('/remix', async (c) => {
@@ -210,7 +227,7 @@ app.post('/remix', async (c) => {
 
   const items = rows.map(toItem)
   const sentences = await remix(
-    c.env,
+    await aiEnv(c.env),
     items.map((i) => ({ text: i.text, meaning: i.meta.meaning })),
   )
   return c.json({ words: items.map((i) => ({ id: i.id, text: i.text })), sentences })
@@ -221,10 +238,8 @@ app.get('/tts', async (c) => {
   if (!text) return c.json({ error: 'text 不能为空' }, 400)
   const slow = c.req.query('slow') === '1'
 
-  // v2：旧缓存里的音频带了朗读说明前缀，换个 key 让它们失效
-  const keySource = `v2|${c.env.GEMINI_TTS_MODEL}|${c.env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keySource))
-  const key = `tts/${[...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')}.wav`
+  const env = await aiEnv(c.env)
+  const key = await ttsKey(env, text, slow)
 
   const headers = {
     'content-type': 'audio/wav',
@@ -235,9 +250,103 @@ app.get('/tts', async (c) => {
   const cached = await c.env.AUDIO.get(key)
   if (cached) return new Response(cached.body, { headers })
 
-  const wav = await tts(c.env, text, slow)
+  const wav = await tts(env, text, slow)
   await c.env.AUDIO.put(key, wav, { httpMetadata: { contentType: 'audio/wav' }, customMetadata: { text: text.slice(0, 200) } })
   return new Response(wav, { headers })
+})
+
+/* ------------------------------ 设置 ------------------------------ */
+
+app.get('/settings', async (c) => {
+  const current = await loadSettings(c.env)
+  const defaults: Settings = {
+    textModel: c.env.GEMINI_TEXT_MODEL,
+    ttsModel: c.env.GEMINI_TTS_MODEL,
+    voice: c.env.GEMINI_VOICE,
+  }
+  return c.json({ current, defaults })
+})
+
+app.put('/settings', async (c) => {
+  const body = await c.req.json<Partial<Record<keyof Settings, unknown>>>()
+  const stmts: D1PreparedStatement[] = []
+  for (const k of ['textModel', 'ttsModel', 'voice'] as const) {
+    const v = body[k]
+    if (v === undefined) continue
+    if (v === null || v === '') {
+      stmts.push(c.env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(k)) // 恢复默认
+    } else if (isSafeId(v)) {
+      stmts.push(
+        c.env.DB.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').bind(k, v),
+      )
+    } else {
+      return c.json({ error: `${k} 格式不对：只能包含字母、数字、点、横线` }, 400)
+    }
+  }
+  if (stmts.length) await c.env.DB.batch(stmts)
+  return c.json({ current: await loadSettings(c.env) })
+})
+
+/* ------------------------------ 音频缓存管理 ------------------------------ */
+
+/** R2 免费额度：10 GB 存储 */
+const R2_FREE_BYTES = 10 * 1024 ** 3
+
+async function ttsKey(env: Env, text: string, slow: boolean) {
+  // v2：旧缓存里的音频带了朗读说明前缀，换个 key 让它们失效
+  const keySource = `v2|${env.GEMINI_TTS_MODEL}|${env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keySource))
+  return `tts/${[...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')}.wav`
+}
+
+async function listAudio(bucket: R2Bucket) {
+  const objects: { key: string; size: number }[] = []
+  let cursor: string | undefined
+  do {
+    const page = await bucket.list({ prefix: 'tts/', cursor, limit: 1000 })
+    for (const o of page.objects) objects.push({ key: o.key, size: o.size })
+    cursor = page.truncated ? page.cursor : undefined
+  } while (cursor)
+  return objects
+}
+
+/** 词库里（进行中 + DONE）所有词条正在用的音频 key */
+async function usedKeys(env: Env) {
+  const { results } = await env.DB.prepare('SELECT text, meta FROM items').all<{ text: string; meta: string }>()
+  const keys = new Set<string>()
+  for (const r of results) {
+    const m = safeMeta(r.meta)
+    for (const t of [r.text, m.example]) {
+      const text = cleanText(t)
+      if (text) keys.add(await ttsKey(env, text, false))
+    }
+  }
+  return keys
+}
+
+app.get('/storage', async (c) => {
+  const [objects, used] = await Promise.all([listAudio(c.env.AUDIO), usedKeys(await aiEnv(c.env))])
+  const unused = objects.filter((o) => !used.has(o.key))
+  const sum = (l: { size: number }[]) => l.reduce((n, o) => n + o.size, 0)
+  return c.json({
+    count: objects.length,
+    bytes: sum(objects),
+    unusedCount: unused.length,
+    unusedBytes: sum(unused),
+    limitBytes: R2_FREE_BYTES,
+  })
+})
+
+app.post('/storage/cleanup', async (c) => {
+  const { mode } = await c.req.json<{ mode?: unknown }>().catch(() => ({ mode: undefined }))
+  if (mode !== 'unused' && mode !== 'all') return c.json({ error: 'mode 必须是 unused 或 all' }, 400)
+  const objects = await listAudio(c.env.AUDIO)
+  const used = mode === 'unused' ? await usedKeys(await aiEnv(c.env)) : new Set<string>()
+  const doomed = objects.filter((o) => !used.has(o.key))
+  for (let i = 0; i < doomed.length; i += 1000) {
+    await c.env.AUDIO.delete(doomed.slice(i, i + 1000).map((o) => o.key))
+  }
+  return c.json({ deleted: doomed.length, freedBytes: doomed.reduce((n, o) => n + o.size, 0) })
 })
 
 app.all('*', (c) => c.json({ error: 'Not found' }, 404))

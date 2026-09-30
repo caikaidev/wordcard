@@ -16,12 +16,18 @@ const set = (s: State) => {
 
 let el: HTMLAudioElement | null = null
 let finish: ((ok: boolean) => void) | null = null
+let onPlaying: (() => void) | null = null
 
 function audio() {
   if (!el) {
     el = new Audio()
     el.preload = 'auto'
-    el.addEventListener('playing', () => set({ ...state, loading: false }))
+    el.addEventListener('playing', () => {
+      set({ ...state, loading: false })
+      const f = onPlaying
+      onPlaying = null
+      f?.()
+    })
     el.addEventListener('ended', () => done(true))
     el.addEventListener('error', () => done(false))
   }
@@ -82,9 +88,10 @@ export function prefetch(texts: (string | undefined | null)[]) {
 }
 
 /** 播放一段文本；返回的 Promise 在播放结束（或被打断）时 resolve */
-export function speak(text: string, slow = false): Promise<boolean> {
+export function speak(text: string, slow = false, playing?: () => void): Promise<boolean> {
   const a = audio()
   if (finish) done(false)
+  onPlaying = playing ?? null
   set({ text, loading: true })
   a.src = (!slow && ready.get(text.trim())) || ttsUrl(text, slow)
   return new Promise<boolean>((resolve) => {
