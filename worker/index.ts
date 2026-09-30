@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import type { Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits } from './gemini'
+import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
@@ -30,6 +31,8 @@ function safeMeta(raw: unknown): CardMeta {
     phrases: Array.isArray(m.phrases)
       ? m.phrases.slice(0, 5).map((p) => ({ text: s(p?.text, 200), meaning: s(p?.meaning, 300) }))
       : [],
+    definitionEn: s(m.definitionEn, 600),
+    definitionSrc: s(m.definitionSrc, 60),
   }
 }
 
@@ -140,6 +143,25 @@ app.patch('/items/:id', async (c) => {
   return c.json({ item: toItem(row) })
 })
 
+/** 老卡片补查英英释义 */
+app.post('/items/:id/define', async (c) => {
+  const id = Number(c.req.param('id'))
+  const row = await c.env.DB.prepare('SELECT * FROM items WHERE id = ?').bind(id).first<Row>()
+  if (!row) return c.json({ error: '找不到这一条' }, 404)
+  const item = toItem(row)
+  if (item.type !== 'word') return c.json({ error: '句子没有词典释义' }, 400)
+  const env = await aiEnv(c.env)
+  const dict = await lookup(env, item.text)
+  if (!dict) return c.json({ error: '词典里没查到这个词' }, 404)
+  const pick = await pickSense(env, item.text, dict, item.meta.meaning, item.meta.example)
+  if (!pick) return c.json({ error: '词典义项和这张卡的意思对不上，先不填了' }, 404)
+  const meta = { ...item.meta, definitionEn: pick.def, definitionSrc: SOURCE_LABEL[dict.source] }
+  const updated = await c.env.DB.prepare('UPDATE items SET meta = ?, updated_at = ? WHERE id = ? RETURNING *')
+    .bind(JSON.stringify(safeMeta(meta)), Date.now(), id)
+    .first<Row>()
+  return c.json({ item: toItem(updated!) })
+})
+
 app.delete('/items/:id', async (c) => {
   await c.env.DB.prepare('DELETE FROM items WHERE id = ?').bind(Number(c.req.param('id'))).run()
   return c.body(null, 204)
@@ -179,7 +201,17 @@ app.post('/enrich', async (c) => {
   const body = await c.req.json<{ text?: unknown; type?: unknown }>()
   const text = cleanText(body.text)
   if (!text) return c.json({ error: '内容不能为空' }, 400)
-  return c.json(await enrich(await aiEnv(c.env), text, isType(body.type) ? body.type : undefined))
+  const env = await aiEnv(c.env)
+  const hint = isType(body.type) ? body.type : undefined
+  const dict = hint === 'sentence' ? null : await lookup(env, text)
+  const r = await enrich(env, text, hint, dict)
+  // 用户拼错了、AI 纠正之后，用纠正后的词再查一次词典
+  if (!dict && r.type === 'word' && r.text.toLowerCase() !== text.toLowerCase()) {
+    const d2 = await lookup(env, r.text)
+    const pick = d2 && (await pickSense(env, r.text, d2, r.meta.meaning, r.meta.example))
+    if (pick && d2) r.meta = { ...r.meta, definitionEn: pick.def, definitionSrc: SOURCE_LABEL[d2.source] }
+  }
+  return c.json(r)
 })
 
 app.post('/remix', async (c) => {

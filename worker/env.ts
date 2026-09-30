@@ -8,6 +8,12 @@ export interface Env {
   GEMINI_VOICE: string
   /** 可选：换成 Cloudflare AI Gateway 等代理地址，默认直连 Google */
   GEMINI_BASE_URL?: string
+  /** Merriam-Webster 学习者词典 key（可选，优先使用） */
+  MW_LEARNERS_KEY?: string
+  /** Merriam-Webster 大学词典 key（可选） */
+  MW_COLLEGIATE_KEY?: string
+  /** 仅本地测试：把词典请求指向模拟服务 */
+  DICT_TEST_BASE?: string
   /** Zero Trust 团队域名，如 yourteam.cloudflareaccess.com */
   ACCESS_TEAM_DOMAIN?: string
   /** Access 应用的 Application Audience (AUD) Tag */

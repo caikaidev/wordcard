@@ -1,6 +1,7 @@
 import type { Env } from './env'
 import type { CardMeta, EnrichResult, ItemType, RemixSentence } from '../shared/types'
 import { pcmToWav } from './wav'
+import { SOURCE_LABEL, type DictResult, type DictSense } from './dictionary'
 
 export class GeminiError extends Error {
   constructor(
@@ -189,6 +190,7 @@ const enrichSchema = {
     example: { type: 'STRING' },
     exampleZh: { type: 'STRING' },
     highlight: { type: 'STRING' },
+    senseIndex: { type: 'INTEGER' },
     phrases: {
       type: 'ARRAY',
       items: {
@@ -198,10 +200,12 @@ const enrichSchema = {
       },
     },
   },
-  required: ['type', 'text', 'ipa', 'pos', 'meaning', 'example', 'exampleZh', 'highlight', 'phrases'],
+  required: ['type', 'text', 'ipa', 'pos', 'meaning', 'example', 'exampleZh', 'highlight', 'phrases', 'senseIndex'],
 }
 
-export async function enrich(env: Env, input: string, hint?: ItemType): Promise<EnrichResult> {
+const senseList = (senses: DictSense[]) => senses.map((s, i) => `${i + 1}. (${s.pos || '—'}) ${s.def}`).join('\n')
+
+export async function enrich(env: Env, input: string, hint?: ItemType, dict?: DictResult | null): Promise<EnrichResult> {
   const prompt = `你是一名给中国英语学习者做记忆卡片的老师。用户输入：
 """${input}"""
 ${hint ? `用户指定类型：${hint}` : ''}
@@ -217,9 +221,21 @@ ${hint ? `用户指定类型：${hint}` : ''}
 - example: 单词给一个地道、日常、不超过 20 个单词的英文例句；句子给一个用到其中重点表达的新例句
 - exampleZh: 例句的中文翻译
 - highlight: example 中要高亮的那个词或短语，必须与 example 中的写法一字不差（包括大小写和词形变化）
-- phrases: 单词给 2~3 个常见搭配；句子给 1~3 个值得记的重点短语。每项包含英文 text 和中文 meaning`
+- phrases: 单词给 2~3 个常见搭配；句子给 1~3 个值得记的重点短语。每项包含英文 text 和中文 meaning
+- senseIndex: ${
+    dict
+      ? `下面是词典（${SOURCE_LABEL[dict.source]}）给出的英英义项。选出与你给的 meaning 和 example 最一致的一条，填它的编号（从 1 开始）；都不合适填 0。meaning 和 example 应优先围绕最常用的那个义项：
+${senseList(dict.senses)}`
+      : '没有词典数据，填 0'
+  }`
 
-  const r = await generateJson<EnrichResult['meta'] & { type: ItemType; text: string }>(env, prompt, enrichSchema, 'enrich')
+  const r = await generateJson<EnrichResult['meta'] & { type: ItemType; text: string; senseIndex?: number }>(
+    env,
+    prompt,
+    enrichSchema,
+    'enrich',
+  )
+  const pick = dict && r.senseIndex && r.senseIndex >= 1 ? dict.senses[r.senseIndex - 1] : undefined
   const meta: CardMeta = {
     ipa: r.ipa ?? '',
     pos: r.pos ?? '',
@@ -228,8 +244,30 @@ ${hint ? `用户指定类型：${hint}` : ''}
     exampleZh: r.exampleZh ?? '',
     highlight: r.highlight ?? '',
     phrases: Array.isArray(r.phrases) ? r.phrases.slice(0, 3) : [],
+    // 英英释义只用词典原文，AI 只负责“选哪一条”
+    definitionEn: pick?.def ?? '',
+    definitionSrc: pick && dict ? SOURCE_LABEL[dict.source] : '',
   }
   return { type: r.type === 'sentence' ? 'sentence' : 'word', text: (r.text || input).trim(), meta }
+}
+
+/** 已有释义和例句的卡片：从词典义项里选出语境对应的那条（只有一条时不调用 AI） */
+export async function pickSense(env: Env, word: string, dict: DictResult, meaning: string, example: string) {
+  if (dict.senses.length === 1) return dict.senses[0]
+  const r = await generateJson<{ senseIndex?: number }>(
+    env,
+    `单词/短语：${word}
+中文释义：${meaning || '（无）'}
+例句：${example || '（无）'}
+
+下面是词典（${SOURCE_LABEL[dict.source]}）的英英义项，选出与上面的中文释义和例句最一致的一条，返回它的编号（从 1 开始）；都不合适返回 0：
+${senseList(dict.senses)}`,
+    { type: 'OBJECT', properties: { senseIndex: { type: 'INTEGER' } }, required: ['senseIndex'] },
+    'enrich',
+    0,
+  )
+  const i = Number(r.senseIndex)
+  return i >= 1 && i <= dict.senses.length ? dict.senses[i - 1] : null
 }
 
 /* ------------------------------ AI 重组 ------------------------------ */

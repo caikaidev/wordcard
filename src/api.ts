@@ -42,6 +42,7 @@ export const api = {
   update: (id: number, patch: Partial<Pick<Item, 'text' | 'meta' | 'status'>>) =>
     req<{ item: Item }>(`/items/${id}`, { method: 'PATCH', body: json(patch) }),
   remove: (id: number) => req<void>(`/items/${id}`, { method: 'DELETE' }),
+  define: (id: number) => req<{ item: Item }>(`/items/${id}/define`, { method: 'POST' }),
   review: () => req<{ items: Item[] }>('/review'),
   grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType) => req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type }) }),

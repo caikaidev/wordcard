@@ -4,7 +4,7 @@ import { dueLabel } from '../../shared/srs'
 import type { Item, ItemStatus } from '../../shared/types'
 import { refreshStats, useStats } from '../store'
 import { Link } from '../router'
-import { Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
+import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconCheck, IconCheckCircle, IconGear, IconSearch, IconTrash, IconUndo } from '../components/icons'
 
 const ACTION_W = 88
@@ -264,6 +264,7 @@ function Row({
         {open && (
           <div className="flex animate-rise flex-col gap-3 pb-4">
             {m.ipa && <div className="font-serif text-[15px] text-muted italic">{m.ipa}</div>}
+            {m.definitionEn && <EnglishDefinition text={m.definitionEn} source={m.definitionSrc} word={item.text} className="text-[15px]" />}
             {m.example && (
               <div className="flex items-start gap-2">
                 <div className="flex flex-1 flex-col gap-1">

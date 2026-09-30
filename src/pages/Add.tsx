@@ -3,7 +3,7 @@ import { api } from '../api'
 import { prefetch } from '../audio'
 import type { CardMeta, EnrichResult } from '../../shared/types'
 import { refreshStats } from '../store'
-import { Card, Chip, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
+import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconArrowRight, IconClose, IconRefresh, IconSparkle } from '../components/icons'
 
 const emptyMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
@@ -183,6 +183,14 @@ export default function Add() {
                   label="释义"
                 />
               </div>
+              {draft.meta.definitionEn && (
+                <EnglishDefinition
+                  text={draft.meta.definitionEn}
+                  source={draft.meta.definitionSrc}
+                  word={draft.text}
+                  className="text-[15px]"
+                />
+              )}
             </Field>
 
             <Field label="例句">

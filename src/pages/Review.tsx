@@ -5,7 +5,7 @@ import { previewLabel } from '../../shared/srs'
 import type { Grade, Item } from '../../shared/types'
 import { Link } from '../router'
 import { refreshStats, useStats } from '../store'
-import { Card, Chip, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
+import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconSparkle } from '../components/icons'
 
 const today = () => {
@@ -263,7 +263,12 @@ export default function Review() {
               className="flex min-h-[300px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none"
             >
               {flipped ? (
-                <Back item={card} onDone={markDone} busy={busy} />
+                <Back
+                  item={card}
+                  onDone={markDone}
+                  busy={busy}
+                  onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? item : x)) : q))}
+                />
               ) : (
                 <Front item={card} onFlip={() => setFlipped(true)} />
               )}
@@ -327,7 +332,28 @@ function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
   )
 }
 
-function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: boolean }) {
+function Back({
+  item,
+  onDone,
+  busy,
+  onUpdate,
+}: {
+  item: Item
+  onDone: () => void
+  busy: boolean
+  onUpdate: (item: Item) => void
+}) {
+  const [defining, setDefining] = useState(false)
+  const define = async () => {
+    setDefining(true)
+    try {
+      onUpdate((await api.define(item.id)).item)
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setDefining(false)
+    }
+  }
   const m = item.meta
   const isWord = item.type === 'word'
   return (
@@ -352,6 +378,19 @@ function Back({ item, onDone, busy }: { item: Item; onDone: () => void; busy: bo
         {m.pos && <span className="font-serif text-[15px] text-muted italic md:text-[17px]">{m.pos}</span>}
         <span className="text-base leading-relaxed font-medium md:text-xl">{m.meaning || '（暂无释义）'}</span>
       </div>
+      {m.definitionEn ? (
+        <EnglishDefinition text={m.definitionEn} source={m.definitionSrc} word={item.text} className="mt-1.5 text-[15px] md:text-[17px]" />
+      ) : (
+        isWord && (
+          <button
+            onClick={define}
+            disabled={defining}
+            className="mt-1 -ml-1 self-start border-0 bg-transparent px-1 py-1 text-xs text-muted underline decoration-line underline-offset-4 disabled:opacity-50"
+          >
+            {defining ? '查词典中…' : '查英英释义'}
+          </button>
+        )
+      )}
 
       {m.example && (
         <div className="mt-5 flex flex-col gap-1.5 md:mt-7 md:gap-2">

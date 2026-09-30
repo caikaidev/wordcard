@@ -133,3 +133,31 @@ export function Toaster() {
 export function errMsg(e: unknown) {
   return e instanceof Error ? e.message : String(e)
 }
+
+/** 英英释义（词典原文）+ 出处 */
+export function EnglishDefinition({ text, source, word, className = '' }: { text: string; source?: string; word?: string; className?: string }) {
+  if (!text) return null
+  const href =
+    source?.startsWith('Merriam') && word
+      ? `https://www.merriam-webster.com/dictionary/${encodeURIComponent(word)}`
+      : source === 'Wiktionary' && word
+        ? `https://en.wiktionary.org/wiki/${encodeURIComponent(word)}`
+        : undefined
+  return (
+    <div className={`font-serif leading-snug text-muted-2 ${className}`}>
+      {text}
+      {source && (
+        <span className="ml-1.5 font-sans text-[11px] text-faint not-italic">
+          —{' '}
+          {href ? (
+            <a href={href} target="_blank" rel="noreferrer" className="text-faint underline decoration-line underline-offset-2">
+              {source}
+            </a>
+          ) : (
+            source
+          )}
+        </span>
+      )}
+    </div>
+  )
+}

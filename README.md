@@ -112,6 +112,8 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 | `GEMINI_VOICE` | `Kore` | 音色，可换 `Puck`、`Charon`、`Aoede` 等 |
 | `GEMINI_BASE_URL` | Google 官方地址 | 想走 Cloudflare AI Gateway 时填网关地址 |
 
+**英英释义**：添加单词时先查词典，AI 只负责从词典义项里选出和语境对应的那一条，释义本身是词典原文。查询顺序：Merriam-Webster 学习者词典（Secret `MW_LEARNERS_KEY`）→ Merriam-Webster 大学词典（`MW_COLLEGIATE_KEY`）→ [Free Dictionary API](https://dictionaryapi.dev/)（Wiktionary 数据，无需 key）。Merriam-Webster 的 key 在 [dictionaryapi.com](https://dictionaryapi.com/) 免费申请（非商业、每天 1000 次）。
+
 **关于地区**：Gemini API 不对中国大陆和香港开放，而大陆访问 Cloudflare 常落在香港节点。所以 `wrangler.jsonc` 里用 `placement.region = "gcp:us-central1"` 把 Worker 固定在美国执行，避免 `User location is not supported`。
 
 ## 复习规则

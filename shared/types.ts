@@ -17,6 +17,10 @@ export interface CardMeta {
   highlight: string
   /** 常见搭配 / 句子里的重点短语 */
   phrases: { text: string; meaning: string }[]
+  /** 英英释义：词典原文（不是 AI 写的），没有就留空 */
+  definitionEn?: string
+  /** 英英释义出处，如 Merriam-Webster */
+  definitionSrc?: string
 }
 
 export interface Item {
