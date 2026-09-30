@@ -5,7 +5,7 @@
  * - /api/tts 语音：缓存优先，最多保留 MAX_AUDIO 段 → 听过的再点瞬间播放，没网也能播
  * - 其它 /api：不经过缓存，始终走网络
  */
-const VERSION = 'v2'
+const VERSION = 'v3'
 const SHELL = `shell-${VERSION}`
 const ASSETS = `assets-${VERSION}`
 const AUDIO = `audio-${VERSION}`
@@ -34,7 +34,9 @@ self.addEventListener('fetch', (event) => {
   // <audio> 直接请求时带 Range，交给浏览器自己处理；只接管 fetch() 发起的语音请求
   if (url.pathname === '/api/tts' && req.destination !== 'audio') return event.respondWith(audio(req))
   if (url.pathname.startsWith('/api/')) return
-  // 图标、manifest 等：后台更新
+  // manifest 必须总是最新的：安装 / 更新 App 时 Chrome 靠它读取名字、图标、分享入口
+  if (url.pathname === '/manifest.webmanifest') return
+  // 图标等：后台更新
   event.respondWith(staleWhileRevalidate(req, SHELL))
 })
 
