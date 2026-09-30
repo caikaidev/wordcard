@@ -41,11 +41,10 @@ export default function Review() {
   const card = queue?.[0]
   const total = reviewed + (queue?.length ?? 0)
 
-  // 提前准备当前卡片和下一张的语音，点播放时基本秒出
+  // 提前准备当前卡片的发音，点播放时基本秒出。
+  // Gemini TTS 每天只有 100 次额度，所以只预取最常点的单词发音，例句等你点了再生成
   useEffect(() => {
-    if (!queue?.length) return
-    const [cur, next] = queue
-    prefetch([cur.text, cur.meta.example, next?.text, next?.meta.example])
+    if (queue?.length) prefetch([queue[0].text])
   }, [queue])
 
   const advance = (requeue?: Item) => {

@@ -20,6 +20,8 @@ export interface Env {
   DAILY_TTS_LIMIT?: string
   /** 每分钟最多几次 Gemini 调用，防止前端 bug 死循环 */
   PER_MINUTE_LIMIT?: string
+  /** 每分钟最多生成几段语音（Gemini TTS 第 1 层级是每分钟 10 次） */
+  TTS_PER_MINUTE_LIMIT?: string
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }

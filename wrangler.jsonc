@@ -38,8 +38,10 @@
     "GEMINI_VOICE": "Kore",
     // 费用闸门：每天最多多少次 AI 调用（失败也计数），超出返回 429；AI_DISABLED 设为 "true" 可一键停用
     "DAILY_TEXT_LIMIT": "300",
-    "DAILY_TTS_LIMIT": "600",
+    // 语音上限对齐 Gemini TTS 第 1 层级（每天 100 次、每分钟 10 次），留一点余量
+    "DAILY_TTS_LIMIT": "90",
     "PER_MINUTE_LIMIT": "40",
+    "TTS_PER_MINUTE_LIMIT": "8",
     "AI_DISABLED": "false",
     // Cloudflare Access（Worker → Access 页面的“应用程序值”），不是密码，可以公开
     "ACCESS_TEAM_DOMAIN": "caikai.cloudflareaccess.com",

@@ -28,6 +28,7 @@ export function aiLimits(env: Env) {
     text: n(env.DAILY_TEXT_LIMIT, 300),
     tts: n(env.DAILY_TTS_LIMIT, 600),
     perMinute: n(env.PER_MINUTE_LIMIT, 40),
+    ttsPerMinute: n(env.TTS_PER_MINUTE_LIMIT, 8),
   }
 }
 
@@ -39,12 +40,13 @@ export async function aiCallCounts(env: Env) {
     `SELECT
        COALESCE(SUM(CASE WHEN ts >= ?1 AND kind != 'tts' THEN 1 ELSE 0 END), 0) AS text,
        COALESCE(SUM(CASE WHEN ts >= ?1 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS tts,
-       COALESCE(SUM(CASE WHEN ts >= ?2 THEN 1 ELSE 0 END), 0) AS minute
+       COALESCE(SUM(CASE WHEN ts >= ?2 THEN 1 ELSE 0 END), 0) AS minute,
+       COALESCE(SUM(CASE WHEN ts >= ?2 AND kind = 'tts' THEN 1 ELSE 0 END), 0) AS minuteTts
      FROM usage WHERE ts >= MIN(?1, ?2)`,
   )
     .bind(dayStart, now - 60_000)
-    .first<{ text: number; tts: number; minute: number }>()
-  return { text: r?.text ?? 0, tts: r?.tts ?? 0, minute: r?.minute ?? 0 }
+    .first<{ text: number; tts: number; minute: number; minuteTts: number }>()
+  return { text: r?.text ?? 0, tts: r?.tts ?? 0, minute: r?.minute ?? 0, minuteTts: r?.minuteTts ?? 0 }
 }
 
 async function guard(env: Env, kind: UsageKind) {
@@ -52,6 +54,7 @@ async function guard(env: Env, kind: UsageKind) {
   if (limits.disabled) throw new GeminiError('AI 功能已暂停（AI_DISABLED）', 503)
   const c = await aiCallCounts(env)
   if (c.minute >= limits.perMinute) throw new GeminiError('调用太频繁了，歇一分钟再试', 429)
+  if (kind === 'tts' && c.minuteTts >= limits.ttsPerMinute) throw new GeminiError('语音生成太频繁了，歇一分钟再试', 429)
   if (kind === 'tts' ? c.tts >= limits.tts : c.text >= limits.text) {
     throw new GeminiError(
       kind === 'tts'
@@ -93,6 +96,16 @@ async function post<T>(env: Env, path: string, body: unknown, call: { kind: Usag
     u ? (u.promptTokenCount ?? 0) : (alt?.input ?? 0),
     u ? (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0) : (alt?.output ?? 0),
   )
+  if (res.status === 429) {
+    // Google 那边的速率 / 每日额度用完了（每日额度按美国太平洋时间零点重置，约北京时间 15–16 点）
+    throw new GeminiError(
+      call.kind === 'tts'
+        ? 'Google 的语音额度暂时用完了（每分钟 10 次 / 每天 100 次），稍后再试；已缓存的语音照常能播'
+        : 'Google 的调用额度暂时用完了，稍后再试',
+      429,
+      429,
+    )
+  }
   if (!res.ok) {
     throw new GeminiError(`Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`, 502, res.status)
   }

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '../api'
-import { prefetch } from '../audio'
 import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../shared/practice'
 import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
@@ -19,10 +18,8 @@ export default function LessonPage({ id }: { id: number }) {
     api
       .lesson(id)
       .then((r) => {
+        // 语音额度有限（每天 100 次），练习页不预取，点哪段才生成哪段
         setLesson(r.lesson)
-        const c = r.lesson.content
-        // 生词、句式例句、口语题的语音先在后台准备好
-        prefetch([...c.words.map((w) => w.word), ...c.expressions.map((e) => e.example), ...c.speaking.map((q) => q.question)])
       })
       .catch((e) => setError(errMsg(e)))
   }, [id])
@@ -273,9 +270,6 @@ function TaskStep({
     try {
       const r = await api.submit(lesson.id, idx, text.trim())
       onGraded(r.lesson)
-      const mine = r.lesson.submissions.filter((s) => s.idx === idx)
-      const res = mine[mine.length - 1]?.result
-      if (res?.reference) prefetch([res.reference])
     } catch (e) {
       toast(errMsg(e), 'error')
     } finally {
