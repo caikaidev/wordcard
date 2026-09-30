@@ -110,8 +110,10 @@ jobs:
             sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.jsonc
           fi
 
-      - name: 整理要上传的 Secrets（没填的先跳过，比如还没配置的 Access）
-        id: sec
+      # Secret 和代码一起随 deploy 上传（--secrets-file），同一个版本里原子生效：
+      # 把某个配置从明文变量改成 Secret 时，不会因为“名字已被变量占用”而上传失败。
+      # 没设置的 Secret 跳过；已上传过的不会被删除。
+      - name: 整理要上传的 Secrets（没填的跳过）
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
@@ -120,27 +122,27 @@ jobs:
           MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
         run: |
-          {
-            echo "names<<EOF"
-            for n in GEMINI_API_KEY ACCESS_TEAM_DOMAIN ACCESS_AUD MW_LEARNERS_KEY MW_COLLEGIATE_KEY ADMIN_EMAILS; do
-              if [ -n "${!n}" ]; then echo "$n"; else echo "::warning::Secret $n 未设置，本次跳过" >&2; fi
-            done
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os
+          names = ["GEMINI_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MW_LEARNERS_KEY", "MW_COLLEGIATE_KEY", "ADMIN_EMAILS"]
+          found = {n: os.environ[n] for n in names if os.environ.get(n)}
+          for n in names:
+              if n not in found:
+                  print(f"::notice::Secret {n} 未设置，本次跳过")
+          path = os.path.join(os.environ["RUNNER_TEMP"], "worker-secrets.json")
+          with open(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
+              json.dump(found, f)
+          PY
 
       - name: 迁移数据库并部署 Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          secrets: ${{ steps.sec.outputs.names }}
           command: |
             d1 migrations apply DB --remote
-            deploy
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
-          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
-          MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
-          MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
-          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+            deploy --secrets-file ${{ runner.temp }}/worker-secrets.json
+
+      - name: 清理临时文件
+        if: always()
+        run: rm -f "$RUNNER_TEMP/worker-secrets.json"
