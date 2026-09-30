@@ -1,7 +1,8 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Toaster } from './components/ui'
+import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
 import Add from './pages/Add'
@@ -18,6 +19,17 @@ const tabs: { to: Path; label: string; icon: ReactNode }[] = [
 export default function App() {
   const path = usePath()
   const scroller = useRef<HTMLDivElement>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const ptr = usePullToRefresh(
+    scroller,
+    async () => {
+      // 有新部署的版本就整页重新加载，否则只重新拉取当前页数据
+      if (await hasNewVersion()) return window.location.reload()
+      await refreshStats()
+      setRefreshKey((k) => k + 1)
+    },
+    path !== '/add',
+  )
   useEffect(() => {
     refreshStats()
     scroller.current?.scrollTo(0, 0)
@@ -27,14 +39,21 @@ export default function App() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       <DesktopHeader path={path} />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      <PullIndicator {...ptr} />
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <main className="mx-auto flex min-h-full w-full max-w-[640px] flex-col">
+      <main
+        key={refreshKey}
+        className="mx-auto flex min-h-full w-full max-w-[640px] flex-col"
+        style={ptr.pull ? { transform: `translateY(${ptr.pull * 0.6}px)` } : { transition: 'transform 0.2s' }}
+      >
         {path === '/' && <Review />}
         {path === '/add' && <Add />}
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
         {path === '/settings' && <Settings />}
       </main>
+      </div>
       </div>
       {path !== '/remix' && path !== '/settings' && <MobileTabBar path={path} />}
       <Toaster />
