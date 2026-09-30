@@ -55,15 +55,27 @@ jobs:
             sed -i "s/REPLACE_WITH_YOUR_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.jsonc
           fi
 
+      - name: 整理要上传的 Secrets（没填的先跳过，比如还没配置的 Access）
+        id: sec
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+        run: |
+          {
+            echo "names<<EOF"
+            for n in GEMINI_API_KEY ACCESS_TEAM_DOMAIN ACCESS_AUD; do
+              if [ -n "${!n}" ]; then echo "$n"; else echo "::warning::Secret $n 未设置，本次跳过" >&2; fi
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: 迁移数据库并部署 Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          secrets: |
-            GEMINI_API_KEY
-            ACCESS_TEAM_DOMAIN
-            ACCESS_AUD
+          secrets: ${{ steps.sec.outputs.names }}
           command: |
             d1 migrations apply DB --remote
             deploy
