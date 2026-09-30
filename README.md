@@ -94,8 +94,8 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `GEMINI_TEXT_MODEL` | `gemini-2.5-flash` | 补全和造句用的模型 |
-| `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | 语音模型，以 AI Studio 当前可用列表为准 |
+| `GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | 补全和造句用的模型 |
+| `GEMINI_TTS_MODEL` | `gemini-3.8-flash-tts` | 语音模型，以 AI Studio 当前可用列表为准 |
 | `GEMINI_VOICE` | `Kore` | 音色，可换 `Puck`、`Charon`、`Aoede` 等 |
 | `GEMINI_BASE_URL` | Google 官方地址 | 想走 Cloudflare AI Gateway 时填网关地址 |
 

@@ -3,9 +3,31 @@ import type { CardMeta, EnrichResult, ItemType, RemixSentence } from '../shared/
 import { pcmToWav } from './wav'
 
 export class GeminiError extends Error {
-  constructor(message: string, readonly status = 502) {
+  constructor(
+    message: string,
+    readonly status = 502,
+    /** Google 返回的 HTTP 状态码，用于判断是否要换一种调用方式重试 */
+    readonly upstream = 0,
+  ) {
     super(message)
   }
+}
+
+const baseUrl = (env: Env) =>
+  (env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')
+
+async function post<T>(env: Env, path: string, body: unknown): Promise<T> {
+  if (!env.GEMINI_API_KEY) throw new GeminiError('服务端未配置 GEMINI_API_KEY', 500)
+  const res = await fetch(`${baseUrl(env)}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+    body: JSON.stringify(body),
+  })
+  const data = (await res.json().catch(() => ({}))) as T & { error?: { message?: string } }
+  if (!res.ok) {
+    throw new GeminiError(`Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`, 502, res.status)
+  }
+  return data
 }
 
 interface GeminiPart {
@@ -14,35 +36,35 @@ interface GeminiPart {
 }
 
 async function generate(env: Env, model: string, body: unknown): Promise<GeminiPart[]> {
-  if (!env.GEMINI_API_KEY) throw new GeminiError('服务端未配置 GEMINI_API_KEY', 500)
-  const base = (env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '')
-  const res = await fetch(`${base}/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-    body: JSON.stringify(body),
-  })
-  const data = (await res.json().catch(() => ({}))) as {
-    error?: { message?: string }
-    candidates?: { content?: { parts?: GeminiPart[] } }[]
-  }
-  if (!res.ok) {
-    throw new GeminiError(`Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`)
-  }
+  const data = await post<{ candidates?: { content?: { parts?: GeminiPart[] } }[] }>(
+    env,
+    `/models/${model}:generateContent`,
+    body,
+  )
   const parts = data.candidates?.[0]?.content?.parts
   if (!parts?.length) throw new GeminiError('Gemini 没有返回内容，请重试')
   return parts
 }
 
 async function generateJson<T>(env: Env, prompt: string, schema: unknown): Promise<T> {
-  const parts = await generate(env, env.GEMINI_TEXT_MODEL, {
+  const body = (thinking: boolean) => ({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.7,
       responseMimeType: 'application/json',
       responseSchema: schema,
-      thinkingConfig: { thinkingBudget: 0 },
+      // 3.x 模型用 thinkingLevel；卡片生成不需要深度思考，用 low 更快更省
+      ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}),
     },
   })
+  let parts: GeminiPart[]
+  try {
+    parts = await generate(env, env.GEMINI_TEXT_MODEL, body(true))
+  } catch (e) {
+    // 个别模型不认 thinkingLevel 时，去掉再试一次
+    if (e instanceof GeminiError && e.upstream === 400) parts = await generate(env, env.GEMINI_TEXT_MODEL, body(false))
+    else throw e
+  }
   const text = parts.map((p) => p.text ?? '').join('')
   try {
     return JSON.parse(text) as T
@@ -145,21 +167,76 @@ ${list}
 /* ------------------------------ 语音 ------------------------------ */
 
 export async function tts(env: Env, text: string, slow: boolean): Promise<Uint8Array> {
-  const prompt = slow
-    ? `Read the following slowly and clearly, pausing slightly between words: ${text}`
-    : `Read the following naturally in a clear American accent: ${text}`
+  let audio: { data: string; mimeType: string }
+  try {
+    audio = await ttsGenerateContent(env, text, slow)
+  } catch (e) {
+    // 新版 TTS 模型可能只支持 Interactions API：原接口报 400/404 时改走新接口
+    if (e instanceof GeminiError && (e.upstream === 400 || e.upstream === 404)) audio = await ttsInteractions(env, text, slow)
+    else throw e
+  }
+  const bin = atob(audio.data)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  // 已经是 WAV（带 RIFF 头）就直接用；裸 PCM 才补 WAV 头
+  const isWav = bytes.length > 12 && String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF'
+  if (isWav) return bytes
+  const rate = Number(/rate=(\d+)/.exec(audio.mimeType)?.[1] ?? 24000)
+  return pcmToWav(bytes, rate)
+}
+
+const voice = (env: Env) => env.GEMINI_VOICE || 'Kore'
+const style = (slow: boolean) =>
+  slow ? 'Read slowly and clearly, pausing slightly between words' : 'Read naturally in a clear American accent'
+
+async function ttsGenerateContent(env: Env, text: string, slow: boolean) {
   const parts = await generate(env, env.GEMINI_TTS_MODEL, {
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    contents: [{ role: 'user', parts: [{ text: `${style(slow)}: ${text}` }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: env.GEMINI_VOICE || 'Kore' } } },
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice(env) } } },
     },
   })
   const audio = parts.find((p) => p.inlineData?.data)?.inlineData
+  if (!audio) throw new GeminiError('Gemini 没有返回音频，请重试', 502, 404)
+  return audio
+}
+
+async function ttsInteractions(env: Env, text: string, slow: boolean) {
+  const data = await post<unknown>(env, '/interactions', {
+    model: env.GEMINI_TTS_MODEL,
+    input: [
+      {
+        type: 'user_input',
+        content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style: style(slow) }] }],
+      },
+    ],
+    response_format: { type: 'audio' },
+    generation_config: { speech_config: [{ voice: voice(env) }] },
+  })
+  const audio = findAudio(data)
   if (!audio) throw new GeminiError('Gemini 没有返回音频，请重试')
-  const rate = Number(/rate=(\d+)/.exec(audio.mimeType)?.[1] ?? 24000)
-  const bin = atob(audio.data)
-  const pcm = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) pcm[i] = bin.charCodeAt(i)
-  return pcmToWav(pcm, rate)
+  return audio
+}
+
+/** 在响应里找到第一段 base64 音频（兼容 steps[].content[].data 等不同结构） */
+function findAudio(node: unknown): { data: string; mimeType: string } | null {
+  if (!node || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const r = findAudio(n)
+      if (r) return r
+    }
+    return null
+  }
+  const o = node as Record<string, unknown>
+  const mime = (o.mime_type ?? o.mimeType ?? '') as string
+  if (typeof o.data === 'string' && o.data.length > 100 && (o.type === 'audio' || mime.startsWith('audio'))) {
+    return { data: o.data, mimeType: mime || 'audio/wav' }
+  }
+  for (const v of Object.values(o)) {
+    const r = findAudio(v)
+    if (r) return r
+  }
+  return null
 }
