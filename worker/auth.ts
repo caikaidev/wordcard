@@ -18,7 +18,14 @@ export const requireAccess: MiddlewareHandler<AppEnv> = async (c, next) => {
   const team = c.env.ACCESS_TEAM_DOMAIN?.replace(/^https?:\/\//, '').replace(/\/$/, '')
   const aud = c.env.ACCESS_AUD
   if (!team || !aud) {
-    return c.json({ error: '服务端未配置 Cloudflare Access（ACCESS_TEAM_DOMAIN / ACCESS_AUD）' }, 500)
+    // 初始化部署阶段：还没配置登录，一律拒绝（不读数据、不调 AI），并提示下一步
+    return c.json(
+      {
+        error: '部署还差最后一步：尚未配置 Cloudflare Access。请按 docs/self-hosting.md 配置 ACCESS_TEAM_DOMAIN / ACCESS_AUD 后重新部署。',
+        setup: 'access',
+      },
+      503,
+    )
   }
 
   const token =

@@ -50,6 +50,54 @@ jobs:
           name: dist
           path: dist
 
+      # 部署前检查配置，缺什么直接说清楚，而不是“部署成功但用不了”。
+      # Access 两项都没填 = 初始化部署：照常发布拿到地址，但 API 全部拒绝访问；
+      # 只填了一项或格式不对 = 配置错误，停止发布；两项都齐 = 正式部署。
+      - name: 检查部署配置
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
+          MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
+          MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
+        run: |
+          fail=0
+          need() { echo "::error title=缺少 Secret $1::$2（仓库 Settings → Secrets and variables → Actions）。详见 docs/self-hosting.md"; fail=1; }
+          [ -n "$CLOUDFLARE_API_TOKEN" ]  || need CLOUDFLARE_API_TOKEN  "Cloudflare API Token，用「Edit Cloudflare Workers」模板创建并加上 D1 Edit 权限"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || need CLOUDFLARE_ACCOUNT_ID "Cloudflare 控制台首页右侧的 Account ID"
+          [ -n "$GEMINI_API_KEY" ]        || need GEMINI_API_KEY        "在 Google AI Studio 创建的 API key"
+          if grep -q REPLACE_WITH_YOUR_D1_DATABASE_ID wrangler.jsonc && [ -z "$D1_DATABASE_ID" ]; then
+            need D1_DATABASE_ID "运行 npx wrangler d1 create wordcard 输出的 database_id"
+          fi
+
+          team="${ACCESS_TEAM_DOMAIN#https://}"; team="${team%/}"
+          if [ -z "$team" ] && [ -z "$ACCESS_AUD" ]; then
+            stage="初始化部署"
+            echo "::warning title=初始化部署::还没配置 Cloudflare Access，本次照常发布，但 API 会拒绝所有请求。拿到 Worker 地址后按 docs/self-hosting.md 第 4 步配置 Access，再重新运行本工作流。"
+          elif [ -z "$team" ] || [ -z "$ACCESS_AUD" ]; then
+            echo "::error title=Access 配置不完整::ACCESS_TEAM_DOMAIN 和 ACCESS_AUD 需要同时设置（现在只设置了一个）"; fail=1
+          else
+            case "$team" in *.cloudflareaccess.com) ;; *) echo "::error title=ACCESS_TEAM_DOMAIN 格式不对::应该形如 yourteam.cloudflareaccess.com"; fail=1 ;; esac
+            echo "$ACCESS_AUD" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error title=ACCESS_AUD 格式不对::应该是 64 位十六进制（Access 应用的 Application Audience Tag）"; fail=1; }
+            stage="正式部署"
+          fi
+          [ -n "$MW_COLLEGIATE_KEY$MW_LEARNERS_KEY" ] || echo "::notice title=未配置 Merriam-Webster key（可选）::英英释义会使用免费的 Free Dictionary API 兜底"
+
+          [ "$fail" = 0 ] || exit 1
+          {
+            echo "### $stage"
+            if [ "$stage" = "初始化部署" ]; then
+              echo "Worker 会发布，但在配置 Cloudflare Access 之前，所有 /api 请求都会被拒绝（不会读取数据，也不会调用 AI）。"
+              echo
+              echo "下一步：在 Cloudflare 控制台为这个 Worker 开启 Cloudflare Access，把团队域名和 AUD 填进 GitHub Secrets，然后重新运行本工作流。详见 docs/self-hosting.md。"
+            else
+              echo "配置检查通过：Cloudflare Access 已配置（$team）。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: 填入 D1 数据库 ID（如果 wrangler.jsonc 里还是占位符）
         env:
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}

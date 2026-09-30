@@ -12,8 +12,9 @@
     "run_worker_first": ["/api/*"]
   },
 
-  // Gemini API 不支持中国香港等地区；中国大陆访问 Cloudflare 常落在香港节点，
-  // 所以把 Worker 固定跑在美国，避免 "User location is not supported"。
+  // 请求路由设置：让 Worker 在美国的数据中心执行，出站请求（如调用 Gemini）从那里发出，
+  // 避免落在 Gemini 不支持的地区时报 "User location is not supported"。
+  // 这只是技术上的执行位置设置，不代表任何地区的合规方案。
   "placement": { "region": "gcp:us-central1" },
 
   // 绑定自定义域名后可改为 false，并在下方 routes 里填域名
@@ -45,10 +46,9 @@
     // 多用户：普通成员每人每天的额度（管理员只受上面的全站上限约束）；管理员邮箱用 GitHub Secret ADMIN_EMAILS 配置
     "USER_DAILY_TEXT_LIMIT": "60",
     "USER_DAILY_TTS_LIMIT": "15",
-    "AI_DISABLED": "false",
-    // Cloudflare Access（Worker → Access 页面的“应用程序值”），不是密码，可以公开
-    "ACCESS_TEAM_DOMAIN": "caikai.cloudflareaccess.com",
-    "ACCESS_AUD": "25addfc0a956b5762deabf87d9264524cadaf8b2ae97cb1ec701ecebad47ad21"
+    "AI_DISABLED": "false"
+    // Cloudflare Access 的 ACCESS_TEAM_DOMAIN / ACCESS_AUD 通过 GitHub Secrets 提供，不写在这里，
+    // 这样 fork 之后不会连到别人的 Access。本地开发用 .dev.vars 里的 AUTH_DISABLED=true。
   },
 
   "observability": { "enabled": true }
