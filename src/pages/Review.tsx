@@ -168,7 +168,7 @@ export default function Review() {
   }, [])
 
   return (
-    <div className="pt-safe flex flex-1 flex-col px-4 md:px-6 md:pt-10">
+    <div className="pt-safe flex min-h-0 flex-1 flex-col px-4 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle
           eyebrow="今日复习"
@@ -270,7 +270,7 @@ export default function Review() {
           >
             <Card
               key={`${card.id}-${flipped}-${reviewed}-${skipped.length}`}
-              className="flex min-h-[300px] flex-1 animate-flip flex-col overflow-hidden md:min-h-[440px] md:flex-none"
+              className="flex min-h-[240px] flex-1 animate-flip flex-col overflow-hidden md:max-h-[min(640px,calc(100dvh-260px))] md:min-h-[440px] md:flex-none"
             >
               {flipped ? (
                 <Back
@@ -325,11 +325,11 @@ const btnGhost =
 function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
   const isWord = item.type === 'word'
   return (
-    <div className="flex flex-1 flex-col px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <Chip>{isWord ? '单词' : '句子'}</Chip>
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
         <div
           className={`font-serif font-medium tracking-tight ${
             isWord ? 'text-[40px] leading-[1.1] md:text-[56px]' : 'text-[22px] leading-snug md:text-[30px]'
@@ -357,11 +357,11 @@ function ProductionFront({ cloze, onFlip }: { cloze: Cloze; onFlip: () => void }
     .map((w) => (w.length <= 1 ? w : `${w[0]}…`))
     .join(' ')
   return (
-    <div className="flex flex-1 flex-col px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent">产出 · 说出来</span>
       </div>
-      <div className="flex flex-1 flex-col justify-center gap-5">
+      <div className="flex flex-1 flex-col justify-center-safe gap-5 py-2">
         {cloze.scene && <p className="m-0 text-[15px] leading-relaxed text-muted-2 md:text-[17px]">{cloze.scene}</p>}
         <p className="m-0 font-serif text-[22px] leading-normal md:text-[28px]">
           {before}
@@ -414,8 +414,10 @@ function Back({
   const m = item.meta
   const isWord = item.type === 'word'
   const filled = cloze ? cloze.sentence.replace(BLANK, cloze.answer) : ''
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const more = useMoreBelow(scrollRef)
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto px-5 pt-5 pb-3 md:px-12 md:py-10">
+    <div ref={scrollRef} className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-5 pt-5 pb-3 md:px-12 md:py-10">
       {cloze && (
         <div className="mb-4 flex items-start gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-3 md:mb-6">
           <div className="flex-1">
@@ -497,6 +499,14 @@ function Back({
         <IconCheckCircle size={18} />
         已掌握，标记 DONE
       </button>
+      {/* 还有内容没看完时，底部渐隐提示可以继续往下滚 */}
+      <div
+        aria-hidden
+        className={`pointer-events-none sticky -bottom-3 -mx-5 -mb-3 h-12 shrink-0 bg-gradient-to-t from-surface to-transparent transition-opacity duration-200 md:-mx-12 ${
+          more ? 'opacity-100' : 'opacity-0'
+        }`}
+        style={{ marginTop: '-3rem' }}
+      />
     </div>
   )
 }
@@ -544,4 +554,24 @@ function Empty({
       {action && <div className="mt-3">{action}</div>}
     </Card>
   )
+}
+
+/** 滚动容器下方是否还有没看到的内容 */
+function useMoreBelow(ref: React.RefObject<HTMLElement | null>) {
+  const [more, setMore] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const check = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 8)
+    check()
+    el.addEventListener('scroll', check, { passive: true })
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
+    for (const child of Array.from(el.children)) ro.observe(child)
+    return () => {
+      el.removeEventListener('scroll', check)
+      ro.disconnect()
+    }
+  }, [ref])
+  return more
 }

@@ -47,7 +47,8 @@ export default function App() {
       <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
       <main
         key={refreshKey}
-        className="mx-auto flex min-h-full w-full max-w-[640px] flex-col"
+        // 复习页锁定为一屏高：卡片内部滚动，评分按钮始终可见；其他页面正常整页滚动
+        className={`mx-auto flex w-full max-w-[640px] flex-col ${path === '/' ? 'h-full' : 'min-h-full'}`}
         style={ptr.pull ? { transform: `translateY(${ptr.pull * 0.6}px)` } : { transition: 'transform 0.2s' }}
       >
         {path === '/' && <Review />}
