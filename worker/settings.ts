@@ -78,8 +78,10 @@ export async function saveSettings(env: Env, user: string, admin: boolean, body:
     stmts.push(upsertUser('practiceLevel', String(lv)))
   }
   if (body.reviewMode !== undefined) {
-    if (!isReviewMode(body.reviewMode)) return 'reviewMode 只能是 mixed / recognition / production'
-    stmts.push(upsertUser('reviewMode', body.reviewMode))
+    // 选回默认值（混合）时前端传 null，表示恢复默认
+    if (body.reviewMode === null || body.reviewMode === '') stmts.push(resetUser('reviewMode'))
+    else if (isReviewMode(body.reviewMode)) stmts.push(upsertUser('reviewMode', body.reviewMode))
+    else return 'reviewMode 只能是 mixed / recognition / production'
   }
   if (body.coachProfile !== undefined) {
     const v = body.coachProfile
