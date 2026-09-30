@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env } from './env'
-import { generateJson, GeminiError, type GeminiPart } from './gemini'
+import { generateJson, GeminiError, readUrl, type GeminiPart } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import {
   LEVEL_RULES,
@@ -76,7 +76,7 @@ async function fetchReddit(url: URL) {
   }
 }
 
-async function fetchArticle(raw: string) {
+async function fetchArticle(env: Env, raw: string) {
   let url: URL
   try {
     url = new URL(raw)
@@ -100,12 +100,20 @@ async function fetchArticle(raw: string) {
       /* 落到下面的通用处理 */
     }
   }
-  if (!res || !res.ok) {
-    throw new GeminiError(`这个链接打不开（${res?.status ?? '网络错误'}），可以粘贴正文或上传截图`, 400)
+  let direct: { title: string; text: string } | null = null
+  if (res?.ok) direct = htmlToText(await res.text())
+  if (direct && direct.text.length >= 300) return { ...direct, text: direct.text.slice(0, MAX_ARTICLE_CHARS), url: finalUrl.toString() }
+
+  // 直接抓取被拦（常见 403：网站拦截云服务器请求）或是动态页面 → 让 Gemini 用 URL context 读一次
+  try {
+    const viaAi = await readUrl(env, url.toString())
+    if (viaAi.text.length >= 300) return { ...viaAi, text: viaAi.text.slice(0, MAX_ARTICLE_CHARS), url: url.toString() }
+  } catch (e) {
+    // 额度用完之类的错误原样告诉用户；“读不到”则落到下面的统一提示
+    if (e instanceof GeminiError && e.status === 429) throw e
   }
-  const { title, text } = htmlToText(await res.text())
-  if (text.length < 300) throw new GeminiError('没能从这个链接读到正文（可能需要登录或是动态页面），可以粘贴正文或上传截图', 400)
-  return { title, text: text.slice(0, MAX_ARTICLE_CHARS), url: finalUrl.toString() }
+  const why = !res ? '网络错误' : !res.ok ? `网站拒绝了访问（${res.status}）` : '页面里没有可读的正文'
+  throw new GeminiError(`这个链接读不到：${why}。可以在浏览器里打开原文，全选复制后用「正文」粘贴，或者用「截图」`, 400)
 }
 
 /* ============================== 生成练习 ============================== */
@@ -227,12 +235,13 @@ practice.post('/lessons', async (c) => {
   const url = typeof body.url === 'string' ? body.url.trim() : ''
   const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_ARTICLE_CHARS) : ''
 
+  const ai = await aiEnv(c.env, user, c.get('admin'))
   let source = ''
   let sourceUrl: string | null = null
   let fetchedTitle = ''
   if (pasted) source = pasted
   else if (url) {
-    const a = await fetchArticle(url)
+    const a = await fetchArticle(ai, url)
     source = a.text
     sourceUrl = a.url
     fetchedTitle = a.title
@@ -249,7 +258,7 @@ practice.post('/lessons', async (c) => {
     { text: prompt },
     ...images.map((i) => ({ inlineData: { mimeType: i.mime as string, data: i.data as string } })),
   ]
-  const raw = await generateJson<Partial<LessonContent>>(await aiEnv(c.env, user, c.get('admin')), parts, lessonSchema, 'lesson')
+  const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
   const content = cleanLesson(raw, level)
   if (fetchedTitle && (!content.title || content.title === 'Untitled')) content.title = fetchedTitle
 

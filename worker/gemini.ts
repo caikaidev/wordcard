@@ -198,6 +198,49 @@ export async function generateJson<T>(
   }
 }
 
+/* ------------------------------ 读取网页 ------------------------------ */
+
+const NO_ACCESS = 'NO_ACCESS'
+
+/**
+ * 直接抓取失败时（很多网站会拦截云服务器的请求），改用 Gemini 官方的 URL context 工具读取网页正文。
+ * 只有 Gemini 明确报告“成功读取了这个链接”才采用结果，避免模型读不到时凭空编一篇。
+ * 读取到的网页内容按输入 token 计费，记在“生成练习”名下。
+ */
+export async function readUrl(env: Env, url: string): Promise<{ title: string; text: string }> {
+  const prompt = `Read the web page at ${url} and output its main article content as plain text.
+Rules:
+- First line: the article title. Then an empty line. Then the article body, keeping paragraph breaks.
+- Keep the author's original wording. Leave out navigation, ads, cookie notices, related links and comments.
+- If the page cannot be retrieved or has no readable article, output exactly: ${NO_ACCESS}`
+  const body = (thinking: boolean) => ({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    tools: [{ url_context: {} }],
+    generationConfig: { temperature: 0, maxOutputTokens: 8192, ...(thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) },
+  })
+  type Resp = {
+    candidates?: {
+      content?: { parts?: GeminiPart[] }
+      urlContextMetadata?: { urlMetadata?: { retrievedUrl?: string; urlRetrievalStatus?: string }[] }
+    }[]
+  }
+  const call = (thinking: boolean) =>
+    post<Resp>(env, `/models/${env.GEMINI_TEXT_MODEL}:generateContent`, body(thinking), { kind: 'lesson', model: env.GEMINI_TEXT_MODEL })
+  let data: Resp
+  try {
+    data = await call(true)
+  } catch (e) {
+    if (e instanceof GeminiError && e.upstream === 400) data = await call(false)
+    else throw e
+  }
+  const cand = data.candidates?.[0]
+  const ok = (cand?.urlContextMetadata?.urlMetadata ?? []).some((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
+  const out = (cand?.content?.parts ?? []).map((p) => p.text ?? '').join('').trim()
+  if (!ok || !out || out.startsWith(NO_ACCESS)) throw new GeminiError('读不到这个网页', 400)
+  const [first, ...rest] = out.split('\n')
+  return { title: first.replace(/^#+\s*/, '').trim(), text: rest.join('\n').trim() }
+}
+
 /* ------------------------------ 补全卡片 ------------------------------ */
 
 const enrichSchema = {
