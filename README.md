@@ -1,5 +1,18 @@
 # 词句卡 · wordcard
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/flow-dark.svg">
+    <img src="docs/images/flow-light.svg" alt="练习流程：发一篇文章 → 写三句话 → AI 逐句批改 → 加入复习" width="860">
+  </picture>
+</p>
+
+| 1 发一篇文章 | 2 写三句话 | 3 AI 逐句批改 | 4 加入复习 |
+|:---:|:---:|:---:|:---:|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/1-article-dark.webp"><img src="docs/images/1-article-light.webp" alt="练习首页：发链接生成练习" width="200"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/2-write-dark.webp"><img src="docs/images/2-write-light.webp" alt="按开头写第一句" width="200"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/3-feedback-dark.webp"><img src="docs/images/3-feedback-light.webp" alt="批改结果：改错、改进点、值得记" width="200"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/4-review-dark.webp"><img src="docs/images/4-review-light.webp" alt="复习卡片" width="200"></picture> |
+
+> 截图和动画用的是虚构的演示数据（`scripts/demo/`）。没有公开的在线 Demo：AI 调用走部署者自己的 Gemini key，放出去会被刷光额度。想试用请按下文自己部署一份。
+
 一个自用的英语词句复习小站：输入单词或句子，Gemini 自动补全音标、释义、例句；按遗忘曲线复习；AI 用待复习的词重新造句；每个词句都能听 Gemini 的自然语音。部署在 Cloudflare 上，用 Zero Trust 登录保护，手机和电脑都能用。
 
 | 复习 | 添加 | 词库 | AI 重组 |

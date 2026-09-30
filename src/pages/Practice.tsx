@@ -241,7 +241,7 @@ function Composer() {
             inputMode="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://android-developers.googleblog.com/…"
+            placeholder="https://example.com/article"
             aria-label="文章链接"
             autoCapitalize="off"
             autoComplete="off"

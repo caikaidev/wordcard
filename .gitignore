@@ -4,3 +4,5 @@ dist
 .dev.vars
 *.log
 .DS_Store
+.demo
+docs/images/raw
