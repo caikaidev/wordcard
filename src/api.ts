@@ -47,6 +47,7 @@ export const api = {
   settings: () => req<{ current: Settings; defaults: Settings }>('/settings'),
   saveSettings: (patch: Partial<Record<keyof Settings, string | null>>) =>
     req<{ current: Settings }>('/settings', { method: 'PUT', body: json(patch) }),
+  usage: () => req<UsageReport>('/usage'),
   storage: () =>
     req<{ count: number; bytes: number; unusedCount: number; unusedBytes: number; limitBytes: number }>('/storage'),
   cleanup: (mode: 'unused' | 'all') =>
@@ -56,3 +57,10 @@ export const api = {
 
 export const ttsUrl = (text: string, slow = false) =>
   `/api/tts?text=${encodeURIComponent(text)}${slow ? '&slow=1' : ''}`
+
+export type UsageBucket = { calls: number; input: number; output: number; cost: number; unpriced: number }
+export type UsageReport = {
+  month: { total: UsageBucket; byKind: Record<string, UsageBucket> }
+  lastMonth: UsageBucket
+  projected: number
+}

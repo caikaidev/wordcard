@@ -4,6 +4,7 @@ import { speak } from '../audio'
 import { TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
 import { Link } from '../router'
 import StorageCard from '../components/StorageCard'
+import CostCard from '../components/CostCard'
 import { errMsg, toast } from '../components/ui'
 import { IconBack, IconCheck, IconPlay, IconSparkle } from '../components/icons'
 
@@ -11,6 +12,7 @@ export default function Settings() {
   const [cur, setCur] = useState<S | null>(null)
   const [defaults, setDefaults] = useState<S | null>(null)
   const [testing, setTesting] = useState<'text' | 'tts' | null>(null)
+  const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export default function Settings() {
     try {
       const r = await api.enrich('serendipity')
       setResult({ kind: 'text', label: cur.textModel, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
+      setUsageKey((k) => k + 1)
     } catch (e) {
       toast(errMsg(e), 'error')
     } finally {
@@ -62,6 +65,7 @@ export default function Settings() {
       started = true
       setTesting(null)
       setResult({ kind: 'tts', label: `${cur.ttsModel} · ${cur.voice}`, ms: performance.now() - t0, detail: sample })
+      setUsageKey((k) => k + 1)
     }).then((ok) => {
       if (!started) {
         setTesting(null)
@@ -78,7 +82,7 @@ export default function Settings() {
         </Link>
       </div>
       <div className="px-4 pt-1 md:px-6">
-        <div className="text-[13px] tracking-wide text-muted">模型 · 语音 · 存储</div>
+        <div className="text-[13px] tracking-wide text-muted">模型 · 语音 · 费用 · 存储</div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">设置</h1>
       </div>
 
@@ -156,6 +160,9 @@ export default function Settings() {
           </Section>
         </>
       )}
+
+      <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">费用</div>
+      <CostCard refreshKey={usageKey} />
 
       <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">存储</div>
       <StorageCard />

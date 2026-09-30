@@ -5,6 +5,7 @@ import { enrich, remix, tts, GeminiError } from './gemini'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
 import { isSafeId, type Settings } from '../shared/settings'
+import { costOf } from '../shared/pricing'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -285,6 +286,53 @@ app.put('/settings', async (c) => {
   }
   if (stmts.length) await c.env.DB.batch(stmts)
   return c.json({ current: await loadSettings(c.env) })
+})
+
+/* ------------------------------ 用量与费用预估 ------------------------------ */
+
+const TZ_OFFSET = 8 * 3600_000 // 按北京时间划分自然月
+
+function monthStart(now: number, back = 0) {
+  const d = new Date(now + TZ_OFFSET)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - back, 1) - TZ_OFFSET
+}
+
+app.get('/usage', async (c) => {
+  const now = Date.now()
+  const thisMonth = monthStart(now)
+  const lastMonth = monthStart(now, 1)
+  // 按 天 × 模型 × 类型 汇总（单价可能随日期变化），再在这里算钱
+  const { results } = await c.env.DB.prepare(
+    `SELECT kind, model, (ts + ?) / 86400000 AS day, COUNT(*) AS calls,
+            SUM(input_tokens) AS input, SUM(output_tokens) AS output
+     FROM usage WHERE ts >= ? GROUP BY kind, model, day`,
+  )
+    .bind(TZ_OFFSET, lastMonth)
+    .all<{ kind: string; model: string; day: number; calls: number; input: number; output: number }>()
+
+  type Bucket = { calls: number; input: number; output: number; cost: number; unpriced: number }
+  const empty = (): Bucket => ({ calls: 0, input: 0, output: 0, cost: 0, unpriced: 0 })
+  const cur = { total: empty(), byKind: {} as Record<string, Bucket> }
+  const prev = empty()
+
+  for (const r of results) {
+    const ts = r.day * 86400000 - TZ_OFFSET + 12 * 3600_000 // 当天中午，用来套单价
+    const cost = costOf(r.model, ts, r.input, r.output)
+    const target = ts >= thisMonth ? [cur.total, (cur.byKind[r.kind] ??= empty())] : [prev]
+    for (const b of target) {
+      b.calls += r.calls
+      b.input += r.input
+      b.output += r.output
+      if (cost === null) b.unpriced += r.calls
+      else b.cost += cost
+    }
+  }
+
+  // 按本月已过天数线性外推到月底
+  const nextMonth = monthStart(now, -1)
+  const elapsed = Math.max((now - thisMonth) / 86400000, 1)
+  const days = (nextMonth - thisMonth) / 86400000
+  return c.json({ month: cur, lastMonth: prev, projected: (cur.total.cost / elapsed) * days })
 })
 
 /* ------------------------------ 音频缓存管理 ------------------------------ */

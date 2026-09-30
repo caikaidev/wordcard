@@ -35,18 +35,32 @@ interface GeminiPart {
   inlineData?: { mimeType: string; data: string }
 }
 
-async function generate(env: Env, model: string, body: unknown): Promise<GeminiPart[]> {
-  const data = await post<{ candidates?: { content?: { parts?: GeminiPart[] } }[] }>(
-    env,
-    `/models/${model}:generateContent`,
-    body,
-  )
+export type UsageKind = 'enrich' | 'remix' | 'tts'
+
+/** 记录一次调用的 token 用量（失败不影响主流程） */
+async function recordUsage(env: Env, kind: UsageKind, model: string, input: number, output: number) {
+  try {
+    await env.DB.prepare('INSERT INTO usage (ts, kind, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)')
+      .bind(Date.now(), kind, model, Math.round(input) || 0, Math.round(output) || 0)
+      .run()
+  } catch (e) {
+    console.error('recordUsage failed', e)
+  }
+}
+
+async function generate(env: Env, model: string, body: unknown, kind: UsageKind): Promise<GeminiPart[]> {
+  const data = await post<{
+    candidates?: { content?: { parts?: GeminiPart[] } }[]
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number }
+  }>(env, `/models/${model}:generateContent`, body)
+  const u = data.usageMetadata
+  if (u) await recordUsage(env, kind, model, u.promptTokenCount ?? 0, (u.candidatesTokenCount ?? 0) + (u.thoughtsTokenCount ?? 0))
   const parts = data.candidates?.[0]?.content?.parts
   if (!parts?.length) throw new GeminiError('Gemini 没有返回内容，请重试')
   return parts
 }
 
-async function generateJson<T>(env: Env, prompt: string, schema: unknown): Promise<T> {
+async function generateJson<T>(env: Env, prompt: string, schema: unknown, kind: UsageKind): Promise<T> {
   const body = (thinking: boolean) => ({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
@@ -59,10 +73,10 @@ async function generateJson<T>(env: Env, prompt: string, schema: unknown): Promi
   })
   let parts: GeminiPart[]
   try {
-    parts = await generate(env, env.GEMINI_TEXT_MODEL, body(true))
+    parts = await generate(env, env.GEMINI_TEXT_MODEL, body(true), kind)
   } catch (e) {
     // 个别模型不认 thinkingLevel 时，去掉再试一次
-    if (e instanceof GeminiError && e.upstream === 400) parts = await generate(env, env.GEMINI_TEXT_MODEL, body(false))
+    if (e instanceof GeminiError && e.upstream === 400) parts = await generate(env, env.GEMINI_TEXT_MODEL, body(false), kind)
     else throw e
   }
   const text = parts.map((p) => p.text ?? '').join('')
@@ -116,7 +130,7 @@ ${hint ? `用户指定类型：${hint}` : ''}
 - highlight: example 中要高亮的那个词或短语，必须与 example 中的写法一字不差（包括大小写和词形变化）
 - phrases: 单词给 2~3 个常见搭配；句子给 1~3 个值得记的重点短语。每项包含英文 text 和中文 meaning`
 
-  const r = await generateJson<EnrichResult['meta'] & { type: ItemType; text: string }>(env, prompt, enrichSchema)
+  const r = await generateJson<EnrichResult['meta'] & { type: ItemType; text: string }>(env, prompt, enrichSchema, 'enrich')
   const meta: CardMeta = {
     ipa: r.ipa ?? '',
     pos: r.pos ?? '',
@@ -156,7 +170,7 @@ ${list}
 - zh：自然的中文翻译
 - highlights：该句中用到的目标词/表达，写法必须与 en 中完全一致，便于程序高亮`
 
-  const r = await generateJson<RemixSentence[]>(env, prompt, remixSchema)
+  const r = await generateJson<RemixSentence[]>(env, prompt, remixSchema, 'remix')
   return (Array.isArray(r) ? r : []).slice(0, 5).map((s) => ({
     en: s.en ?? '',
     zh: s.zh ?? '',
@@ -190,14 +204,19 @@ const style = (slow: boolean) =>
   slow ? 'Read slowly and clearly, pausing slightly between words' : 'Read naturally in a clear American accent'
 
 async function ttsGenerateContent(env: Env, text: string, slow: boolean) {
-  const parts = await generate(env, env.GEMINI_TTS_MODEL, {
+  const parts = await generate(
+    env,
+    env.GEMINI_TTS_MODEL,
+    {
     // 只发原文：TTS 模型会把前面的风格说明也一起读出来
     contents: [{ role: 'user', parts: [{ text: slow ? `${style(true)}: ${text}` : text }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice(env) } } },
     },
-  })
+    },
+    'tts',
+  )
   const audio = parts.find((p) => p.inlineData?.data)?.inlineData
   if (!audio) throw new GeminiError('Gemini 没有返回音频，请重试', 502, 404)
   return audio
@@ -215,9 +234,25 @@ async function ttsInteractions(env: Env, text: string, slow: boolean) {
     response_format: { type: 'audio' },
     generation_config: { speech_config: [{ voice: voice(env) }] },
   })
+  const usage = findUsage(data)
+  if (usage) await recordUsage(env, 'tts', env.GEMINI_TTS_MODEL, usage.input, usage.output)
   const audio = findAudio(data)
   if (!audio) throw new GeminiError('Gemini 没有返回音频，请重试')
   return audio
+}
+
+/** Interactions API 的用量字段名不固定，按 input/output 关键字找 */
+function findUsage(data: unknown): { input: number; output: number } | null {
+  const u = (data as { usage?: Record<string, unknown> } | null)?.usage
+  if (!u || typeof u !== 'object') return null
+  let input = 0
+  let output = 0
+  for (const [k, v] of Object.entries(u)) {
+    if (typeof v !== 'number') continue
+    if (/input|prompt/i.test(k) && /total/i.test(k)) input = v
+    else if (/output|thought|candidate/i.test(k) && /total/i.test(k)) output += v
+  }
+  return input || output ? { input, output } : null
 }
 
 /** 在响应里找到第一段 base64 音频（兼容 steps[].content[].data 等不同结构） */
