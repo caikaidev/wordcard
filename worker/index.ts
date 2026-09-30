@@ -209,13 +209,14 @@ app.post('/review/:id', async (c) => {
 /* ------------------------------ AI ------------------------------ */
 
 app.post('/enrich', async (c) => {
-  const body = await c.req.json<{ text?: unknown; type?: unknown }>()
+  const body = await c.req.json<{ text?: unknown; type?: unknown; context?: unknown }>()
   const text = cleanText(body.text)
   if (!text) return c.json({ error: '内容不能为空' }, 400)
   const env = await ai(c)
   const hint = isType(body.type) ? body.type : undefined
+  const context = typeof body.context === 'string' ? body.context.trim().slice(0, 600) : undefined
   const dict = hint === 'sentence' ? null : await lookup(env, text)
-  const r = await enrich(env, text, hint, dict)
+  const r = await enrich(env, text, hint, dict, context || undefined)
   // 用户拼错了、AI 纠正之后，用纠正后的词再查一次词典
   if (!dict && r.type === 'word' && r.text.toLowerCase() !== text.toLowerCase()) {
     const d2 = await lookup(env, r.text)
@@ -223,6 +224,14 @@ app.post('/enrich', async (c) => {
     if (pick && d2) r.meta = { ...r.meta, definitionEn: pick.def, definitionSrc: SOURCE_LABEL[d2.source] }
   }
   return c.json(r)
+})
+
+/** 阅读时点词查义：只查词典，不调 AI、不花钱 */
+app.get('/lookup', async (c) => {
+  const word = (c.req.query('word') ?? '').trim().slice(0, 60)
+  if (!word) return c.json({ error: '缺少 word' }, 400)
+  const d = await lookup(c.env, word)
+  return c.json(d ? { source: SOURCE_LABEL[d.source], senses: d.senses.slice(0, 6) } : { source: '', senses: [] })
 })
 
 app.post('/remix', async (c) => {

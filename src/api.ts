@@ -45,7 +45,10 @@ export const api = {
   define: (id: number) => req<{ item: Item }>(`/items/${id}/define`, { method: 'POST' }),
   review: () => req<{ items: Item[] }>('/review'),
   grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
-  enrich: (text: string, type?: ItemType) => req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type }) }),
+  enrich: (text: string, type?: ItemType, context?: string) =>
+    req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
+  lookup: (word: string) => req<{ source: string; senses: { pos: string; def: string }[] }>(`/lookup?word=${encodeURIComponent(word)}`),
+  lessonSource: (id: number) => req<{ title: string; text: string }>(`/practice/lessons/${id}/source`),
   settings: () => req<{ current: Settings; defaults: Settings; me: Me }>('/settings'),
   saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
     req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),

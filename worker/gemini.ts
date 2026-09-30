@@ -274,10 +274,16 @@ const enrichSchema = {
 
 const senseList = (senses: DictSense[]) => senses.map((s, i) => `${i + 1}. (${s.pos || '—'}) ${s.def}`).join('\n')
 
-export async function enrich(env: Env, input: string, hint?: ItemType, dict?: DictResult | null): Promise<EnrichResult> {
+export async function enrich(env: Env, input: string, hint?: ItemType, dict?: DictResult | null, context?: string): Promise<EnrichResult> {
   const prompt = `你是一名给中国英语学习者做记忆卡片的老师。用户输入：
 """${input}"""
 ${hint ? `用户指定类型：${hint}` : ''}
+${
+  context
+    ? `用户是在阅读时从下面这句话里收藏的，meaning 必须是它在这句话里的意思（不要列无关义项）；example 直接用这句原文（超过 30 个词时截取包含它的一段），exampleZh 翻译这句；highlight 是它在原文里的写法；text 仍给规范化原形：
+"""${context}"""`
+    : ''
+}
 
 判断它是 word（单词或短语/习语，比如 "rain check"、"break a leg"）还是 sentence（完整句子）。
 

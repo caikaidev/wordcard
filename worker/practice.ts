@@ -263,9 +263,9 @@ practice.post('/lessons', async (c) => {
   if (fetchedTitle && (!content.title || content.title === 'Untitled')) content.title = fetchedTitle
 
   const row = await c.env.DB.prepare(
-    'INSERT INTO lessons (created_at, level, source_url, title, content, user_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+    'INSERT INTO lessons (created_at, level, source_url, title, content, user_id, source_text) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id',
   )
-    .bind(Date.now(), level, sourceUrl, content.title, JSON.stringify(content), user)
+    .bind(Date.now(), level, sourceUrl, content.title, JSON.stringify(content), user, source || null)
     .first<{ id: number }>()
   return c.json({ id: row!.id }, 201)
 })
@@ -303,9 +303,11 @@ function visibleSubmissions(rows: (Omit<Submission, 'passed' | 'result'> & { pas
 }
 
 async function loadLesson(env: Env, id: number, user: string): Promise<Lesson | null> {
-  const l = await env.DB.prepare('SELECT * FROM lessons WHERE id = ? AND user_id = ?')
+  const l = await env.DB.prepare(
+    'SELECT id, created_at, level, source_url, title, content, source_text IS NOT NULL AS has_source FROM lessons WHERE id = ? AND user_id = ?',
+  )
     .bind(id, user)
-    .first<{ id: number; created_at: number; level: number; source_url: string | null; title: string; content: string }>()
+    .first<{ id: number; created_at: number; level: number; source_url: string | null; title: string; content: string; has_source: number }>()
   if (!l) return null
   const { results } = await env.DB.prepare(
     'SELECT id, idx, attempt, text, passed, result, created_at FROM submissions WHERE lesson_id = ? ORDER BY created_at',
@@ -320,6 +322,8 @@ async function loadLesson(env: Env, id: number, user: string): Promise<Lesson | 
     title: l.title,
     content: JSON.parse(l.content) as LessonContent,
     submissions: visibleSubmissions(results),
+    // 有原文，或者有链接可以重新抓取
+    readable: !!l.has_source || !!l.source_url,
   }
 }
 
@@ -327,6 +331,21 @@ practice.get('/lessons/:id', async (c) => {
   const lesson = await loadLesson(c.env, Number(c.req.param('id')), c.get('user'))
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
   return c.json({ lesson })
+})
+
+/** 原文：已保存就直接返回；老练习只有链接的，第一次打开时抓取并保存 */
+practice.get('/lessons/:id/source', async (c) => {
+  const id = Number(c.req.param('id'))
+  const user = c.get('user')
+  const l = await c.env.DB.prepare('SELECT title, source_url, source_text FROM lessons WHERE id = ? AND user_id = ?')
+    .bind(id, user)
+    .first<{ title: string; source_url: string | null; source_text: string | null }>()
+  if (!l) return c.json({ error: '找不到这份练习' }, 404)
+  if (l.source_text) return c.json({ title: l.title, text: l.source_text })
+  if (!l.source_url) return c.json({ error: '这份练习是用截图生成的，没有保存原文' }, 404)
+  const a = await fetchArticle(await aiEnv(c.env, user, c.get('admin')), l.source_url)
+  await c.env.DB.prepare('UPDATE lessons SET source_text = ? WHERE id = ? AND user_id = ?').bind(a.text, id, user).run()
+  return c.json({ title: l.title, text: a.text })
 })
 
 practice.delete('/lessons/:id', async (c) => {

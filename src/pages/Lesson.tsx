@@ -5,7 +5,7 @@ import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
 import { Chip, Highlighted, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconArrowRight, IconBack, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
+import { IconArrowRight, IconBack, IconBook, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
 
 const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
 
@@ -95,6 +95,14 @@ export default function LessonPage({ id }: { id: number }) {
             <p className="m-0 flex-1 font-serif text-[17px] leading-relaxed">{c.summary}</p>
             <SpeakButton text={c.summary} size={40} waves={1} label="播放概要" />
           </div>
+          {lesson.readable && (
+            <Link
+              to={`/practice/${lesson.id}/read`}
+              className="mt-3 flex h-11 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface text-[14px] font-medium text-ink no-underline"
+            >
+              <IconBook size={17} /> 读原文 · 点词查义、收藏
+            </Link>
+          )}
 
           {/* 生词 */}
           {c.words.length > 0 && (

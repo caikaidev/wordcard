@@ -169,10 +169,28 @@ async function compress(file: File): Promise<{ mime: string; data: string; previ
   return { mime: 'image/jpeg', data: url.split(',')[1], preview: url }
 }
 
+/** 从系统“分享”进来：/practice?url=…&text=…&title=… → 预填链接或正文 */
+function sharedInput(): { url: string; text: string } | null {
+  const q = new URLSearchParams(window.location.search)
+  if (!q.has('url') && !q.has('text') && !q.has('title')) return null
+  // 用过就清掉，刷新或返回时不再重复预填
+  window.history.replaceState(null, '', '/practice')
+  const all = [q.get('url'), q.get('text'), q.get('title')].filter(Boolean).join(' ')
+  const url = q.get('url')?.trim() || /https?:\/\/\S+/.exec(all)?.[0] || ''
+  const text = (q.get('text') ?? '').replace(url, '').trim()
+  return { url, text }
+}
+
 function Composer() {
-  const [source, setSource] = useState<Source>('url')
-  const [url, setUrl] = useState('')
-  const [text, setText] = useState('')
+  const [shared] = useState(sharedInput)
+  const [source, setSource] = useState<Source>(shared && !shared.url && shared.text.length > 80 ? 'text' : 'url')
+  const [url, setUrl] = useState(shared?.url ?? '')
+  const [text, setText] = useState(shared && !shared.url ? shared.text : '')
+  const sectionRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (shared) sectionRef.current?.scrollIntoView({ block: 'center' })
+  }, [shared])
   const [images, setImages] = useState<{ mime: string; data: string; preview: string }[]>([])
   const [level, setLevel] = useState<Level | null>(null)
   const [busy, setBusy] = useState(false)
@@ -223,12 +241,18 @@ function Composer() {
   ]
 
   return (
-    <section className="mt-3 rounded-2xl border border-line-soft bg-surface p-4" aria-labelledby="new-lesson">
+    <section
+      ref={sectionRef}
+      className={`mt-3 rounded-2xl border bg-surface p-4 ${shared ? 'border-accent' : 'border-line-soft'}`}
+      aria-labelledby="new-lesson"
+    >
       <h2 id="new-lesson" className="m-0 flex items-center gap-1.5 text-[15px] font-semibold">
         <IconSparkle size={16} className="text-accent" />
         新练习
       </h2>
-      <p className="mt-1 mb-0 text-xs text-muted">发一篇文章，AI 按你的档位出生词、句式和 3 句输出任务</p>
+      <p className="mt-1 mb-0 text-xs text-muted">
+        {shared ? '已从分享带入，确认档位后点「生成练习」' : '发一篇文章，AI 按你的档位出生词、句式和 3 句输出任务'}
+      </p>
 
       <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl bg-line-soft p-1" role="tablist">
         {tabs.map((t) => (

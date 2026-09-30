@@ -89,6 +89,8 @@ export interface Lesson {
   title: string
   content: LessonContent
   submissions: Submission[]
+  /** 能不能在应用里读原文 */
+  readable: boolean
 }
 
 export interface LessonSummary {
