@@ -35,7 +35,10 @@
   "vars": {
     "GEMINI_TEXT_MODEL": "gemini-2.5-flash",
     "GEMINI_TTS_MODEL": "gemini-2.5-flash-preview-tts",
-    "GEMINI_VOICE": "Kore"
+    "GEMINI_VOICE": "Kore",
+    // Cloudflare Access（Worker → Access 页面的“应用程序值”），不是密码，可以公开
+    "ACCESS_TEAM_DOMAIN": "caikai.cloudflareaccess.com",
+    "ACCESS_AUD": "25addfc0a956b5762deabf87d9264524cadaf8b2ae97cb1ec701ecebad47ad21"
   },
 
   "observability": { "enabled": true }
