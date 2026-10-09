@@ -195,6 +195,135 @@ practice.post('/lessons', async (c) => {
   return c.json({ id: row!.id }, 201)
 })
 
+/* ============================== 为学习包生成练习 ============================== */
+
+/** 一套练习用多少个词（和普通练习的生词上限一致） */
+const SET_SIZE = 5
+
+const packageLessonSchema = {
+  type: 'OBJECT',
+  properties: {
+    summary: lessonSchema.properties.summary,
+    expressions: lessonSchema.properties.expressions,
+    tasks: lessonSchema.properties.tasks,
+    speaking: lessonSchema.properties.speaking,
+  },
+  required: ['summary', 'expressions', 'tasks', 'speaking'],
+}
+
+type PackageCard = { id: number; text: string; ipa: string; meaning: string; example: string; ref: string; lapses: number }
+
+function packageLessonPrompt(profile: string, level: Level, title: string, ref: string, cards: PackageCard[]) {
+  const list = cards.map((c, i) => `${i + 1}. ${c.text}（${c.meaning}）\n   原句：${c.example}`).join('\n')
+  return `你是一名英语教练。学习者正在读《${title}》${ref ? `（${ref}）` : ''}，下面是从原文里摘出的 ${cards.length} 个值得学的词/短语和它们的原句。请围绕这些原句，为学习者设计一次 15–30 分钟的练习。
+
+# 学习者设定
+${profile}
+
+# 当前档位
+${LEVEL_RULES[level].task}
+
+# 要求（讲解用中文，示例用英文）
+- summary：一句简单英文，概括这些原句共同讲的内容
+- expressions：2–3 个能直接用在学习者目标场景里的英文句式（优先从原句里提炼；pattern 用 ... 表示可替换部分），meaning 中文说明，example 贴近学习者生活或工作的英文例句
+- tasks：固定 3 个，依次是
+  1. 讲清楚：这些原句讲了什么
+  2. 有观点：同意或不同意其中的什么观点，为什么
+  3. 连到自己：和学习者的工作或经历有什么关系
+  goal 分别填 "${TASK_GOALS.join('" "')}"；prompt 用中文说明这一句要写什么（可给思路提示，最好引导用上上面的词）；template 按当前档位给出（挑战档留空字符串）
+- speaking：1–2 个英文口语题，贴合学习者目标场景的提问方式，可在散步时用 1 分钟回答；hint 中文提示回答思路
+- 回复简洁，适合手机阅读
+
+# 词和原句
+${list}`
+}
+
+/**
+ * 为学习包生成下一套练习：取包里「进行中、还没练过」的词，按导入顺序选出下一个章节，
+ * 章节内先练最近忘过的，凑够一套（5 词）。词的释义和原句直接来自卡片，AI 只负责出题。
+ * repeat: 包里的词都练过一遍后，忽略「练过」再来一轮
+ */
+practice.post('/packages/:id/lessons', async (c) => {
+  const pkgId = Number(c.req.param('id'))
+  const body = await c.req.json<{ level?: unknown; repeat?: unknown }>().catch(() => ({}) as { level?: unknown; repeat?: unknown })
+  const user = c.get('user')
+  const db = c.env.DB
+  const pkg = await db
+    .prepare('SELECT id, title, source_url FROM packages WHERE id = ? AND user_id = ?')
+    .bind(pkgId, user)
+    .first<{ id: number; title: string; source_url: string | null }>()
+  if (!pkg) return c.json({ error: '找不到这个学习包' }, 404)
+
+  const repeat = body.repeat === true
+  const { results } = await db
+    .prepare(
+      `SELECT id, text, meta, source_ref, lapses FROM items
+       WHERE user_id = ? AND package_id = ? AND status = 'active'
+         ${repeat ? '' : 'AND NOT EXISTS (SELECT 1 FROM lesson_cards lc WHERE lc.item_id = items.id AND lc.user_id = items.user_id)'}
+       ORDER BY id`,
+    )
+    .bind(user, pkgId)
+    .all<{ id: number; text: string; meta: string; source_ref: string | null; lapses: number }>()
+  if (!results.length) {
+    const any = await db.prepare("SELECT 1 FROM items WHERE user_id = ? AND package_id = ? AND status = 'active' LIMIT 1").bind(user, pkgId).first()
+    return c.json({ error: any ? '这个包里进行中的词都练过一遍了，可以「再练一轮」' : '这个包里没有进行中的词（可能都已 DONE）' }, any ? 409 : 400)
+  }
+
+  const ref = results[0].source_ref ?? ''
+  const chosen = results
+    .filter((r) => (r.source_ref ?? '') === ref)
+    .map((r, i) => ({ r, i }))
+    // 最近忘得多的先练，其余保持导入顺序
+    .sort((a, b) => b.r.lapses - a.r.lapses || a.i - b.i)
+    .slice(0, SET_SIZE)
+    .map(({ r }): PackageCard => {
+      let m: Record<string, unknown> = {}
+      try {
+        m = JSON.parse(r.meta)
+      } catch {
+        /* ignore */
+      }
+      const s = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
+      return { id: r.id, text: r.text, ipa: s(m.ipa, 80), meaning: s(m.meaning, 200), example: s(m.example, 400), ref, lapses: r.lapses }
+    })
+
+  const settings = await loadSettings(c.env, user)
+  const level: Level = isLevel(Number(body.level)) ? (Number(body.level) as Level) : settings.practiceLevel
+  const raw = await generateJson<Partial<LessonContent>>(
+    await aiEnv(c.env, user, c.get('admin')),
+    packageLessonPrompt(settings.coachProfile, level, pkg.title, ref, chosen),
+    packageLessonSchema,
+    'lesson',
+  )
+  const n = ((await db.prepare('SELECT COUNT(*) AS n FROM lessons WHERE user_id = ? AND package_id = ?').bind(user, pkgId).first<{ n: number }>())?.n ?? 0) + 1
+  const content = cleanLesson(
+    {
+      ...raw,
+      title: `${pkg.title} · ${ref ? `${ref} · ` : ''}第 ${n} 套`,
+      fit: 'ok',
+      fitNote: '',
+      words: chosen.map((c) => ({ word: c.text, ipa: c.ipa, meaning: c.meaning, quote: c.example })),
+    },
+    level,
+  )
+  // 原句拼成「原文」，练习页里可以直接读、点词查义
+  const source = chosen.map((c) => c.example).filter(Boolean).join('\n\n')
+
+  const row = await db
+    .prepare(
+      'INSERT INTO lessons (created_at, level, source_url, title, content, user_id, source_text, package_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id',
+    )
+    .bind(Date.now(), level, pkg.source_url, content.title, JSON.stringify(content), user, source || null, pkgId)
+    .first<{ id: number }>()
+  const lessonId = row!.id
+  await db.batch(
+    chosen.map((c) =>
+      db.prepare('INSERT OR IGNORE INTO lesson_cards (lesson_id, user_id, item_id) VALUES (?, ?, ?)').bind(lessonId, user, c.id),
+    ),
+  )
+  return c.json({ id: lessonId, count: chosen.length }, 201)
+})
+
 /* ============================== 列表 / 详情 ============================== */
 
 practice.get('/lessons', async (c) => {
@@ -278,6 +407,7 @@ practice.delete('/lessons/:id', async (c) => {
   const user = c.get('user')
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user),
+    c.env.DB.prepare('DELETE FROM lesson_cards WHERE lesson_id = ? AND user_id = ?').bind(id, user),
     c.env.DB.prepare('DELETE FROM lessons WHERE id = ? AND user_id = ?').bind(id, user),
   ])
   return c.body(null, 204)

@@ -29,3 +29,6 @@ export function useStats() {
     () => stats,
   )
 }
+
+/** 从别的页面（如复习卡片的来源包标签）跳到词库并筛选某个包；词库页读取后清空 */
+export const libraryJump: { packageId: number | null } = { packageId: null }

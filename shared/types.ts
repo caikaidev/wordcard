@@ -23,6 +23,8 @@ export interface CardMeta {
   definitionSrc?: string
   /** 产出练习：看中文情境，说出空里的表达（与原例句不同的新情境） */
   cloze?: Cloze
+  /** 记忆钩子（谐音 / 拆词 / 画面），来自导入的学习包 */
+  memoryTip?: string
 }
 
 export interface Cloze {
@@ -47,7 +49,14 @@ export function clozeOf(item: { type: ItemType; meta: CardMeta }): Cloze | null 
   return null
 }
 
-export type ReviewMode = 'mixed' | 'recognition' | 'production'
+/** 语境复习：永远用原文例句挖空（不用 AI 编的新情境），在原来的语境里回想这个词 */
+export function contextClozeOf(item: { meta: CardMeta }): Cloze | null {
+  const m = item.meta
+  if (!m.example || !m.highlight || !m.example.includes(m.highlight)) return null
+  return { scene: m.exampleZh || m.meaning, sentence: m.example.replace(m.highlight, BLANK), answer: m.highlight }
+}
+
+export type ReviewMode = 'mixed' | 'recognition' | 'production' | 'context'
 
 export interface Item {
   id: number
@@ -61,6 +70,30 @@ export interface Item {
   lapses: number
   created_at: number
   updated_at: number
+  /** 所属学习包；手动添加的卡片为 null */
+  package_id?: number | null
+  /** 学习包名（列表 / 复习接口附带） */
+  package_title?: string | null
+  /** 在原文中的出处，如 Ch2 */
+  source_ref?: string | null
+  difficulty?: number | null
+}
+
+/** 学习包概览 */
+export interface PackageInfo {
+  id: number
+  title: string
+  source_url: string | null
+  source_type: string | null
+  total: number
+  done: number
+  created_at: number
+  /** 已经练过的词数（出现在某套练习里） */
+  practiced: number
+  /** 进行中、还没练过的词数 */
+  pending: number
+  /** 已生成的练习套数 */
+  lessons: number
 }
 
 export interface EnrichResult {
@@ -83,3 +116,30 @@ export interface RemixResult {
 
 /** 0 = 忘了，1 = 模糊，2 = 记得 */
 export type Grade = 0 | 1 | 2
+
+/** 每周回顾（周一到周日，按北京时间） */
+export interface WeeklyReport {
+  /** 0 = 本周，-1 = 上周 … */
+  offset: number
+  /** 本周一 00:00（毫秒时间戳）和下周一 00:00 */
+  start: number
+  end: number
+  /** 今天是本周的第几天（0–6）；不是本周时为 -1 */
+  todayIdx: number
+  /** 周一到周日每天的复习次数 */
+  perDay: number[]
+  added: number
+  /** 其中来自导入学习包的 */
+  addedImported: number
+  reviews: number
+  remembered: number
+  forgot: number
+  mastered: number
+  practiceDays: number
+  practiceSubmissions: number
+  /** 本周最常忘记的词 */
+  trouble: { text: string; n: number }[]
+  prev: { added: number; reviews: number; mastered: number }
+  /** 复习流水最早的记录时间；null 表示还没有记录 */
+  logSince: number | null
+}

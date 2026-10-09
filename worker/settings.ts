@@ -7,7 +7,7 @@ const GLOBAL_KEYS = ['textModel', 'ttsModel', 'voice'] as const
 /** 每个人自己的设置 */
 const USER_KEYS = ['practiceLevel', 'coachProfile', 'reviewMode'] as const
 
-const isReviewMode = (v: unknown): v is Settings['reviewMode'] => v === 'mixed' || v === 'recognition' || v === 'production'
+const isReviewMode = (v: unknown): v is Settings['reviewMode'] => v === 'mixed' || v === 'recognition' || v === 'production' || v === 'context'
 
 /** 读取设置：全局设置来自 settings 表，个人设置来自 user_settings 表，都缺省时用默认值 */
 export async function loadSettings(env: Env, user: string): Promise<Settings> {
@@ -81,7 +81,7 @@ export async function saveSettings(env: Env, user: string, admin: boolean, body:
     // 选回默认值（混合）时前端传 null，表示恢复默认
     if (body.reviewMode === null || body.reviewMode === '') stmts.push(resetUser('reviewMode'))
     else if (isReviewMode(body.reviewMode)) stmts.push(upsertUser('reviewMode', body.reviewMode))
-    else return 'reviewMode 只能是 mixed / recognition / production'
+    else return 'reviewMode 只能是 mixed / recognition / production / context'
   }
   if (body.coachProfile !== undefined) {
     const v = body.coachProfile

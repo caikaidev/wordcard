@@ -12,6 +12,7 @@ import Settings from './pages/Settings'
 import Practice from './pages/Practice'
 import LessonPage from './pages/Lesson'
 import Reader from './pages/Reader'
+import Weekly from './pages/Weekly'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -56,6 +57,7 @@ export default function App() {
         {path === '/add' && <Add />}
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
+        {path === '/weekly' && <Weekly />}
         {path === '/settings' && <Settings />}
         {path === '/practice' && <Practice />}
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}

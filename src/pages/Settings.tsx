@@ -104,8 +104,18 @@ export default function Settings() {
         <div className="mx-4 mt-5 h-64 md:mx-6 animate-shimmer rounded-2xl bg-surface" />
       ) : (
         <>
+          <section className="mt-5 px-4 md:mt-6 md:px-6">
+            <Link
+              to="/weekly"
+              className="flex h-12 items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[15px] text-ink no-underline"
+            >
+              每周回顾
+              <span className="text-muted">›</span>
+            </Link>
+          </section>
+
           <Section title="复习方式" desc="产出：看中文情境说出英文表达，练的是“能说出来”">
-            <div className="grid grid-cols-3 gap-1 rounded-[14px] bg-line-soft p-1" role="radiogroup" aria-label="复习方式">
+            <div className="grid grid-cols-4 gap-1 rounded-[14px] bg-line-soft p-1" role="radiogroup" aria-label="复习方式">
               {REVIEW_MODES.map((m) => (
                 <button
                   key={m.id}
@@ -165,8 +175,21 @@ export default function Settings() {
             />
           </Section>
 
-          {me?.admin ? (
-            <>
+          <Section title="模型与音色" desc={me?.admin ? '已选好默认值，一般不用动' : '全站共用，由管理员统一设置'}>
+            <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
+              文本 <span className="font-mono text-ink">{cur.textModel}</span>
+              <br />
+              语音 <span className="font-mono text-ink">{cur.ttsModel}</span> · {cur.voice}
+            </div>
+          </Section>
+
+          {me?.admin && (
+            <details className="group mt-5 px-4 md:mt-6 md:px-6">
+              <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[13px] text-muted-2 [&::-webkit-details-marker]:hidden">
+                高级：更换模型、音色，测试速度
+                <span className="transition-transform group-open:rotate-90">›</span>
+              </summary>
+              <div className="-mx-4 md:-mx-6">
           <Section title="文本模型" desc="用于生成练习、批改、AI 补全和 AI 重组">
             <Options
               options={TEXT_MODELS}
@@ -205,17 +228,6 @@ export default function Settings() {
               })}
             </div>
           </Section>
-            </>
-          ) : (
-            <Section title="模型与音色" desc="全站共用，由管理员统一设置">
-              <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
-                文本 <span className="font-mono text-ink">{cur.textModel}</span>
-                <br />
-                语音 <span className="font-mono text-ink">{cur.ttsModel}</span> · {cur.voice}
-              </div>
-            </Section>
-          )}
-
           <Section title="测试" desc="用当前设置跑一次，看看速度和效果。同一段语音第二次会命中缓存。">
             <div className="grid grid-cols-2 gap-2.5">
               <button
@@ -245,6 +257,9 @@ export default function Settings() {
               </div>
             )}
           </Section>
+              </div>
+            </details>
+          )}
         </>
       )}
 

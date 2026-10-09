@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, type TouchEvent } from 'react'
+import { useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react'
 import { api } from '../api'
 import { dueLabel } from '../../shared/srs'
-import type { Item, ItemStatus } from '../../shared/types'
-import { refreshStats, useStats } from '../store'
+import type { Item, ItemStatus, PackageInfo } from '../../shared/types'
+import { libraryJump, refreshStats, useStats } from '../store'
+import ImportSheet from '../components/ImportSheet'
+import PackagePractice from '../components/PackagePractice'
 import { Link } from '../router'
 import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconCheck, IconCheckCircle, IconGear, IconSearch, IconTrash, IconUndo } from '../components/icons'
@@ -15,14 +17,30 @@ export default function Library() {
   const [items, setItems] = useState<Item[] | null>(null)
   const [openId, setOpenId] = useState<number | null>(null)
   const [swipedId, setSwipedId] = useState<number | null>(null)
+  const [packages, setPackages] = useState<PackageInfo[]>([])
+  // 从复习卡片的「来自《包名》」跳过来时直接筛选该包（严格模式下初始化函数会跑两次，所以到 effect 里再清空）
+  const [pkgId, setPkgId] = useState<number | null>(() => libraryJump.packageId)
+  useEffect(() => {
+    libraryJump.packageId = null
+  }, [])
+  const [showImport, setShowImport] = useState(false)
   const stats = useStats()
+
+  const loadPackages = () =>
+    api
+      .packages()
+      .then((r) => setPackages(r.packages))
+      .catch(() => {})
+  useEffect(() => {
+    loadPackages()
+  }, [])
 
   useEffect(() => {
     let cancelled = false
     const t = setTimeout(
       async () => {
         try {
-          const r = await api.items(tab, q.trim())
+          const r = await api.items(tab, q.trim(), pkgId ?? undefined)
           if (!cancelled) setItems(r.items)
         } catch (e) {
           if (!cancelled) toast(errMsg(e), 'error')
@@ -34,7 +52,7 @@ export default function Library() {
       cancelled = true
       clearTimeout(t)
     }
-  }, [tab, q])
+  }, [tab, q, pkgId])
 
   const switchTab = (t: ItemStatus) => {
     if (t === tab) return
@@ -52,6 +70,7 @@ export default function Library() {
       await api.update(item.id, { status: next })
       toast(next === 'done' ? `「${item.text}」已标记 DONE` : `「${item.text}」已移回进行中`)
       refreshStats()
+      loadPackages()
     } catch (e) {
       setItems((l) => (l ? [item, ...l] : l))
       toast(errMsg(e), 'error')
@@ -65,6 +84,7 @@ export default function Library() {
     try {
       await api.remove(item.id)
       refreshStats()
+      loadPackages()
     } catch (e) {
       setItems((l) => (l ? [item, ...l] : l))
       toast(errMsg(e), 'error')
@@ -72,6 +92,8 @@ export default function Library() {
   }
 
   const total = stats ? stats.active + stats.done : null
+  const current = packages.find((p) => p.id === pkgId) ?? null
+  const finished = (p: PackageInfo) => p.total > 0 && p.done === p.total
 
   return (
     <div className="pt-safe flex flex-1 flex-col md:pt-10">
@@ -105,6 +127,33 @@ export default function Library() {
             className="h-11 w-full rounded-[14px] border border-line bg-surface pr-4 pl-11 text-[15px] text-ink outline-none placeholder:text-faint focus:border-muted"
           />
         </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5" aria-label="学习包">
+          <button
+            onClick={() => setShowImport(true)}
+            className="h-8 shrink-0 rounded-full border border-dashed border-line bg-transparent px-3 text-[13px] text-accent"
+          >
+            ＋ 导入学习包
+          </button>
+          {packages.length > 0 && (
+            <>
+              <PkgChip active={pkgId === null} onClick={() => setPkgId(null)}>
+                全部
+              </PkgChip>
+              {packages.map((p) => (
+                <PkgChip key={p.id} active={pkgId === p.id} onClick={() => setPkgId(pkgId === p.id ? null : p.id)}>
+                  {finished(p) && '🏅 '}
+                  {p.title} <span className="tabular opacity-70">{p.done}/{p.total}</span>
+                </PkgChip>
+              ))}
+            </>
+          )}
+        </div>
+        {current && <PackagePractice pkg={current} onCreated={loadPackages} />}
+        {current && finished(current) && (
+          <div className="rounded-xl bg-accent-soft px-3.5 py-2.5 text-[13px] text-accent">
+            🏅 你学完了《{current.title}》，{current.total} 张卡片全部 DONE
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-line-soft p-1" role="tablist">
           {(['active', 'done'] as const).map((t) => (
             <button
@@ -154,7 +203,34 @@ export default function Library() {
         )}
       </div>
 
+      {showImport && (
+        <ImportSheet
+          onClose={() => setShowImport(false)}
+          onImported={(id) => {
+            setShowImport(false)
+            setItems(null)
+            setTab('active')
+            setPkgId(id)
+            refreshStats()
+            loadPackages()
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+function PkgChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`h-8 max-w-[14rem] shrink-0 truncate rounded-full border px-3 text-[13px] ${
+        active ? 'border-transparent bg-invert-bg text-invert-fg' : 'border-line bg-surface text-ink'
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -274,6 +350,12 @@ function Row({
                   {m.exampleZh && <div className="text-[13px] text-muted">{m.exampleZh}</div>}
                 </div>
                 <SpeakButton text={m.example} size={40} waves={1} label="播放例句" />
+              </div>
+            )}
+            {m.memoryTip && <div className="rounded-xl bg-chip px-3 py-2 text-[13px] leading-relaxed text-muted-2">💡 {m.memoryTip}</div>}
+            {item.package_title && (
+              <div className="text-xs text-muted">
+                来自《{item.package_title}》{item.source_ref && ` · ${item.source_ref}`}
               </div>
             )}
             <div className="flex items-center gap-2">
