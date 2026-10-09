@@ -4,6 +4,7 @@ import { dueLabel } from '../../shared/srs'
 import type { Item, ItemStatus, PackageInfo } from '../../shared/types'
 import { libraryJump, refreshStats, useStats } from '../store'
 import ImportSheet from '../components/ImportSheet'
+import PackagePractice from '../components/PackagePractice'
 import { Link } from '../router'
 import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconCheck, IconCheckCircle, IconGear, IconSearch, IconTrash, IconUndo } from '../components/icons'
@@ -147,6 +148,7 @@ export default function Library() {
             </>
           )}
         </div>
+        {current && <PackagePractice pkg={current} onCreated={loadPackages} />}
         {current && finished(current) && (
           <div className="rounded-xl bg-accent-soft px-3.5 py-2.5 text-[13px] text-accent">
             🏅 你学完了《{current.title}》，{current.total} 张卡片全部 DONE

@@ -88,6 +88,12 @@ export interface PackageInfo {
   total: number
   done: number
   created_at: number
+  /** 已经练过的词数（出现在某套练习里） */
+  practiced: number
+  /** 进行中、还没练过的词数 */
+  pending: number
+  /** 已生成的练习套数 */
+  lessons: number
 }
 
 export interface EnrichResult {

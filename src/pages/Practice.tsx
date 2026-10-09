@@ -5,6 +5,8 @@ import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
+import PackagePractice from '../components/PackagePractice'
+import type { PackageInfo } from '../../shared/types'
 
 type Source = 'url' | 'text' | 'image'
 
@@ -12,6 +14,7 @@ export default function Practice() {
   const [stats, setStats] = useState<PracticeStats | null>(null)
   const [lessons, setLessons] = useState<LessonSummary[] | null>(null)
   const [saved, setSaved] = useState<SavedArticle[]>([])
+  const [packages, setPackages] = useState<PackageInfo[]>([])
   const loadSaved = () =>
     api
       .saved()
@@ -21,6 +24,10 @@ export default function Practice() {
   useEffect(() => {
     api.practiceStats().then(setStats).catch((e) => toast(errMsg(e), 'error'))
     loadSaved()
+    api
+      .packages()
+      .then((r) => setPackages(r.packages))
+      .catch(() => {})
     api
       .lessons()
       .then((r) => setLessons(r.lessons))
@@ -35,6 +42,17 @@ export default function Practice() {
       <StatsCard stats={stats} />
       <Composer onSaved={loadSaved} />
       {saved.length > 0 && <SavedList items={saved} onChange={setSaved} />}
+      {packages.length > 0 && (
+        <>
+          <h2 className="mt-6 mb-1 text-[13px] font-semibold">学习包练习</h2>
+          <p className="mt-0 mb-2 text-xs text-muted">用包里的原句出题，不用再贴文章；每套 5 个词，按章节顺序练</p>
+          <div className="flex flex-col gap-2.5">
+            {packages.map((p) => (
+              <PackagePractice key={p.id} pkg={p} />
+            ))}
+          </div>
+        </>
+      )}
 
       <h2 className="mt-6 mb-1 text-[13px] font-semibold">最近的练习</h2>
       {!lessons ? (

@@ -55,6 +55,8 @@ export const api = {
     ),
   weekly: (offset = 0) => req<WeeklyReport>(`/weekly?offset=${offset}`),
   packages: () => req<{ packages: PackageInfo[] }>('/packages'),
+  createPackageLesson: (id: number, input: { level?: Level; repeat?: boolean } = {}) =>
+    req<{ id: number; count: number }>(`/practice/packages/${id}/lessons`, { method: 'POST', body: json(input) }, 180_000),
   deletePackage: (id: number) => req<void>(`/packages/${id}`, { method: 'DELETE' }),
   importPackage: (body: unknown) =>
     req<ImportReport>('/import', { method: 'POST', body: json(body) }, 120_000),

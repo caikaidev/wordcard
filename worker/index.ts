@@ -191,7 +191,10 @@ app.delete('/items/:id', async (c) => {
 app.get('/packages', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT p.id, p.title, p.source_url, p.source_type, p.created_at,
-            COUNT(i.id) AS total, COALESCE(SUM(i.status = 'done'), 0) AS done
+            COUNT(i.id) AS total, COALESCE(SUM(i.status = 'done'), 0) AS done,
+            COALESCE(SUM(EXISTS (SELECT 1 FROM lesson_cards lc WHERE lc.item_id = i.id AND lc.user_id = p.user_id)), 0) AS practiced,
+            COALESCE(SUM(i.status = 'active' AND NOT EXISTS (SELECT 1 FROM lesson_cards lc WHERE lc.item_id = i.id AND lc.user_id = p.user_id)), 0) AS pending,
+            (SELECT COUNT(*) FROM lessons l WHERE l.package_id = p.id AND l.user_id = p.user_id) AS lessons
      FROM packages p LEFT JOIN items i ON i.package_id = p.id AND i.user_id = p.user_id
      WHERE p.user_id = ? GROUP BY p.id ORDER BY p.created_at DESC`,
   )
