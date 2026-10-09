@@ -4,6 +4,79 @@ export const IMPORT_FORMAT = 'shiju-import-v1'
 /** 单个学习包的卡片上限 */
 export const IMPORT_MAX_CARDS = 500
 
+/** 示例文件：导入对话框里可以下载，也是给助手看的参照（docs/examples/mom-test-sample.json 与它保持一致） */
+export const IMPORT_EXAMPLE = {
+  format: IMPORT_FORMAT,
+  package: {
+    title: 'The Mom Test (sample)',
+    source_url: 'https://www.momtestbook.com/',
+    source_type: 'book',
+    created_at: '2026-10-09',
+    card_count: 3,
+    difficulty_order: ['ch1', 'ch2'],
+  },
+  cards: [
+    {
+      term: 'compliment',
+      phonetic: '/ˈkɑːmplɪmənt/',
+      pos: 'n./v.',
+      definition_cn: '恭维；赞美',
+      example_en: 'You want facts and commitments, not compliments.',
+      example_cn: '你想要的是事实和承诺，而不是恭维。',
+      phrases: ['take sth as a compliment'],
+      memory_tip: "compli- 像'顺从'，顺着别人说好话就是恭维",
+      source_ref: 'Ch2',
+      difficulty: 2,
+    },
+    {
+      term: 'sail with a fair wind',
+      definition_cn: '一帆风顺',
+      example_en: 'Few startups sail with a fair wind from day one.',
+      example_cn: '很少有创业公司从第一天起就一帆风顺。',
+      source_ref: 'Ch1',
+      difficulty: 3,
+    },
+    {
+      term: 'commitment',
+      phonetic: '/kəˈmɪtmənt/',
+      pos: 'n.',
+      definition_cn: '承诺；投入',
+      example_en: 'A commitment costs the other person something real.',
+      example_cn: '承诺会让对方付出真实的代价。',
+      source_ref: 'Ch2',
+    },
+  ],
+}
+
+/** 可以整段复制给 AI 助手的格式说明 */
+export const IMPORT_SPEC = `请把我提供的英文资料做成「拾句」学习包，输出一个 UTF-8 编码的 JSON 文件（单包最多 ${IMPORT_MAX_CARDS} 张卡片），格式 ${IMPORT_FORMAT}：
+
+{
+  "format": "${IMPORT_FORMAT}",
+  "package": {
+    "title": "包名（书名/文章标题）",        // 必填
+    "source_url": "https://...",            // 可选，原文链接（http/https）
+    "source_type": "book",                  // 可选：book / article / video 等
+    "difficulty_order": ["ch1", "ch2"]      // 可选：建议学习顺序，对应卡片的 source_ref
+  },
+  "cards": [
+    {
+      "term": "单词 / 词组 / 短句",          // 必填
+      "definition_cn": "中文释义",           // 必填，多义用分号分隔
+      "example_en": "原文里的英文例句",       // 必填，必须是原文真实句子，且包含 term（词形变化可以）
+      "example_cn": "例句的中文翻译",         // 必填
+      "phonetic": "/美式音标/",              // 可选
+      "pos": "n.",                          // 可选：词性
+      "phrases": ["相关词组"],               // 可选：字符串数组，最多 5 个
+      "memory_tip": "记忆钩子",              // 可选：谐音 / 拆词 / 画面
+      "source_ref": "Ch2",                  // 可选：来源章节
+      "difficulty": 2                       // 可选：1–5
+    }
+  ]
+}
+
+要求：只输出 JSON，不要加注释和多余文字；缺少必填字段的卡片会被忽略。`
+
 export interface ImportPackage {
   title: string
   source_url?: string

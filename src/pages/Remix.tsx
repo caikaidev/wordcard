@@ -107,13 +107,16 @@ export default function Remix() {
             </div>
           </div>
         ) : loading || !data ? (
-          [0, 1, 2].map((i) => (
+          <>
+            <WaitNote />
+            {[0, 1, 2].map((i) => (
             <div key={i} className="flex animate-shimmer flex-col gap-2.5 rounded-2xl border border-line-soft bg-surface p-5">
               <div className="h-5 w-full rounded bg-chip" />
               <div className="h-5 w-3/4 rounded bg-chip" />
               <div className="h-3.5 w-1/2 rounded bg-chip" />
             </div>
-          ))
+            ))}
+          </>
         ) : (
           data.sentences.map((s, i) => (
             <div
@@ -153,6 +156,30 @@ export default function Remix() {
           {playing !== null ? '停止' : '连续播放'}
         </button>
       </div>
+    </div>
+  )
+}
+
+/** 生成期间的进度说明：阶段文案 + 已等待秒数；超过 15 秒说明比平时慢，并告知多久会超时 */
+const TIMEOUT_S = 40
+
+function WaitNote() {
+  const [s, setS] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setS((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const stage = s < 3 ? '正在挑选要复习的词…' : s < 15 ? 'AI 正在用这些词造句…通常 5–15 秒' : '比平时慢一点，再等一会儿'
+  return (
+    <div role="status" aria-live="polite" className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-[13px] text-muted">
+        <span>{stage}</span>
+        <span className="tabular shrink-0">已等待 {s} 秒</span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-line-soft">
+        <div className="h-1 rounded-full bg-accent transition-[width] duration-1000 ease-linear" style={{ width: `${Math.min(100, (s / TIMEOUT_S) * 100)}%` }} />
+      </div>
+      {s >= 15 && <div className="text-xs text-faint">超过 {TIMEOUT_S} 秒会自动提示超时，到时点「重试」即可</div>}
     </div>
   )
 }
