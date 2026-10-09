@@ -49,7 +49,14 @@ export function clozeOf(item: { type: ItemType; meta: CardMeta }): Cloze | null 
   return null
 }
 
-export type ReviewMode = 'mixed' | 'recognition' | 'production'
+/** 语境复习：永远用原文例句挖空（不用 AI 编的新情境），在原来的语境里回想这个词 */
+export function contextClozeOf(item: { meta: CardMeta }): Cloze | null {
+  const m = item.meta
+  if (!m.example || !m.highlight || !m.example.includes(m.highlight)) return null
+  return { scene: m.exampleZh || m.meaning, sentence: m.example.replace(m.highlight, BLANK), answer: m.highlight }
+}
+
+export type ReviewMode = 'mixed' | 'recognition' | 'production' | 'context'
 
 export interface Item {
   id: number
@@ -103,3 +110,30 @@ export interface RemixResult {
 
 /** 0 = 忘了，1 = 模糊，2 = 记得 */
 export type Grade = 0 | 1 | 2
+
+/** 每周回顾（周一到周日，按北京时间） */
+export interface WeeklyReport {
+  /** 0 = 本周，-1 = 上周 … */
+  offset: number
+  /** 本周一 00:00（毫秒时间戳）和下周一 00:00 */
+  start: number
+  end: number
+  /** 今天是本周的第几天（0–6）；不是本周时为 -1 */
+  todayIdx: number
+  /** 周一到周日每天的复习次数 */
+  perDay: number[]
+  added: number
+  /** 其中来自导入学习包的 */
+  addedImported: number
+  reviews: number
+  remembered: number
+  forgot: number
+  mastered: number
+  practiceDays: number
+  practiceSubmissions: number
+  /** 本周最常忘记的词 */
+  trouble: { text: string; n: number }[]
+  prev: { added: number; reviews: number; mastered: number }
+  /** 复习流水最早的记录时间；null 表示还没有记录 */
+  logSince: number | null
+}

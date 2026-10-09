@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { prefetch, speak, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
-import { BLANK, clozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
+import { BLANK, clozeOf, contextClozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
 import { Link } from '../router'
 import { libraryJump, refreshStats, useStats } from '../store'
 import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
@@ -54,8 +54,9 @@ export default function Review() {
 
   const card = queue?.[0]
   // 这张卡用哪种方式：混合模式下新卡先认读，之后认读 / 产出交替（按复习次数奇偶）
-  const cloze = card ? clozeOf(card) : null
-  const production = !!cloze && (mode === 'production' || (mode === 'mixed' && card!.reps % 2 === 1))
+  const context = mode === 'context'
+  const cloze = card ? (context ? contextClozeOf(card) : clozeOf(card)) : null
+  const production = !!cloze && (context || mode === 'production' || (mode === 'mixed' && card!.reps % 2 === 1))
   const total = reviewed + (queue?.length ?? 0) + skipped.length
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
@@ -260,6 +261,9 @@ export default function Review() {
                     </Link>
                   )}
                 </div>
+                <Link to="/weekly" className="text-[13px] text-accent no-underline">
+                  看看本周回顾 ›
+                </Link>
                 {reviewed > 0 && (
                   <button
                     onClick={() => setSharing(true)}
@@ -288,14 +292,14 @@ export default function Review() {
               {flipped ? (
                 <Back
                   item={card}
-                  cloze={production ? cloze : null}
+                  cloze={production && !context ? cloze : null}
                   onDone={markDone}
                   busy={busy}
                   onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : q))}
                 />
               ) : (
                 production && cloze ? (
-                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} />
+                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} />
                 ) : (
                   <Front item={card} onFlip={() => setFlipped(true)} />
                 )
@@ -361,7 +365,7 @@ function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
 }
 
 /** 产出正面：中文情境 + 挖空句子，先说出空里的表达 */
-function ProductionFront({ cloze, onFlip }: { cloze: Cloze; onFlip: () => void }) {
+function ProductionFront({ cloze, onFlip, context = false, source = '' }: { cloze: Cloze; onFlip: () => void; context?: boolean; source?: string }) {
   const [hint, setHint] = useState(false)
   const [before, after] = cloze.sentence.split(BLANK)
   // 提示：每个词只露首字母，如 "pose a risk to" → "p… a r… t…"
@@ -372,7 +376,10 @@ function ProductionFront({ cloze, onFlip }: { cloze: Cloze; onFlip: () => void }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
-        <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium text-accent">产出 · 说出来</span>
+        <span className="shrink-0 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">
+          {context ? '语境 · 原句填空' : '产出 · 说出来'}
+        </span>
+        {source && <span className="truncate pl-3 text-xs text-muted">{source}</span>}
       </div>
       <div className="flex flex-1 flex-col justify-center-safe gap-5 py-2">
         {cloze.scene && <p className="m-0 text-[15px] leading-relaxed text-muted-2 md:text-[17px]">{cloze.scene}</p>}
@@ -395,7 +402,7 @@ function ProductionFront({ cloze, onFlip }: { cloze: Cloze; onFlip: () => void }
           </button>
         )}
       </div>
-      <div className="text-center text-[13px] text-muted">先大声说出空里的表达，再看答案</div>
+      <div className="text-center text-[13px] text-muted">{context ? '回想原文里这句话，空里是什么，再看答案' : '先大声说出空里的表达，再看答案'}</div>
     </div>
   )
 }

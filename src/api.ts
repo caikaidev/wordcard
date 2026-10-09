@@ -1,6 +1,6 @@
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
-import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult } from '../shared/types'
+import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -53,6 +53,7 @@ export const api = {
     req<{ items: Item[] }>(
       `/items?status=${status}${q ? `&q=${encodeURIComponent(q)}` : ''}${packageId ? `&package=${packageId}` : ''}`,
     ),
+  weekly: (offset = 0) => req<WeeklyReport>(`/weekly?offset=${offset}`),
   packages: () => req<{ packages: PackageInfo[] }>('/packages'),
   deletePackage: (id: number) => req<void>(`/packages/${id}`, { method: 'DELETE' }),
   importPackage: (body: unknown) =>

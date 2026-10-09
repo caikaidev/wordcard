@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
 
-export type Path = '/' | '/add' | '/library' | '/remix' | '/settings' | '/practice' | `/practice/${number}` | `/practice/${number}/read` | `/practice/saved/${number}`
+export type Path = '/' | '/add' | '/library' | '/remix' | '/weekly' | '/settings' | '/practice' | `/practice/${number}` | `/practice/${number}/read` | `/practice/saved/${number}`
 
 const subscribe = (cb: () => void) => {
   window.addEventListener('popstate', cb)
@@ -10,7 +10,7 @@ const subscribe = (cb: () => void) => {
 export function usePath(): Path {
   const p = useSyncExternalStore(subscribe, () => window.location.pathname)
   if (/^\/practice\/(\d+(\/read)?|saved\/\d+)$/.test(p)) return p as Path
-  return (['/', '/add', '/library', '/remix', '/settings', '/practice'] as const).find((x) => x === p) ?? '/'
+  return (['/', '/add', '/library', '/remix', '/weekly', '/settings', '/practice'] as const).find((x) => x === p) ?? '/'
 }
 
 export function navigate(to: Path) {

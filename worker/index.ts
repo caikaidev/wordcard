@@ -4,7 +4,7 @@ import { requireAccess } from './auth'
 import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
-import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/types'
+import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
 import { costOf } from '../shared/pricing'
@@ -296,7 +296,100 @@ app.post('/review/:id', async (c) => {
   )
     .bind(next.interval, next.dueAt, grade === 0 ? 1 : 0, now, id)
     .first<Row>()
+  // 评分流水：每周回顾用；记录失败不影响复习
+  await c.env.DB.prepare('INSERT INTO reviews (user_id, item_id, grade, ts) VALUES (?, ?, ?, ?)')
+    .bind(who(c).user, id, grade, now)
+    .run()
+    .catch((e) => console.error('log review failed', e))
   return c.json({ item: toItem(row!) })
+})
+
+/* ------------------------------ 每周回顾 ------------------------------ */
+
+const WEEK_DAY = 86_400_000
+const WEEK_TZ = 8 * 3600_000 // 北京时间，周一为一周的第一天
+
+app.get('/weekly', async (c) => {
+  const offset = Math.min(0, Math.max(-52, Math.trunc(Number(c.req.query('offset'))) || 0))
+  const user = who(c).user
+  const db = c.env.DB
+  const now = Date.now()
+  const today = Math.floor((now + WEEK_TZ) / WEEK_DAY)
+  // 1970-01-01 是周四，所以 (day + 3) % 7 = 0 的那天是周一
+  const mondayDay = today - ((today + 3) % 7) + offset * 7
+  const start = mondayDay * WEEK_DAY - WEEK_TZ
+  const end = start + 7 * WEEK_DAY
+
+  const itemCounts = (from: number, to: number) =>
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(created_at >= ?1 AND created_at < ?2), 0) AS added,
+                COALESCE(SUM(created_at >= ?1 AND created_at < ?2 AND package_id IS NOT NULL), 0) AS addedImported,
+                COALESCE(SUM(status = 'done' AND updated_at >= ?1 AND updated_at < ?2), 0) AS mastered
+         FROM items WHERE user_id = ?3`,
+      )
+      .bind(from, to, user)
+  const reviewCount = (from: number, to: number) =>
+    db.prepare('SELECT COUNT(*) AS n FROM reviews WHERE user_id = ? AND ts >= ? AND ts < ?').bind(user, from, to)
+
+  const [cur, prev, prevReviews, perDay, practice, trouble, since] = await db.batch<Record<string, number | string | null>>([
+    itemCounts(start, end),
+    itemCounts(start - 7 * WEEK_DAY, start),
+    reviewCount(start - 7 * WEEK_DAY, start),
+    db
+      .prepare(
+        `SELECT CAST((ts + ?) / ? AS INTEGER) AS day, COUNT(*) AS n, SUM(grade = 2) AS remembered, SUM(grade = 0) AS forgot
+         FROM reviews WHERE user_id = ? AND ts >= ? AND ts < ? GROUP BY day`,
+      )
+      .bind(WEEK_TZ, WEEK_DAY, user, start, end),
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT CAST((created_at + ?) / ? AS INTEGER)) AS days, COUNT(*) AS n
+         FROM submissions WHERE user_id = ? AND created_at >= ? AND created_at < ?`,
+      )
+      .bind(WEEK_TZ, WEEK_DAY, user, start, end),
+    db
+      .prepare(
+        `SELECT i.text AS text, COUNT(*) AS n FROM reviews r JOIN items i ON i.id = r.item_id
+         WHERE r.user_id = ? AND r.grade = 0 AND r.ts >= ? AND r.ts < ? GROUP BY r.item_id ORDER BY n DESC, i.text LIMIT 3`,
+      )
+      .bind(user, start, end),
+    db.prepare('SELECT MIN(ts) AS ts FROM reviews WHERE user_id = ?').bind(user),
+  ])
+
+  const days = Array<number>(7).fill(0)
+  let reviews = 0
+  let remembered = 0
+  let forgot = 0
+  for (const r of perDay.results as unknown as { day: number; n: number; remembered: number; forgot: number }[]) {
+    const i = r.day - mondayDay
+    if (i >= 0 && i < 7) days[i] = r.n
+    reviews += r.n
+    remembered += r.remembered
+    forgot += r.forgot
+  }
+  const p = practice.results[0] as { days: number; n: number }
+  const cc = cur.results[0] as { added: number; addedImported: number; mastered: number }
+  const pc = prev.results[0] as { added: number; mastered: number }
+  const report: WeeklyReport = {
+    offset,
+    start,
+    end,
+    todayIdx: today >= mondayDay && today < mondayDay + 7 ? today - mondayDay : -1,
+    perDay: days,
+    added: cc.added,
+    addedImported: cc.addedImported,
+    reviews,
+    remembered,
+    forgot,
+    mastered: cc.mastered,
+    practiceDays: p.days,
+    practiceSubmissions: p.n,
+    trouble: trouble.results as unknown as { text: string; n: number }[],
+    prev: { added: pc.added, reviews: (prevReviews.results[0] as { n: number }).n, mastered: pc.mastered },
+    logSince: ((since.results[0] as { ts: number | null }).ts ?? null),
+  }
+  return c.json(report)
 })
 
 /* ------------------------------ AI ------------------------------ */

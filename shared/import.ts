@@ -30,10 +30,19 @@ export type ImportParse =
 
 const str = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 
-/** 例句里和 term 写法一致的片段（忽略大小写），用于高亮；找不到就不高亮 */
+/**
+ * 例句里和 term 对应的片段（忽略大小写），用于高亮和语境挖空；找不到就为空。
+ * 词形变化（compliment → compliments / complimented）向后多取最多 4 个字母，避免挖空后剩下半个词
+ */
 function highlightOf(term: string, example: string) {
   const i = example.toLowerCase().indexOf(term.toLowerCase())
-  return i >= 0 ? example.slice(i, i + term.length) : ''
+  if (i < 0) return ''
+  let end = i + term.length
+  if (/[A-Za-z]$/.test(term)) {
+    const tail = /^[A-Za-z]{1,4}(?![A-Za-z])/.exec(example.slice(end))
+    if (tail) end += tail[0].length
+  }
+  return example.slice(i, end)
 }
 
 /** 解析并校验《导入格式规范 v1》。前端预览和后端入库共用同一份逻辑 */
