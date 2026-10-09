@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { api, type ImportReport } from '../api'
-import { IMPORT_FORMAT, parseImport, type ImportParse } from '../../shared/import'
-import { errMsg } from './ui'
+import { IMPORT_DOC_URL, IMPORT_EXAMPLE, IMPORT_FORMAT, IMPORT_MAX_CARDS, IMPORT_SPEC, parseImport, type ImportParse } from '../../shared/import'
+import { errMsg, toast } from './ui'
 
 const BATCH = 100
 
@@ -108,6 +108,7 @@ export default function ImportSheet({ onClose, onImported }: { onClose: () => vo
                 选择 .json 文件
               </button>
             )}
+            {!loaded && <FormatHelp />}
             {error && <div className="rounded-xl bg-forgot-bg px-3.5 py-2.5 text-[13px] leading-relaxed text-forgot-fg">{error}</div>}
 
             {p && (
@@ -159,6 +160,51 @@ export default function ImportSheet({ onClose, onImported }: { onClose: () => vo
             )}
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** 导入前的格式说明：字段一览、下载示例文件、复制给 AI 助手的说明 */
+function FormatHelp() {
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(IMPORT_EXAMPLE, null, 2)], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'shiju-import-example.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(IMPORT_SPEC)
+      toast('已复制，粘贴给 AI 助手，再附上你的资料')
+    } catch {
+      toast('复制失败，请改用「下载示例文件」', 'error')
+    }
+  }
+  return (
+    <div className="rounded-2xl border border-line-soft bg-surface p-3.5 text-[13px] leading-relaxed text-muted">
+      <div>
+        每张卡片必填 <b className="text-ink">term</b>（词/词组/短句）、<b className="text-ink">definition_cn</b>（中文释义）、
+        <b className="text-ink">example_en</b>（原文例句）、<b className="text-ink">example_cn</b>（例句翻译）。
+      </div>
+      <div className="mt-1">
+        可选：phonetic 音标、pos 词性、phrases 词组、memory_tip 记忆钩子、source_ref 来源章节、difficulty 难度 1–5。单包最多 {IMPORT_MAX_CARDS} 张，同一个词已在词库里会跳过。
+      </div>
+      <div className="mt-1">
+        <a href={IMPORT_DOC_URL} target="_blank" rel="noreferrer" className="text-accent">
+          查看完整格式规范
+        </a>
+        <span className="text-faint"> · 把这个链接发给 AI 助手，它会按规范帮你出包</span>
+      </div>
+      <div className="mt-2.5 grid grid-cols-2 gap-2">
+        <button onClick={download} className="h-10 rounded-xl border border-line bg-transparent text-[13px] text-ink">
+          下载示例文件
+        </button>
+        <button onClick={copy} className="h-10 rounded-xl border border-line bg-transparent text-[13px] text-ink">
+          复制给助手的说明
+        </button>
       </div>
     </div>
   )
