@@ -8,6 +8,7 @@ import type { CardMeta, Grade, Item, ItemStatus, ItemType } from '../shared/type
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
 import { costOf } from '../shared/pricing'
+import { parseImport } from '../shared/import'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -33,12 +34,16 @@ function safeMeta(raw: unknown): CardMeta {
       : [],
     definitionEn: s(m.definitionEn, 600),
     definitionSrc: s(m.definitionSrc, 60),
+    memoryTip: s(m.memoryTip, 500) || undefined,
     cloze:
       m.cloze && typeof m.cloze === 'object' && s(m.cloze.answer, 200) && s(m.cloze.sentence, 400).includes('____')
         ? { scene: s(m.cloze.scene, 300), sentence: s(m.cloze.sentence, 400), answer: s(m.cloze.answer, 200) }
         : undefined,
   }
 }
+
+/** 列表 / 复习接口附带学习包名 */
+const ITEM_COLS = `items.*, (SELECT title FROM packages WHERE packages.id = items.package_id) AS package_title`
 
 const cleanText = (v: unknown) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, 500) : '')
 const isType = (v: unknown): v is ItemType => v === 'word' || v === 'sentence'
@@ -80,8 +85,13 @@ app.get('/stats', async (c) => {
 app.get('/items', async (c) => {
   const status = c.req.query('status')
   const q = c.req.query('q')?.trim()
+  const pkg = Number(c.req.query('package'))
   const where: string[] = ['user_id = ?']
   const args: unknown[] = [who(c).user]
+  if (Number.isInteger(pkg) && pkg > 0) {
+    where.push('package_id = ?')
+    args.push(pkg)
+  }
   if (isStatus(status)) {
     where.push('status = ?')
     args.push(status)
@@ -90,7 +100,7 @@ app.get('/items', async (c) => {
     where.push('(text LIKE ? OR meta LIKE ?)')
     args.push(`%${q}%`, `%${q}%`)
   }
-  const sql = `SELECT * FROM items WHERE ${where.join(' AND ')}
+  const sql = `SELECT ${ITEM_COLS} FROM items WHERE ${where.join(' AND ')}
                ORDER BY ${status === 'done' ? 'updated_at DESC' : 'due_at ASC'} LIMIT 500`
   const { results } = await c.env.DB.prepare(sql)
     .bind(...args)
@@ -176,11 +186,94 @@ app.delete('/items/:id', async (c) => {
   return c.body(null, 204)
 })
 
+/* ------------------------------ 学习包 ------------------------------ */
+
+app.get('/packages', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT p.id, p.title, p.source_url, p.source_type, p.created_at,
+            COUNT(i.id) AS total, COALESCE(SUM(i.status = 'done'), 0) AS done
+     FROM packages p LEFT JOIN items i ON i.package_id = p.id AND i.user_id = p.user_id
+     WHERE p.user_id = ? GROUP BY p.id ORDER BY p.created_at DESC`,
+  )
+    .bind(who(c).user)
+    .all()
+  return c.json({ packages: results })
+})
+
+/** 删除学习包本身；包里的卡片保留，只是不再归属于它 */
+app.delete('/packages/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const user = who(c).user
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE items SET package_id = NULL WHERE package_id = ? AND user_id = ?').bind(id, user),
+    c.env.DB.prepare('DELETE FROM packages WHERE id = ? AND user_id = ?').bind(id, user),
+  ])
+  return c.body(null, 204)
+})
+
+/**
+ * 导入学习包（shiju-import-v1）：不调 AI，直接入库。
+ * 前端把大包切成小批多次提交；包按（用户, 包名）合并，同一个包可以分批、重复导入。
+ */
+app.post('/import', async (c) => {
+  const body = await c.req.json<{ batch?: { offset?: unknown; total?: unknown } }>().catch(() => null)
+  const parsed = parseImport(body)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+  const { pkg, cards, invalid } = parsed
+  const { user } = who(c)
+  const now = Date.now()
+  const db = c.env.DB
+  // 大包分批提交时，前端带上本批在整包里的位置，保证跨批的先后顺序
+  const offset = Math.max(0, Number(body?.batch?.offset) || 0)
+  const total = Math.max(offset + cards.length, Number(body?.batch?.total) || 0)
+
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO packages (user_id, title, source_url, source_type, difficulty_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(user, pkg.title, pkg.source_url ?? null, pkg.source_type ?? null, pkg.difficulty_order ? JSON.stringify(pkg.difficulty_order) : null, now)
+    .run()
+  const row = await db
+    .prepare('SELECT id FROM packages WHERE user_id = ? AND title = ? COLLATE NOCASE')
+    .bind(user, pkg.title)
+    .first<{ id: number }>()
+  const packageId = row!.id
+
+  // 同一个词已经在词库里（不限包）就跳过；按包内顺序错开到期时间（都已到期），复习时先学靠前的
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO items (type, text, meta, due_at, created_at, updated_at, user_id, package_id, source_ref, difficulty)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  let added = 0
+  for (let i = 0; i < cards.length; i += 50) {
+    const chunk = cards.slice(i, i + 50)
+    const res = await db.batch(
+      chunk.map((card, j) =>
+        insert.bind(
+          card.type,
+          card.text,
+          JSON.stringify(safeMeta(card.meta)),
+          now - (total - offset - i - j) * 1000,
+          now,
+          now,
+          user,
+          packageId,
+          card.sourceRef || null,
+          card.difficulty,
+        ),
+      ),
+    )
+    added += res.reduce((n, r) => n + (r.meta.changes ?? 0), 0)
+  }
+  return c.json({ packageId, added, skipped: cards.length - added, invalid })
+})
+
 /* ------------------------------ 复习 ------------------------------ */
 
 app.get('/review', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT * FROM items WHERE user_id = ? AND status = 'active' AND due_at <= ? ORDER BY due_at ASC LIMIT 200`,
+    `SELECT ${ITEM_COLS} FROM items WHERE user_id = ? AND status = 'active' AND due_at <= ? ORDER BY due_at ASC LIMIT 200`,
   )
     .bind(who(c).user, Date.now())
     .all<Row>()

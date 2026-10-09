@@ -23,6 +23,8 @@ export interface CardMeta {
   definitionSrc?: string
   /** 产出练习：看中文情境，说出空里的表达（与原例句不同的新情境） */
   cloze?: Cloze
+  /** 记忆钩子（谐音 / 拆词 / 画面），来自导入的学习包 */
+  memoryTip?: string
 }
 
 export interface Cloze {
@@ -61,6 +63,24 @@ export interface Item {
   lapses: number
   created_at: number
   updated_at: number
+  /** 所属学习包；手动添加的卡片为 null */
+  package_id?: number | null
+  /** 学习包名（列表 / 复习接口附带） */
+  package_title?: string | null
+  /** 在原文中的出处，如 Ch2 */
+  source_ref?: string | null
+  difficulty?: number | null
+}
+
+/** 学习包概览 */
+export interface PackageInfo {
+  id: number
+  title: string
+  source_url: string | null
+  source_type: string | null
+  total: number
+  done: number
+  created_at: number
 }
 
 export interface EnrichResult {

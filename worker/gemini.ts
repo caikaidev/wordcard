@@ -94,7 +94,10 @@ type UsageMeta = {
 }
 
 /** 所有 Gemini 请求的唯一出口：先过闸门，再请求，最后记账（失败也记一次） */
-async function post<T>(env: Env, path: string, body: unknown, call: { kind: UsageKind; model: string }): Promise<T> {
+/** Gemini 请求的默认超时：卡住比失败更糟，宁可让用户看到“超时，重试” */
+const DEFAULT_TIMEOUT_MS = 60_000
+
+async function post<T>(env: Env, path: string, body: unknown, call: { kind: UsageKind; model: string; timeoutMs?: number }): Promise<T> {
   if (!env.GEMINI_API_KEY) throw new GeminiError('服务端未配置 GEMINI_API_KEY', 500)
   await guard(env, call.kind)
   let res: Response
@@ -103,9 +106,11 @@ async function post<T>(env: Env, path: string, body: unknown, call: { kind: Usag
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(call.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     })
-  } catch {
+  } catch (e) {
     await recordUsage(env, call.kind, call.model, 0, 0)
+    if (e instanceof Error && e.name === 'TimeoutError') throw new GeminiError('AI 响应超时了，请重试', 504)
     throw new GeminiError('连不上 Gemini，请稍后再试')
   }
   const data = (await res.json().catch(() => ({}))) as T & UsageMeta & { error?: { message?: string } }
@@ -152,12 +157,12 @@ async function recordUsage(env: Env, kind: UsageKind, model: string, input: numb
   }
 }
 
-async function generate(env: Env, model: string, body: unknown, kind: UsageKind): Promise<GeminiPart[]> {
+async function generate(env: Env, model: string, body: unknown, kind: UsageKind, timeoutMs?: number): Promise<GeminiPart[]> {
   const data = await post<{ candidates?: { content?: { parts?: GeminiPart[] } }[] }>(
     env,
     `/models/${model}:generateContent`,
     body,
-    { kind, model },
+    { kind, model, timeoutMs },
   )
   const parts = data.candidates?.[0]?.content?.parts
   if (!parts?.length) throw new GeminiError('Gemini 没有返回内容，请重试')
@@ -172,6 +177,7 @@ export async function generateJson<T>(
   temperature = 0.7,
   /** 思考强度：翻译这类不需要推理的任务用 minimal，更快更省 */
   thinkingLevel: 'minimal' | 'low' = 'low',
+  timeoutMs?: number,
 ): Promise<T> {
   const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
@@ -186,10 +192,10 @@ export async function generateJson<T>(
   })
   let parts: GeminiPart[]
   try {
-    parts = await generate(env, env.GEMINI_TEXT_MODEL, body(true), kind)
+    parts = await generate(env, env.GEMINI_TEXT_MODEL, body(true), kind, timeoutMs)
   } catch (e) {
     // 个别模型不认 thinkingLevel 时，去掉再试一次
-    if (e instanceof GeminiError && e.upstream === 400) parts = await generate(env, env.GEMINI_TEXT_MODEL, body(false), kind)
+    if (e instanceof GeminiError && e.upstream === 400) parts = await generate(env, env.GEMINI_TEXT_MODEL, body(false), kind, timeoutMs)
     else throw e
   }
   const text = parts.map((p) => p.text ?? '').join('')
@@ -404,7 +410,7 @@ ${list}
 - zh：自然的中文翻译
 - highlights：该句中用到的目标词/表达，写法必须与 en 中完全一致，便于程序高亮`
 
-  const r = await generateJson<RemixSentence[]>(env, prompt, remixSchema, 'remix')
+  const r = await generateJson<RemixSentence[]>(env, prompt, remixSchema, 'remix', 0.7, 'low', 30_000)
   return (Array.isArray(r) ? r : []).slice(0, 5).map((s) => ({
     en: s.en ?? '',
     zh: s.zh ?? '',

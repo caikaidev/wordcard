@@ -1,6 +1,6 @@
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
-import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, RemixResult } from '../shared/types'
+import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult } from '../shared/types'
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -8,15 +8,20 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+/** 请求默认超时：服务端卡住时给出明确提示，而不是让页面一直转圈 */
+const TIMEOUT_MS = 60_000
+
+async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
       ...init,
+      signal: AbortSignal.timeout(timeoutMs),
       credentials: 'same-origin',
       headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
     })
-  } catch {
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'TimeoutError') throw new ApiError('等得太久了，请求超时，请重试', 0)
     // 断网，或 Cloudflare Access 登录过期（请求被重定向到登录页）
     throw new ApiError(navigator.onLine ? '登录可能已过期，请刷新页面重新登录' : '网络断开了，联网后再试', 0)
   }
@@ -44,8 +49,14 @@ export interface SavedArticle {
 
 export const api = {
   stats: () => req<{ active: number; done: number; due: number }>('/stats'),
-  items: (status: ItemStatus, q = '') =>
-    req<{ items: Item[] }>(`/items?status=${status}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+  items: (status: ItemStatus, q = '', packageId?: number) =>
+    req<{ items: Item[] }>(
+      `/items?status=${status}${q ? `&q=${encodeURIComponent(q)}` : ''}${packageId ? `&package=${packageId}` : ''}`,
+    ),
+  packages: () => req<{ packages: PackageInfo[] }>('/packages'),
+  deletePackage: (id: number) => req<void>(`/packages/${id}`, { method: 'DELETE' }),
+  importPackage: (body: unknown) =>
+    req<ImportReport>('/import', { method: 'POST', body: json(body) }, 120_000),
   create: (type: ItemType, text: string, meta: CardMeta) =>
     req<{ item: Item }>('/items', { method: 'POST', body: json({ type, text, meta }) }),
   update: (id: number, patch: Partial<Pick<Item, 'text' | 'meta' | 'status'>>) =>
@@ -68,13 +79,13 @@ export const api = {
   settings: () => req<{ current: Settings; defaults: Settings; me: Me }>('/settings'),
   saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
     req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),
-  usage: () => req<UsageReport>('/usage'),
+  usage: () => req<UsageReport>('/usage', undefined, 20_000),
   practiceStats: () => req<PracticeStats>('/practice/stats'),
   shareData: () => req<ShareData>('/practice/share'),
   lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
   lesson: (id: number) => req<{ lesson: Lesson }>(`/practice/lessons/${id}`),
   createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level?: Level; savedId?: number }) =>
-    req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }),
+    req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }, 180_000),
   deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),
   submit: (id: number, idx: number, text: string) =>
     req<{ lesson: Lesson }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
@@ -82,7 +93,7 @@ export const api = {
     req<{ count: number; bytes: number; unusedCount: number; unusedBytes: number; limitBytes: number }>('/storage'),
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
-  remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }),
+  remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, 40_000),
 }
 
 export const ttsUrl = (text: string, slow = false) =>
@@ -97,5 +108,7 @@ export type UsageReport = {
   /** 仅管理员：本月每个人的调用次数与费用 */
   users?: { email: string; calls: number; cost: number }[]
 }
+
+export type ImportReport = { packageId: number; added: number; skipped: number; invalid: string[] }
 
 export type Me = { email: string; admin: boolean }

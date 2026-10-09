@@ -4,7 +4,7 @@ import { prefetch, speak, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
 import { BLANK, clozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
 import { Link } from '../router'
-import { refreshStats, useStats } from '../store'
+import { libraryJump, refreshStats, useStats } from '../store'
 import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
 import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconShare, IconSparkle } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
@@ -291,7 +291,7 @@ export default function Review() {
                   cloze={production ? cloze : null}
                   onDone={markDone}
                   busy={busy}
-                  onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? item : x)) : q))}
+                  onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : q))}
                 />
               ) : (
                 production && cloze ? (
@@ -503,7 +503,22 @@ function Back({
         </div>
       )}
 
+      {m.memoryTip && (
+        <div className="mt-4 rounded-xl bg-chip px-3.5 py-2.5 text-sm leading-relaxed text-muted-2 md:mt-5">💡 {m.memoryTip}</div>
+      )}
+
       <div className="min-h-4 flex-1" />
+      {item.package_id && item.package_title && (
+        <Link
+          to="/library"
+          onClick={() => {
+            libraryJump.packageId = item.package_id ?? null
+          }}
+          className="mb-1 self-start text-xs text-muted no-underline"
+        >
+          来自《{item.package_title}》{item.source_ref && ` · ${item.source_ref}`} ›
+        </Link>
+      )}
       <button
         onClick={onDone}
         disabled={busy}
