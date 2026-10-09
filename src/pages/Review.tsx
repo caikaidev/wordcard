@@ -20,6 +20,8 @@ export default function Review() {
   const [sharing, setSharing] = useState(false)
   // 本次跳过的卡片：不评分、不改复习时间，只在这一轮里先放一边
   const [skipped, setSkipped] = useState<Item[]>([])
+  // 本轮点过「忘了」、排到队尾等着再来一次的卡片 id
+  const [again, setAgain] = useState<Set<number>>(new Set())
   const [drag, setDrag] = useState(0)
   const touch = useRef<{ x: number; y: number; horizontal?: boolean } | null>(null)
   const [flipped, setFlipped] = useState(false)
@@ -41,6 +43,7 @@ export default function Review() {
       setQueue(items)
       setReviewed(0)
       setSkipped([])
+      setAgain(new Set())
       setFlipped(false)
     } catch (e) {
       setError(errMsg(e))
@@ -58,6 +61,8 @@ export default function Review() {
   const cloze = card ? (context ? contextClozeOf(card) : clozeOf(card)) : null
   const production = !!cloze && (context || mode === 'production' || (mode === 'mixed' && card!.reps % 2 === 1))
   const total = reviewed + (queue?.length ?? 0) + skipped.length
+  const retrying = queue ? queue.filter((x) => again.has(x.id)).length : 0
+  const isAgain = !!card && again.has(card.id)
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
   // Gemini TTS 每天只有 100 次额度，所以只预取最常点的单词发音，例句等你点了再生成
@@ -67,6 +72,14 @@ export default function Review() {
 
   const advance = (requeue?: Item) => {
     stop()
+    if (card) {
+      setAgain((s) => {
+        const n = new Set(s)
+        if (requeue) n.add(card.id)
+        else n.delete(card.id)
+        return n
+      })
+    }
     setQueue((q) => {
       if (!q) return q
       const rest = q.slice(1)
@@ -118,7 +131,11 @@ export default function Review() {
     setBusy(true)
     try {
       const { item } = await api.grade(card.id, g)
-      // “忘了”的卡 10 分钟后到期，这里直接放到本轮队尾再来一次
+      // “忘了”的卡 10 分钟后到期，这里直接放到本轮队尾再来一次；给个反馈，免得看起来像没生效
+      if (g === 0) {
+        const name = card.text.length > 16 ? `${card.text.slice(0, 16)}…` : card.text // 句子卡很长，提示里只放开头
+        toast(queue && queue.length > 1 ? `「${name}」稍后再来一次` : `「${name}」马上再来一次`)
+      }
       advance(g === 0 ? item : undefined)
       refreshStats()
     } catch (e) {
@@ -203,6 +220,7 @@ export default function Review() {
         </div>
         <div className={`tabular text-xs text-muted md:text-[13px] ${total ? '' : 'invisible'}`}>
           {card ? Math.min(reviewed + 1, total) : reviewed} / {total}
+          {retrying > 0 && <span className="text-faint"> · 重来 {retrying}</span>}
           {skipped.length > 0 && <span className="text-faint"> · 跳过 {skipped.length}</span>}
         </div>
         {card && (
@@ -299,9 +317,9 @@ export default function Review() {
                 />
               ) : (
                 production && cloze ? (
-                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} />
+                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} again={isAgain} />
                 ) : (
-                  <Front item={card} onFlip={() => setFlipped(true)} />
+                  <Front item={card} onFlip={() => setFlipped(true)} again={isAgain} />
                 )
               )}
             </Card>
@@ -339,12 +357,20 @@ const btnPrimary =
 const btnGhost =
   'flex h-12 items-center justify-center gap-2 rounded-2xl border border-line bg-surface px-5 text-[15px] font-medium text-ink'
 
-function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
+/** 本轮「忘了」后重新出现的卡片标记 */
+function AgainBadge() {
+  return <span className="rounded-full bg-forgot-bg px-2.5 py-1 text-xs font-medium whitespace-nowrap text-forgot-fg">重来</span>
+}
+
+function Front({ item, onFlip, again = false }: { item: Item; onFlip: () => void; again?: boolean }) {
   const isWord = item.type === 'word'
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
-        <Chip>{isWord ? '单词' : '句子'}</Chip>
+        <div className="flex items-center gap-1.5">
+          <Chip>{isWord ? '单词' : '句子'}</Chip>
+          {again && <AgainBadge />}
+        </div>
       </div>
       <div className="flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
         <div
@@ -365,7 +391,7 @@ function Front({ item, onFlip }: { item: Item; onFlip: () => void }) {
 }
 
 /** 产出正面：中文情境 + 挖空句子，先说出空里的表达 */
-function ProductionFront({ cloze, onFlip, context = false, source = '' }: { cloze: Cloze; onFlip: () => void; context?: boolean; source?: string }) {
+function ProductionFront({ cloze, onFlip, context = false, source = '', again = false }: { cloze: Cloze; onFlip: () => void; context?: boolean; source?: string; again?: boolean }) {
   const [hint, setHint] = useState(false)
   const [before, after] = cloze.sentence.split(BLANK)
   // 提示：每个词只露首字母，如 "pose a risk to" → "p… a r… t…"
@@ -376,9 +402,12 @@ function ProductionFront({ cloze, onFlip, context = false, source = '' }: { cloz
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
-        <span className="shrink-0 rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">
-          {context ? '语境 · 原句填空' : '产出 · 说出来'}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">
+            {context ? '语境 · 原句填空' : '产出 · 说出来'}
+          </span>
+          {again && <AgainBadge />}
+        </div>
         {source && <span className="truncate pl-3 text-xs text-muted">{source}</span>}
       </div>
       <div className="flex flex-1 flex-col justify-center-safe gap-5 py-2">
