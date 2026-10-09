@@ -9,7 +9,7 @@ export class ApiError extends Error {
 }
 
 /** 请求默认超时：服务端卡住时给出明确提示，而不是让页面一直转圈 */
-const TIMEOUT_MS = 60_000
+const TIMEOUT_MS = 90_000
 
 async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
   let res: Response
@@ -57,7 +57,6 @@ export const api = {
   packages: () => req<{ packages: PackageInfo[] }>('/packages'),
   createPackageLesson: (id: number, input: { level?: Level; repeat?: boolean } = {}) =>
     req<{ id: number; count: number }>(`/practice/packages/${id}/lessons`, { method: 'POST', body: json(input) }, 180_000),
-  deletePackage: (id: number) => req<void>(`/packages/${id}`, { method: 'DELETE' }),
   importPackage: (body: unknown) =>
     req<ImportReport>('/import', { method: 'POST', body: json(body) }, 120_000),
   create: (type: ItemType, text: string, meta: CardMeta) =>
@@ -71,11 +70,11 @@ export const api = {
   enrich: (text: string, type?: ItemType, context?: string) =>
     req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
   lookup: (word: string) => req<{ source: string; senses: { pos: string; def: string }[] }>(`/lookup?word=${encodeURIComponent(word)}`),
-  lessonSource: (id: number) => req<{ title: string; text: string }>(`/practice/lessons/${id}/source`),
+  lessonSource: (id: number) => req<{ title: string; text: string }>(`/practice/lessons/${id}/source`, undefined, 150_000),
   saved: () => req<{ saved: SavedArticle[] }>('/practice/saved'),
   save: (input: { url?: string; text?: string }) =>
-    req<{ id: number; title: string; hasText: boolean }>('/practice/saved', { method: 'POST', body: json(input) }),
-  savedSource: (id: number) => req<{ title: string; text: string; url: string | null }>(`/practice/saved/${id}/source`),
+    req<{ id: number; title: string; hasText: boolean }>('/practice/saved', { method: 'POST', body: json(input) }, 150_000),
+  savedSource: (id: number) => req<{ title: string; text: string; url: string | null }>(`/practice/saved/${id}/source`, undefined, 150_000),
   deleteSaved: (id: number) => req<void>(`/practice/saved/${id}`, { method: 'DELETE' }),
   translate: (paragraphs: string[]) =>
     req<{ translations: string[] }>('/practice/translate', { method: 'POST', body: json({ paragraphs }) }),

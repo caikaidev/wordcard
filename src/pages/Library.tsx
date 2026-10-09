@@ -18,11 +18,11 @@ export default function Library() {
   const [openId, setOpenId] = useState<number | null>(null)
   const [swipedId, setSwipedId] = useState<number | null>(null)
   const [packages, setPackages] = useState<PackageInfo[]>([])
-  const [pkgId, setPkgId] = useState<number | null>(() => {
-    const id = libraryJump.packageId
+  // 从复习卡片的「来自《包名》」跳过来时直接筛选该包（严格模式下初始化函数会跑两次，所以到 effect 里再清空）
+  const [pkgId, setPkgId] = useState<number | null>(() => libraryJump.packageId)
+  useEffect(() => {
     libraryJump.packageId = null
-    return id
-  })
+  }, [])
   const [showImport, setShowImport] = useState(false)
   const stats = useStats()
 

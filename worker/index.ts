@@ -203,17 +203,6 @@ app.get('/packages', async (c) => {
   return c.json({ packages: results })
 })
 
-/** 删除学习包本身；包里的卡片保留，只是不再归属于它 */
-app.delete('/packages/:id', async (c) => {
-  const id = Number(c.req.param('id'))
-  const user = who(c).user
-  await c.env.DB.batch([
-    c.env.DB.prepare('UPDATE items SET package_id = NULL WHERE package_id = ? AND user_id = ?').bind(id, user),
-    c.env.DB.prepare('DELETE FROM packages WHERE id = ? AND user_id = ?').bind(id, user),
-  ])
-  return c.body(null, 204)
-})
-
 /**
  * 导入学习包（shiju-import-v1）：不调 AI，直接入库。
  * 前端把大包切成小批多次提交；包按（用户, 包名）合并，同一个包可以分批、重复导入。

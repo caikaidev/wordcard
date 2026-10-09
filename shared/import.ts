@@ -59,7 +59,8 @@ export function parseImport(raw: unknown): ImportParse {
   const order = Array.isArray(p?.difficulty_order) ? p.difficulty_order.map((x) => str(x, 40)).filter(Boolean).slice(0, 200) : []
   const pkg: ImportPackage = {
     title,
-    source_url: str(p?.source_url, 500) || undefined,
+    // 只接受 http(s) 链接：它会在练习页渲染成可点击的外链
+    source_url: /^https?:\/\//i.test(str(p?.source_url, 500)) ? str(p?.source_url, 500) : undefined,
     source_type: str(p?.source_type, 30) || undefined,
     created_at: str(p?.created_at, 20) || undefined,
     card_count: typeof p?.card_count === 'number' ? p.card_count : undefined,
