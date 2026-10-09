@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { api, type ImportReport } from '../api'
-import { IMPORT_EXAMPLE, IMPORT_FORMAT, IMPORT_MAX_CARDS, IMPORT_SPEC, parseImport, type ImportParse } from '../../shared/import'
+import { IMPORT_DOC_URL, IMPORT_EXAMPLE, IMPORT_FORMAT, IMPORT_MAX_CARDS, IMPORT_SPEC, parseImport, type ImportParse } from '../../shared/import'
 import { errMsg, toast } from './ui'
 
 const BATCH = 100
@@ -191,6 +191,12 @@ function FormatHelp() {
       </div>
       <div className="mt-1">
         可选：phonetic 音标、pos 词性、phrases 词组、memory_tip 记忆钩子、source_ref 来源章节、difficulty 难度 1–5。单包最多 {IMPORT_MAX_CARDS} 张，同一个词已在词库里会跳过。
+      </div>
+      <div className="mt-1">
+        <a href={IMPORT_DOC_URL} target="_blank" rel="noreferrer" className="text-accent">
+          查看完整格式规范
+        </a>
+        <span className="text-faint"> · 把这个链接发给 AI 助手，它会按规范帮你出包</span>
       </div>
       <div className="mt-2.5 grid grid-cols-2 gap-2">
         <button onClick={download} className="h-10 rounded-xl border border-line bg-transparent text-[13px] text-ink">

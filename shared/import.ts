@@ -48,8 +48,14 @@ export const IMPORT_EXAMPLE = {
   ],
 }
 
+/** 格式规范文档（GitHub）：人看这个链接，AI 助手读 raw 链接（同一份文档里有「给 AI 助手」的步骤和自查清单） */
+export const IMPORT_DOC_URL = 'https://github.com/caikaidev/wordcard/blob/main/docs/import-format.md'
+export const IMPORT_DOC_RAW_URL = 'https://raw.githubusercontent.com/caikaidev/wordcard/main/docs/import-format.md'
+
 /** 可以整段复制给 AI 助手的格式说明 */
-export const IMPORT_SPEC = `请把我提供的英文资料做成「拾句」学习包，输出一个 UTF-8 编码的 JSON 文件（单包最多 ${IMPORT_MAX_CARDS} 张卡片），格式 ${IMPORT_FORMAT}：
+export const IMPORT_SPEC = `完整规范和自查清单见：${IMPORT_DOC_RAW_URL}
+
+请把我提供的英文资料做成「拾句」学习包，输出一个 UTF-8 编码的 JSON 文件（单包最多 ${IMPORT_MAX_CARDS} 张卡片），格式 ${IMPORT_FORMAT}：
 
 {
   "format": "${IMPORT_FORMAT}",
