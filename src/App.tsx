@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, lessonIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
-import { Toaster } from './components/ui'
+import { Confirmer, Toaster } from './components/ui'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
@@ -67,6 +67,7 @@ export default function App() {
       </div>
       </div>
       {path !== '/remix' && path !== '/settings' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
+      <Confirmer />
       <Toaster />
     </div>
   )
@@ -126,6 +127,7 @@ function DesktopHeader({ path }: { path: Path }) {
       <div className="flex items-center gap-2 justify-self-end">
         <Link
           to="/remix"
+          title="用今天要复习的词，AI 现编几句新例句帮你巩固"
           className={`flex h-10 items-center gap-1.5 rounded-full border border-line px-3.5 text-sm no-underline ${
             path === '/remix' ? 'bg-invert-bg text-invert-fg' : 'bg-surface text-ink'
           }`}
@@ -142,9 +144,21 @@ function DesktopHeader({ path }: { path: Path }) {
         >
           <IconGear size={18} />
         </Link>
-        <div className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-4 text-sm text-invert-fg">
-          <span className="opacity-70">今日到期</span>
-          <span className="tabular font-semibold">{stats?.due ?? '–'}</span>
+        <div
+          className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
+          title={stats?.due ? `今天有 ${stats.due} 张到期，分批复习，每批 20 张，做完一批就可以停` : undefined}
+        >
+          {stats && stats.due > 0 ? (
+            <>
+              <span className="opacity-70">{stats.due > 20 ? '先来 20 张' : `今日 ${stats.due} 张`}</span>
+              <span className="tabular font-semibold">约 {Math.max(1, Math.round((Math.min(stats.due, 20) * 10) / 60))} 分钟</span>
+            </>
+          ) : (
+            <>
+              <span className="opacity-70">今日到期</span>
+              <span className="tabular font-semibold">{stats?.due ?? '–'}</span>
+            </>
+          )}
         </div>
       </div>
     </header>

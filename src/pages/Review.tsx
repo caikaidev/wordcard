@@ -6,8 +6,28 @@ import { BLANK, clozeOf, contextClozeOf, type Cloze, type Grade, type Item, type
 import { Link } from '../router'
 import { libraryJump, refreshStats, useStats } from '../store'
 import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
+import { useExampleZh } from '../exampleZh'
 import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconShare, IconSparkle } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
+
+/** 每批张数：到期很多时分批来，先完成一小批，不被总数吓到 */
+const BATCH = 20
+
+/** 只在本机记的「看过了」标记（新手引导、快捷键提示） */
+const seen = (k: string) => {
+  try {
+    return localStorage.getItem(k) === '1'
+  } catch {
+    return true
+  }
+}
+const markSeen = (k: string) => {
+  try {
+    localStorage.setItem(k, '1')
+  } catch {
+    /* ignore */
+  }
+}
 
 const today = () => {
   const d = new Date()
@@ -28,12 +48,28 @@ export default function Review() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const stats = useStats()
-  const [mode, setMode] = useState<ReviewMode>('mixed')
+  // 复习方式读到之前先不出卡片，免得「只产出」模式下第一张先闪一下英文正面
+  const [modeSetting, setMode] = useState<ReviewMode | null>(null)
+  const mode = modeSetting ?? 'mixed'
   useEffect(() => {
     api
       .settings()
       .then((r) => setMode(r.current.reviewMode))
-      .catch(() => {})
+      .catch(() => setMode('mixed'))
+  }, [])
+  // 本批的目标张数（已复习数达到它就停下来休息一下）
+  const [batchEnd, setBatchEnd] = useState(BATCH)
+  const [guide, setGuide] = useState(() => !seen('guide-v1'))
+  const [keysHint, setKeysHint] = useState(() => !seen('keys-hint-v1'))
+  const closeGuide = () => {
+    markSeen('guide-v1')
+    setGuide(false)
+  }
+
+  // 从导航点进来时焦点还留在导航链接上，第一次按空格会被当成「点链接」而没反应
+  useEffect(() => {
+    const el = document.activeElement as HTMLElement | null
+    if (el && el !== document.body && el.closest('nav, header')) el.blur()
   }, [])
 
   const load = useCallback(async () => {
@@ -42,6 +78,7 @@ export default function Review() {
       const { items } = await api.review()
       setQueue(items)
       setReviewed(0)
+      setBatchEnd(BATCH)
       setSkipped([])
       setAgain(new Set())
       setFlipped(false)
@@ -55,12 +92,21 @@ export default function Review() {
     return () => stop()
   }, [load])
 
-  const card = queue?.[0]
+  // 这一批做完了、还有剩余：先停下来，让用户决定继续还是到此为止
+  const resting = !!queue && queue.length > 0 && reviewed >= batchEnd
+  const card = resting || guide || !modeSetting ? undefined : queue?.[0]
   // 这张卡用哪种方式：混合模式下新卡先认读，之后认读 / 产出交替（按复习次数奇偶）
   const context = mode === 'context'
   const cloze = card ? (context ? contextClozeOf(card) : clozeOf(card)) : null
-  const production = !!cloze && (context || mode === 'production' || (mode === 'mixed' && card!.reps % 2 === 1))
+  const wantProduction = !!card && (context || mode === 'production' || (mode === 'mixed' && card.reps % 2 === 1))
+  const production = !!cloze && wantProduction
+  // 没有例句可挖空的卡片：产出模式下改成「看中文，说出英文」，而不是退回到直接显示英文
+  const recall = !cloze && wantProduction && !context && !!card?.meta.meaning
   const total = reviewed + (queue?.length ?? 0) + skipped.length
+  // 进度条只算当前这一批，总数大时也不会显得遥遥无期
+  const batchStart = batchEnd - BATCH
+  const batchTotal = Math.min(BATCH, total - batchStart)
+  const batchDone = Math.max(0, reviewed - batchStart)
   const retrying = queue ? queue.filter((x) => again.has(x.id)).length : 0
   const isAgain = !!card && again.has(card.id)
 
@@ -165,10 +211,15 @@ export default function Review() {
   keyRef.current = (e: KeyboardEvent) => {
     if (!card || e.metaKey || e.ctrlKey || e.altKey) return
     const t = e.target as HTMLElement
-    if (t.closest('input, textarea, [contenteditable]')) return
+    if (t.closest('input, textarea, [contenteditable], [role="dialog"], [role="alertdialog"]')) return
     const k = e.key.toLowerCase()
+    if (keysHint && ['1', '2', '3', ' ', 'p', 'd', 's'].includes(k)) {
+      markSeen('keys-hint-v1')
+      setKeysHint(false)
+    }
     if (k === ' ' || k === 'enter') {
-      if (t.closest('button, a')) return
+      // 焦点在按钮上时空格 / 回车照常「点」那个按钮；导航链接上的空格当作翻转
+      if (t.closest('button') || (t.closest('a') && k === 'enter')) return
       e.preventDefault()
       if (!flipped) setFlipped(true)
     } else if (flipped && (k === '1' || k === '2' || k === '3')) {
@@ -197,14 +248,15 @@ export default function Review() {
             <div className="flex items-center gap-2">
               <Link
                 to="/remix"
-                aria-label="AI 重组今日到期词"
+                aria-label="AI 重组：用今天要复习的词造几个新句子"
+                title="AI 重组：用今天要复习的词造几个新句子"
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-ink"
               >
                 <IconSparkle />
               </Link>
               <div className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-3.5 text-[13px] text-invert-fg">
-                <span className="opacity-70">剩余</span>
-                <span className="tabular font-semibold">{queue?.length ?? '–'}</span>
+                <span className="opacity-70">本批剩</span>
+                <span className="tabular font-semibold">{queue ? Math.min(queue.length, Math.max(0, batchEnd - reviewed)) : '–'}</span>
               </div>
             </div>
           }
@@ -215,12 +267,18 @@ export default function Review() {
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
-            style={{ width: total ? `${Math.round((reviewed / total) * 100)}%` : '0%' }}
+            style={{ width: batchTotal > 0 ? `${Math.round((batchDone / batchTotal) * 100)}%` : '0%' }}
           />
         </div>
         <div className={`tabular text-xs text-muted md:text-[13px] ${total ? '' : 'invisible'}`}>
-          {card ? Math.min(reviewed + 1, total) : reviewed} / {total}
-          {retrying > 0 && <span className="text-faint"> · 重来 {retrying}</span>}
+          {total > BATCH && <span className="text-faint">第 {Math.floor(batchStart / BATCH) + 1} 批 · </span>}
+          {card ? Math.min(batchDone + 1, batchTotal) : batchDone} / {batchTotal}
+          {retrying > 0 && (
+            <span className="text-faint" title="点了「忘了」的卡片，这一轮结束前会再出现一次">
+              {' '}
+              · 待重来 {retrying}
+            </span>
+          )}
           {skipped.length > 0 && <span className="text-faint"> · 跳过 {skipped.length}</span>}
         </div>
         {card && (
@@ -240,8 +298,26 @@ export default function Review() {
       <div className="flex min-h-0 flex-1 flex-col pt-3 pb-3 md:flex-none md:pt-5 md:pb-4">
         {error ? (
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
-        ) : !queue ? (
+        ) : !queue || !modeSetting ? (
           <Card className="min-h-[300px] flex-1 animate-shimmer md:h-[440px] md:flex-none" />
+        ) : guide && queue.length > 0 ? (
+          <Guide due={queue.length} onClose={closeGuide} />
+        ) : resting ? (
+          <Empty
+            icon={<span className="text-2xl">🎉</span>}
+            title={`这一批 ${BATCH} 张完成了`}
+            desc={`还剩 ${queue.length} 张，大约 ${minutesOf(Math.min(queue.length, BATCH))} 分钟一批。休息一下，或者现在继续。没复习完的明天还在，不会丢。`}
+            action={
+              <div className="flex gap-2.5">
+                <Link to="/practice" className={`${btnGhost} no-underline`}>
+                  先到这里
+                </Link>
+                <button className={btnPrimary} onClick={() => setBatchEnd(reviewed + BATCH)}>
+                  再来 {Math.min(queue.length, BATCH)} 张
+                </button>
+              </div>
+            }
+          />
         ) : !card && skipped.length > 0 ? (
           <Empty
             title={`还有 ${skipped.length} 张跳过的卡片`}
@@ -259,10 +335,11 @@ export default function Review() {
           />
         ) : !card ? (
           <Empty
-            title={reviewed ? '今天的复习完成了' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
+            icon={reviewed ? <span className="animate-rise text-3xl">🎉</span> : undefined}
+            title={reviewed ? '今日完成！' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
             desc={
               reviewed
-                ? `本轮复习了 ${reviewed} 张卡片。可以用 AI 重组再练一遍，或者去添加新词。`
+                ? `今天复习了 ${reviewed} 张卡片，坚持就是最难的部分，你做到了。想再巩固，可以用「AI 重组」把这些词放进新句子里读一遍。`
                 : stats && stats.active + stats.done === 0
                   ? '先添加几个单词或句子，AI 会帮你补全释义和例句。'
                   : '到期的卡片会自动出现在这里。'
@@ -316,7 +393,9 @@ export default function Review() {
                   onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : q))}
                 />
               ) : (
-                production && cloze ? (
+                recall ? (
+                  <RecallFront item={card} onFlip={() => setFlipped(true)} again={isAgain} />
+                ) : production && cloze ? (
                   <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} again={isAgain} />
                 ) : (
                   <Front item={card} onFlip={() => setFlipped(true)} again={isAgain} />
@@ -343,8 +422,22 @@ export default function Review() {
               <GradeButton k="3" label="记得" hint={previewLabel(card.interval, 2)} cls="bg-accent text-on-accent" onClick={() => grade(2)} disabled={busy} />
             </div>
           )}
-          <div className="mt-5 hidden text-center text-xs text-muted md:block">
-            空格 翻转 · 1 / 2 / 3 评分 · P 播放 · D 标记 DONE · S 跳过
+          <div
+            className={`mt-5 hidden text-center text-xs md:block ${keysHint ? 'rounded-xl bg-accent-soft px-3 py-2.5 text-accent' : 'text-muted'}`}
+          >
+            {keysHint && <span className="font-medium">键盘更快：</span>}
+            空格 翻转 · 1 / 2 / 3 评分 · P 播放 · D 已掌握（标记 DONE，不再复习） · S 跳过
+            {keysHint && (
+              <button
+                onClick={() => {
+                  markSeen('keys-hint-v1')
+                  setKeysHint(false)
+                }}
+                className="ml-2 border-0 bg-transparent p-0 text-xs text-accent underline underline-offset-2"
+              >
+                知道了
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -359,7 +452,11 @@ const btnGhost =
 
 /** 本轮「忘了」后重新出现的卡片标记 */
 function AgainBadge() {
-  return <span className="rounded-full bg-forgot-bg px-2.5 py-1 text-xs font-medium whitespace-nowrap text-forgot-fg">重来</span>
+  return (
+    <span title="刚才点了「忘了」，再来一次" className="rounded-full bg-forgot-bg px-2.5 py-1 text-xs font-medium whitespace-nowrap text-forgot-fg">
+      重来一次
+    </span>
+  )
 }
 
 function Front({ item, onFlip, again = false }: { item: Item; onFlip: () => void; again?: boolean }) {
@@ -387,6 +484,82 @@ function Front({ item, onFlip, again = false }: { item: Item; onFlip: () => void
       </div>
       <div className="text-center text-[13px] text-muted">{isWord ? '先在心里回想释义' : '先在心里回想意思'}</div>
     </div>
+  )
+}
+
+/** 产出正面（没有例句可挖空时）：看中文释义，说出英文 */
+function RecallFront({ item, onFlip, again = false }: { item: Item; onFlip: () => void; again?: boolean }) {
+  const [hint, setHint] = useState(false)
+  const isWord = item.type === 'word'
+  const hintText = item.text
+    .split(/\s+/)
+    .map((w) => (w.length <= 1 ? w : `${w[0]}${'_'.repeat(Math.min(w.length - 1, 8))}`))
+    .join(' ')
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">产出 · 说出英文</span>
+        {again && <AgainBadge />}
+      </div>
+      <div className="flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
+        {item.meta.pos && <div className="font-serif text-[15px] text-muted italic">{item.meta.pos}</div>}
+        <div className={`font-medium ${isWord ? 'text-[26px] leading-snug md:text-[34px]' : 'text-[19px] leading-relaxed md:text-[24px]'}`}>
+          {item.meta.meaning}
+        </div>
+        {hint ? (
+          <div className="font-serif text-xl tracking-wider text-accent">{hintText}</div>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setHint(true)
+            }}
+            className="border-0 bg-transparent p-0 text-[13px] text-muted underline decoration-line underline-offset-4"
+          >
+            提示首字母
+          </button>
+        )}
+      </div>
+      <div className="text-center text-[13px] text-muted">{isWord ? '先说出对应的英文单词，再看答案' : '先试着用英文说出这句话，再看答案'}</div>
+    </div>
+  )
+}
+
+/** 大概需要几分钟（每张约 10 秒） */
+const minutesOf = (n: number) => Math.max(1, Math.round((n * 10) / 60))
+
+/** 第一次打开时的 3 步新手引导 */
+function Guide({ due, onClose }: { due: number; onClose: () => void }) {
+  const steps: [string, string][] = [
+    ['看卡片，先在心里回想', '正面是单词或句子，想想它的意思；有时是中文情境填空，要你说出英文。想好了点「显示答案」（电脑上按空格）。'],
+    ['按记忆程度打分', '「忘了」10 分钟后再来一次；「模糊」「记得」会隔几天再出现，按钮上写着下次出现的时间。彻底掌握的点「已掌握」（DONE），以后不再复习。'],
+    ['复习完还想练？', `右上角 ✨「AI 重组」会用今天要复习的词现编几句新例句；「练习」页可以贴一篇文章，写几句英文让 AI 批改。`],
+  ]
+  return (
+    <Card className="flex flex-1 animate-rise flex-col gap-4 overflow-y-auto p-6 md:min-h-[440px] md:flex-none md:p-10">
+      <div>
+        <div className="text-xs tracking-wide text-muted">第一次来？30 秒了解怎么用</div>
+        <div className="mt-1 text-xl font-semibold">今天有 {due} 张卡片要复习</div>
+        <div className="mt-1 text-[13px] text-muted">
+          每批 {BATCH} 张，一批大约 {minutesOf(Math.min(due, BATCH))} 分钟，做完一批可以随时停下。
+        </div>
+      </div>
+      <ol className="m-0 flex list-none flex-col gap-3 p-0">
+        {steps.map(([t, d], i) => (
+          <li key={t} className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent">{i + 1}</span>
+            <div>
+              <div className="text-[15px] font-medium">{t}</div>
+              <div className="text-[13px] leading-relaxed text-muted">{d}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="flex-1" />
+      <button onClick={onClose} className={`${btnPrimary} shrink-0`}>
+        开始第一批
+      </button>
+    </Card>
   )
 }
 
@@ -450,6 +623,7 @@ function Back({
   onUpdate: (item: Item) => void
 }) {
   const [defining, setDefining] = useState(false)
+  const translating = useExampleZh(item, onUpdate)
   const define = async () => {
     setDefining(true)
     try {
@@ -523,7 +697,11 @@ function Back({
           <div className="font-serif text-lg leading-normal md:text-[23px]">
             <Highlighted text={m.example} marks={[m.highlight]} />
           </div>
-          {m.exampleZh && <div className="text-sm leading-relaxed text-muted md:text-[15px]">{m.exampleZh}</div>}
+          {m.exampleZh ? (
+            <div className="text-sm leading-relaxed text-muted md:text-[15px]">{m.exampleZh}</div>
+          ) : (
+            translating && <div className="animate-shimmer text-sm text-faint">正在翻译例句…</div>
+          )}
         </div>
       )}
 
@@ -561,7 +739,7 @@ function Back({
         className="flex h-11 items-center gap-1.5 self-start border-0 bg-transparent px-1 text-[13px] text-muted hover:text-ink"
       >
         <IconCheckCircle size={18} />
-        已掌握，标记 DONE
+        已掌握，标记 DONE（不再复习）
       </button>
       {/* 还有内容没看完时，底部渐隐提示可以继续往下滚 */}
       <div

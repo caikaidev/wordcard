@@ -17,18 +17,27 @@ export default function ImportSheet({ onClose, onImported }: { onClose: () => vo
 
   const pick = async (file: File | undefined) => {
     if (!file) return
-    setError(null)
-    setLoaded(null)
     let raw: unknown
     try {
       raw = JSON.parse(await file.text())
     } catch {
-      return setError('这不是有效的 JSON 文件')
+      setLoaded(null)
+      return setError('这个文件打不开：它不是 JSON 格式，或者内容不完整（常见于复制时少了开头或结尾的括号）。请让 AI 助手重新输出完整的 .json 文件')
     }
-    const parsed = parseImport(raw)
+    // 没写包名就用文件名，不因为这一项卡住
+    load(raw, file.name.replace(/\.json$/i, '').trim())
+    if (input.current) input.current.value = ''
+  }
+
+  const load = (raw: unknown, fallbackTitle = '') => {
+    setError(null)
+    setLoaded(null)
+    const parsed = parseImport(raw, fallbackTitle)
     if (!parsed.ok) return setError(parsed.error)
     if (!parsed.cards.length) return setError('没有可导入的卡片' + (parsed.invalid[0] ? `：${parsed.invalid[0]}` : ''))
-    setLoaded({ raw: raw as Loaded['raw'], parsed })
+    const r = raw as Loaded['raw']
+    // 包名可能来自文件名：写回去，服务端用同一份逻辑校验
+    setLoaded({ raw: { ...r, package: { ...((r.package as object) ?? {}), title: parsed.pkg.title } }, parsed })
   }
 
   const run = async () => {
@@ -97,16 +106,26 @@ export default function ImportSheet({ onClose, onImported }: { onClose: () => vo
         ) : (
           <>
             <p className="m-0 text-[13px] leading-relaxed text-muted">
-              选择助手生成的 <code>.json</code> 学习包（{IMPORT_FORMAT}）。内容已预置完整，导入时不调用 AI。
+              学习包是一份整理好的单词表（<code>.json</code> 文件），比如一本书或一门课的生词，导入后直接进入复习，不调用 AI、不花额度。
+              没有现成的文件？先用示例包试试，或者把下面的说明发给 ChatGPT / Claude 等 AI 助手，附上你的资料让它生成。
             </p>
             <input ref={input} type="file" accept=".json,application/json" hidden onChange={(e) => pick(e.target.files?.[0])} />
             {!loaded && (
-              <button
-                onClick={() => input.current?.click()}
-                className="h-12 rounded-2xl border border-dashed border-line bg-surface text-[15px] text-ink"
-              >
-                选择 .json 文件
-              </button>
+              <div className="grid grid-cols-[1fr_auto] gap-2">
+                <button
+                  onClick={() => input.current?.click()}
+                  className="h-12 rounded-2xl border border-dashed border-line bg-surface text-[15px] text-ink"
+                >
+                  选择 .json 文件
+                </button>
+                <button
+                  onClick={() => load(IMPORT_EXAMPLE)}
+                  className="h-12 rounded-2xl border border-line bg-transparent px-4 text-[13px] text-accent"
+                  title="导入 3 张示例卡片（The Mom Test），看看效果"
+                >
+                  用示例包试试
+                </button>
+              </div>
             )}
             {!loaded && <FormatHelp />}
             {error && <div className="rounded-xl bg-forgot-bg px-3.5 py-2.5 text-[13px] leading-relaxed text-forgot-fg">{error}</div>}

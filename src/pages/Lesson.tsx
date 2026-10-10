@@ -4,10 +4,23 @@ import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../sh
 import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
-import { Chip, Highlighted, SpeakButton, errMsg, toast } from '../components/ui'
+import { Chip, Highlighted, SpeakButton, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconArrowRight, IconBack, IconBook, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
 
 const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
+
+/**
+ * AI 摘的原句有时会在半个单词处截断（如 "building featu..."），存成例句很难看：
+ * 去掉结尾的省略号和被截断的那个词、开头的省略号；去掉后不再包含目标词就保持原样
+ */
+function tidyQuote(quote: string, keep = '') {
+  const q = quote
+    .trim()
+    .replace(/\s*\S*?(\.{3}|…)$/, '')
+    .replace(/^(\.{3}|…)\s*/, '')
+    .trim()
+  return q && (!keep || q.toLowerCase().includes(keep.toLowerCase())) ? q : quote.trim()
+}
 
 export default function LessonPage({ id }: { id: number }) {
   const [lesson, setLesson] = useState<Lesson | null>(null)
@@ -38,7 +51,7 @@ export default function LessonPage({ id }: { id: number }) {
   }
 
   const remove = async () => {
-    if (!lesson || !window.confirm('删除这份练习和所有提交记录？')) return
+    if (!lesson || !(await confirmDialog('删除这份练习和所有提交记录？', { ok: '删除', danger: true }))) return
     try {
       await api.deleteLesson(lesson.id)
       navigate('/practice')
@@ -129,7 +142,7 @@ export default function LessonPage({ id }: { id: number }) {
                         addCard(`w${i}`, /\s/.test(w.word) ? 'sentence' : 'word', w.word, {
                           ipa: w.ipa,
                           meaning: w.meaning,
-                          example: w.quote,
+                          example: tidyQuote(w.quote, w.word),
                           highlight: w.word,
                         })
                       }

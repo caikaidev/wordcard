@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { errMsg, toast } from './ui'
+import { confirmDialog, errMsg, toast } from './ui'
 import { IconRefresh, IconTrash } from './icons'
 
 type Info = Awaited<ReturnType<typeof api.storage>>
@@ -35,7 +35,7 @@ export default function StorageCard() {
   const cleanup = async (mode: 'unused' | 'all') => {
     if (
       mode === 'all' &&
-      !window.confirm('清空全部音频缓存？之后每段语音第一次播放时会重新生成，会消耗 Gemini 额度。')
+      !(await confirmDialog('清空全部音频缓存？之后每段语音第一次播放时会重新生成，会消耗 Gemini 额度。', { ok: '清空', danger: true }))
     )
       return
     setBusy(mode)
