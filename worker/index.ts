@@ -96,14 +96,26 @@ app.get('/items', async (c) => {
     where.push('status = ?')
     args.push(status)
   }
+  // 只搜原文和看得见的字段（不搜整段 JSON，否则搜 "meaning" 之类会匹配到字段名）；
+  // 排序：原文完全一致 → 原文开头 → 原文包含 → 释义 → 例句等，避免例句里顺带出现的词排在前面
+  const order: string[] = []
+  const orderArgs: unknown[] = []
   if (q) {
-    where.push('(text LIKE ? OR meta LIKE ?)')
-    args.push(`%${q}%`, `%${q}%`)
+    const like = `%${q}%`
+    where.push(
+      `(text LIKE ? OR json_extract(meta, '$.meaning') LIKE ? OR json_extract(meta, '$.example') LIKE ?
+        OR json_extract(meta, '$.exampleZh') LIKE ? OR json_extract(meta, '$.memoryTip') LIKE ?)`,
+    )
+    args.push(like, like, like, like, like)
+    order.push(`CASE WHEN lower(text) = lower(?) THEN 0 WHEN text LIKE ? THEN 1 WHEN text LIKE ? THEN 2
+                     WHEN json_extract(meta, '$.meaning') LIKE ? THEN 3 ELSE 4 END`)
+    orderArgs.push(q, `${q}%`, like, like)
   }
+  order.push(status === 'done' ? 'updated_at DESC' : 'due_at ASC')
   const sql = `SELECT ${ITEM_COLS} FROM items WHERE ${where.join(' AND ')}
-               ORDER BY ${status === 'done' ? 'updated_at DESC' : 'due_at ASC'} LIMIT 500`
+               ORDER BY ${order.join(', ')} LIMIT 500`
   const { results } = await c.env.DB.prepare(sql)
-    .bind(...args)
+    .bind(...args, ...orderArgs)
     .all<Row>()
   return c.json({ items: results.map(toItem) })
 })

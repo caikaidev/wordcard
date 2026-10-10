@@ -91,7 +91,7 @@ export function Card({ children, className = "" }: { children?: ReactNode; class
 
 /* ---------------------------- 轻提示 ---------------------------- */
 
-type ToastMsg = { id: number; text: string; tone: 'info' | 'error' }
+type ToastMsg = { id: number; text: string; tone: 'info' | 'error' | 'success' }
 let toasts: ToastMsg[] = []
 const toastListeners = new Set<(t: ToastMsg[]) => void>()
 
@@ -102,7 +102,7 @@ export function toast(text: string, tone: ToastMsg['tone'] = 'info') {
   setTimeout(() => {
     toasts = toasts.filter((t) => t.id !== id)
     toastListeners.forEach((l) => l(toasts))
-  }, tone === 'error' ? 4200 : 2200)
+  }, tone === 'error' ? 4200 : tone === 'success' ? 3200 : 2200)
 }
 
 export function Toaster() {
@@ -114,18 +114,125 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
-      className="pointer-events-none fixed inset-x-0 top-[max(env(safe-area-inset-top),16px)] z-50 flex flex-col items-center gap-2 px-4 md:top-20"
+      className="pointer-events-none fixed inset-x-0 top-[max(env(safe-area-inset-top),16px)] z-[60] flex flex-col items-center gap-2 px-4 md:top-20"
     >
       {list.map((t) => (
         <div
           key={t.id}
+          role={t.tone === 'error' ? 'alert' : 'status'}
           className={`animate-rise max-w-[560px] rounded-2xl px-4 py-2.5 text-sm shadow-card ${
-            t.tone === 'error' ? 'bg-forgot-bg text-forgot-fg' : 'bg-invert-bg text-invert-fg'
+            t.tone === 'error' ? 'bg-forgot-bg text-forgot-fg' : t.tone === 'success' ? 'bg-accent text-on-accent' : 'bg-invert-bg text-invert-fg'
           }`}
         >
+          {t.tone === 'success' && '✓ '}
           {t.text}
         </div>
       ))}
+    </div>
+  )
+}
+
+/* ---------------------------- 确认框 ---------------------------- */
+
+/**
+ * 页面内的确认框，代替 window.confirm：
+ * 原生弹窗在部分浏览器 / 添加到主屏幕的 App / 内嵌页面里会被直接拦截并返回 false，
+ * 表现为「点了删除没有任何反应」。
+ */
+type ConfirmReq = { id: number; text: string; ok: string; danger: boolean; resolve: (v: boolean) => void }
+let confirmReq: ConfirmReq | null = null
+const confirmListeners = new Set<(r: ConfirmReq | null) => void>()
+const setConfirm = (r: ConfirmReq | null) => {
+  confirmReq = r
+  confirmListeners.forEach((l) => l(r))
+}
+
+export function confirmDialog(text: string, { ok = '确定', danger = false }: { ok?: string; danger?: boolean } = {}) {
+  confirmReq?.resolve(false)
+  return new Promise<boolean>((resolve) => setConfirm({ id: Date.now(), text, ok, danger, resolve }))
+}
+
+export function Confirmer() {
+  const [req, setReq] = useState<ConfirmReq | null>(confirmReq)
+  useEffect(() => {
+    confirmListeners.add(setReq)
+    return () => void confirmListeners.delete(setReq)
+  }, [])
+  useEffect(() => {
+    if (!req) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [req])
+  if (!req) return null
+  function close(v: boolean) {
+    req!.resolve(v)
+    if (confirmReq?.id === req!.id) setConfirm(null)
+  }
+  return (
+    <div className="fixed inset-0 z-[55] flex items-end justify-center bg-black/40 md:items-center" onClick={() => close(false)}>
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={req.text}
+        onClick={(e) => e.stopPropagation()}
+        className="pb-safe flex w-full max-w-sm animate-rise flex-col gap-4 rounded-t-3xl bg-bg p-5 md:rounded-3xl"
+      >
+        <div className="text-[15px] leading-relaxed">{req.text}</div>
+        <div className="grid grid-cols-2 gap-2.5">
+          <button onClick={() => close(false)} className="h-11 rounded-2xl border border-line bg-transparent text-[15px] text-ink">
+            取消
+          </button>
+          <button
+            autoFocus
+            onClick={() => close(true)}
+            className={`h-11 rounded-2xl border-0 text-[15px] font-medium ${req.danger ? 'bg-forgot-bg text-forgot-fg' : 'bg-invert-bg text-invert-fg'}`}
+          >
+            {req.ok}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------------------------- 等待进度 ---------------------------- */
+
+/**
+ * AI 生成期间的进度说明：阶段文案 + 已等待秒数 + 进度条；超过 slowAfter 秒说明比平时慢，并告知多久会超时。
+ * stages: [从第几秒开始, 文案]，按时间升序
+ */
+export function WaitProgress({
+  stages,
+  timeout,
+  slowAfter = 15,
+  slowText = '比平时慢一点，再等一会儿',
+  timeoutHint,
+}: {
+  stages: [number, string][]
+  timeout: number
+  slowAfter?: number
+  slowText?: string
+  timeoutHint?: string
+}) {
+  const [s, setS] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setS((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const stage = s >= slowAfter ? slowText : ([...stages].reverse().find(([at]) => s >= at)?.[1] ?? stages[0]?.[1] ?? '')
+  return (
+    <div role="status" aria-live="polite" className="flex flex-col gap-1.5">
+      <div className="flex items-baseline justify-between gap-3 text-[13px] text-muted">
+        <span>{stage}</span>
+        <span className="tabular shrink-0">已等待 {s} 秒</span>
+      </div>
+      <div className="h-1 overflow-hidden rounded-full bg-line-soft">
+        <div className="h-1 rounded-full bg-accent transition-[width] duration-1000 ease-linear" style={{ width: `${Math.min(100, (s / timeout) * 100)}%` }} />
+      </div>
+      {s >= slowAfter && <div className="text-xs text-faint">{timeoutHint ?? `超过 ${timeout} 秒会自动提示超时，到时重试即可`}</div>}
     </div>
   )
 }

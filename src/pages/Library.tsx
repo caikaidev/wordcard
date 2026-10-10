@@ -5,9 +5,11 @@ import type { Item, ItemStatus, PackageInfo } from '../../shared/types'
 import { libraryJump, refreshStats, useStats } from '../store'
 import ImportSheet from '../components/ImportSheet'
 import PackagePractice from '../components/PackagePractice'
+import EditSheet from '../components/EditSheet'
+import { useExampleZh } from '../exampleZh'
 import { Link } from '../router'
-import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconCheck, IconCheckCircle, IconGear, IconSearch, IconTrash, IconUndo } from '../components/icons'
+import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, confirmDialog, errMsg, toast } from '../components/ui'
+import { IconCheck, IconCheckCircle, IconGear, IconPen, IconSearch, IconTrash, IconUndo } from '../components/icons'
 
 const ACTION_W = 88
 
@@ -24,6 +26,7 @@ export default function Library() {
     libraryJump.packageId = null
   }, [])
   const [showImport, setShowImport] = useState(false)
+  const [editing, setEditing] = useState<Item | null>(null)
   const stats = useStats()
 
   const loadPackages = () =>
@@ -46,7 +49,7 @@ export default function Library() {
           if (!cancelled) toast(errMsg(e), 'error')
         }
       },
-      q ? 250 : 0,
+      q ? 200 : 0,
     )
     return () => {
       cancelled = true
@@ -78,11 +81,13 @@ export default function Library() {
   }
 
   const remove = async (item: Item) => {
-    if (!window.confirm(`删除「${item.text}」？删除后不能恢复。`)) return
+    if (!(await confirmDialog(`删除「${item.text}」？删除后不能恢复。`, { ok: '删除', danger: true }))) return
     setItems((l) => l?.filter((x) => x.id !== item.id) ?? l)
     setSwipedId(null)
+    setOpenId(null)
     try {
       await api.remove(item.id)
+      toast(`已删除「${item.text}」`, 'success')
       refreshStats()
       loadPackages()
     } catch (e) {
@@ -91,7 +96,10 @@ export default function Library() {
     }
   }
 
+  const replace = (item: Item) => setItems((l) => l?.map((x) => (x.id === item.id ? { ...x, ...item } : x)) ?? l)
+
   const total = stats ? stats.active + stats.done : null
+  const query = q.trim().toLowerCase()
   const current = packages.find((p) => p.id === pkgId) ?? null
   const finished = (p: PackageInfo) => p.total > 0 && p.done === p.total
 
@@ -123,17 +131,31 @@ export default function Library() {
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="搜索单词、句子或释义"
+            onKeyDown={(e) => {
+              // 输入时已经实时过滤，回车只用来收起手机键盘
+              if (e.key === 'Enter') e.currentTarget.blur()
+            }}
+            enterKeyHint="search"
+            placeholder="搜索单词、句子或释义（输入即搜）"
             className="h-11 w-full rounded-[14px] border border-line bg-surface pr-4 pl-11 text-[15px] text-ink outline-none placeholder:text-faint focus:border-muted"
           />
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-0.5" aria-label="学习包">
+        {query && items && (
+          <div className="-mt-1 px-1 text-xs text-muted" aria-live="polite">
+            找到 {items.length} 条 · 单词本身匹配的排在前面，其后是释义或例句里出现「{q.trim()}」的
+          </div>
+        )}
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs tracking-wider text-muted">{packages.length > 0 ? '按学习包筛选' : ''}</span>
           <button
             onClick={() => setShowImport(true)}
-            className="h-8 shrink-0 rounded-full border border-dashed border-line bg-transparent px-3 text-[13px] text-accent"
+            className="-my-1 h-8 shrink-0 border-0 bg-transparent px-1 text-[13px] text-accent"
+            title="导入整理好的单词包（JSON 文件），比如一本书的生词表"
           >
             ＋ 导入学习包
           </button>
+        </div>
+        <div className={`flex items-center gap-2 overflow-x-auto pb-0.5 ${packages.length ? '' : 'hidden'}`} aria-label="学习包">
           {packages.length > 0 && (
             <>
               <PkgChip active={pkgId === null} onClick={() => setPkgId(null)}>
@@ -182,7 +204,7 @@ export default function Library() {
           ))
         ) : items.length === 0 ? (
           <div className="py-16 text-center text-sm text-muted">
-            {q ? '没有找到匹配的条目' : tab === 'active' ? '还没有进行中的条目，去「添加」里加几个吧' : '还没有标记为 DONE 的条目'}
+            {q ? `没有找到包含「${q.trim()}」的条目` : tab === 'active' ? '还没有进行中的条目，去「添加」里加几个吧' : '还没有标记为 DONE 的条目'}
           </div>
         ) : (
           items.map((item) => (
@@ -196,12 +218,26 @@ export default function Library() {
                 setOpenId(openId === item.id ? null : item.id)
               }}
               onSwipe={(s) => setSwipedId(s ? item.id : null)}
+              query={query}
               onToggle={() => toggle(item)}
               onRemove={() => remove(item)}
+              onEdit={() => setEditing(item)}
+              onUpdate={replace}
             />
           ))
         )}
       </div>
+
+      {editing && (
+        <EditSheet
+          item={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(item) => {
+            replace(item)
+            setEditing(null)
+          }}
+        />
+      )}
 
       {showImport && (
         <ImportSheet
@@ -240,20 +276,29 @@ function Row({
   swiped,
   onOpen,
   onSwipe,
+  query,
   onToggle,
   onRemove,
+  onEdit,
+  onUpdate,
 }: {
   item: Item
   open: boolean
   swiped: boolean
   onOpen: () => void
   onSwipe: (s: boolean) => void
+  query: string
   onToggle: () => void
   onRemove: () => void
+  onEdit: () => void
+  onUpdate: (item: Item) => void
 }) {
   const isDone = item.status === 'done'
   const due = isDone ? '已掌握' : dueLabel(item.due_at)
   const m = item.meta
+  const translating = useExampleZh(item, onUpdate, open)
+  // 搜索词只出现在例句等地方时标出来，免得以为搜错了
+  const indirect = !!query && !item.text.toLowerCase().includes(query) && !m.meaning.toLowerCase().includes(query)
   const [drag, setDrag] = useState<number | null>(null)
   const start = useRef<{ x: number; y: number; base: number; locked?: 'x' | 'y' } | null>(null)
   const actionsW = ACTION_W * 2
@@ -323,6 +368,7 @@ function Row({
               {item.text}
             </div>
             <div className={`w-full text-[13px] text-muted ${open ? '' : 'truncate'}`}>
+              {indirect && <span className="mr-1.5 rounded bg-chip px-1.5 py-0.5 text-[11px] text-muted-2">例句中出现</span>}
               {m.pos && `${m.pos} `}
               {m.meaning}
             </div>
@@ -347,7 +393,11 @@ function Row({
                   <div className="font-serif text-[17px] leading-normal">
                     <Highlighted text={m.example} marks={[m.highlight]} />
                   </div>
-                  {m.exampleZh && <div className="text-[13px] text-muted">{m.exampleZh}</div>}
+                  {m.exampleZh ? (
+                    <div className="text-[13px] text-muted">{m.exampleZh}</div>
+                  ) : (
+                    translating && <div className="animate-shimmer text-[13px] text-faint">正在翻译例句…</div>
+                  )}
                 </div>
                 <SpeakButton text={m.example} size={40} waves={1} label="播放例句" />
               </div>
@@ -361,6 +411,13 @@ function Row({
             <div className="flex items-center gap-2">
               <SpeakButton text={item.text} size={40} />
               <div className="flex-1" />
+              <button
+                onClick={onEdit}
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-transparent px-3 text-[13px] text-ink"
+              >
+                <IconPen size={16} />
+                编辑
+              </button>
               <button
                 onClick={onRemove}
                 className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-transparent px-3 text-[13px] text-muted hover:text-forgot-fg"

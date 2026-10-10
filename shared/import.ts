@@ -125,15 +125,24 @@ function highlightOf(term: string, example: string) {
 }
 
 /** 解析并校验《导入格式规范 v1》。前端预览和后端入库共用同一份逻辑 */
-export function parseImport(raw: unknown): ImportParse {
+export function parseImport(raw: unknown, fallbackTitle = ''): ImportParse {
   const o = raw as { format?: unknown; package?: Record<string, unknown>; cards?: unknown } | null
-  if (!o || typeof o !== 'object') return { ok: false, error: '文件内容不是有效的 JSON 对象' }
-  if (o.format !== IMPORT_FORMAT) return { ok: false, error: '不支持的导入格式版本' }
-  if (!Array.isArray(o.cards)) return { ok: false, error: 'cards 必须是数组' }
-  if (o.cards.length > IMPORT_MAX_CARDS) return { ok: false, error: `单个学习包最多 ${IMPORT_MAX_CARDS} 张卡片，请拆分后再导入` }
+  // 报错写成普通用户看得懂、知道怎么改的话；字段名放在括号里，方便转告给帮你出包的 AI 助手
+  if (!o || typeof o !== 'object' || Array.isArray(o))
+    return { ok: false, error: '这个文件不是拾句学习包。可以先「下载示例文件」看看长什么样，或把「复制给助手的说明」发给 AI 助手重新生成' }
+  if (o.format !== IMPORT_FORMAT)
+    return {
+      ok: false,
+      error: `文件开头缺少学习包标记，或版本不对。请在文件里加上 "format": "${IMPORT_FORMAT}"（让 AI 助手按规范重新生成也可以）`,
+    }
+  if (!Array.isArray(o.cards))
+    return { ok: false, error: '文件里没有找到卡片列表。卡片要放在 "cards": [ … ] 里，每张卡片一个 { }' }
+  if (o.cards.length > IMPORT_MAX_CARDS)
+    return { ok: false, error: `这个包有 ${o.cards.length} 张卡片，一次最多导入 ${IMPORT_MAX_CARDS} 张。请让 AI 助手拆成几个包分别导入` }
   const p = o.package
-  const title = str(p?.title, 120)
-  if (!title) return { ok: false, error: 'package.title 不能为空' }
+  const title = str(p?.title, 120) || str(fallbackTitle, 120)
+  if (!title)
+    return { ok: false, error: '学习包还没有名字。请在文件的 "package" 里加上 "title": "包名"，比如 "title": "我的生词本"' }
 
   const order = Array.isArray(p?.difficulty_order) ? p.difficulty_order.map((x) => str(x, 40)).filter(Boolean).slice(0, 200) : []
   const pkg: ImportPackage = {
@@ -155,7 +164,8 @@ export function parseImport(raw: unknown): ImportParse {
     const exampleZh = str(c?.example_cn, 1000)
     const missing = [!term && 'term', !meaning && 'definition_cn', !example && 'example_en', !exampleZh && 'example_cn'].filter(Boolean)
     if (missing.length) {
-      invalid.push(`第 ${i + 1} 张${term ? `「${term}」` : ''}缺少 ${missing.join('、')}`)
+      const names: Record<string, string> = { term: '单词', definition_cn: '中文释义', example_en: '英文例句', example_cn: '例句翻译' }
+      invalid.push(`第 ${i + 1} 张${term ? `「${term}」` : ''}缺少${missing.map((k) => `${names[k as string]}（${k}）`).join('、')}`)
       return
     }
     const phrases = (Array.isArray(c?.phrases) ? c.phrases : [])

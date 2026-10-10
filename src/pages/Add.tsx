@@ -3,18 +3,59 @@ import { api } from '../api'
 import { prefetch } from '../audio'
 import { BLANK, type CardMeta, type EnrichResult } from '../../shared/types'
 import { refreshStats } from '../store'
-import { Card, Chip, EnglishDefinition, Highlighted, MerriamWebsterLogo, PageTitle, SpeakButton, errMsg, toast } from '../components/ui'
-import { IconArrowRight, IconClose, IconRefresh, IconSparkle } from '../components/icons'
+import { Card, Chip, EnglishDefinition, Highlighted, MerriamWebsterLogo, PageTitle, SpeakButton, WaitProgress, errMsg, toast } from '../components/ui'
+import { IconArrowRight, IconCheckCircle, IconClose, IconRefresh, IconSparkle } from '../components/icons'
+import { Link } from '../router'
 
 const emptyMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
 
+/**
+ * 页面状态放在组件外：切到别的页面、下拉刷新或组件重新挂载时，输入、补全结果和进行中的补全请求都不丢；
+ * 同时存一份到 sessionStorage，整页刷新后也能恢复草稿
+ */
+type AddState = { input: string; draft: EnrichResult | null; loadingId: number; saved: string | null }
+const STORE_KEY = 'add-draft'
+const store: AddState = (() => {
+  try {
+    const raw = sessionStorage.getItem(STORE_KEY)
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<AddState>
+      return { input: v.input ?? '', draft: v.draft ?? null, loadingId: 0, saved: null }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { input: '', draft: null, loadingId: 0, saved: null }
+})()
+let reqSeq = 0
+const storeListeners = new Set<() => void>()
+function patchStore(patch: Partial<AddState>) {
+  Object.assign(store, patch)
+  try {
+    sessionStorage.setItem(STORE_KEY, JSON.stringify({ input: store.input, draft: store.draft }))
+  } catch {
+    /* ignore */
+  }
+  storeListeners.forEach((l) => l())
+}
+
+/** 补全超时（秒），与 api 请求超时一致 */
+const ENRICH_TIMEOUT = 90
+
 export default function Add() {
-  const [input, setInput] = useState('')
-  const [draft, setDraft] = useState<EnrichResult | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [, rerender] = useState(0)
+  useEffect(() => {
+    const l = () => rerender((n) => n + 1)
+    storeListeners.add(l)
+    return () => void storeListeners.delete(l)
+  }, [])
+  const { input, draft, saved } = store
+  const loading = store.loadingId !== 0
+  const setInput = (v: string) => patchStore({ input: v, saved: v.trim() ? null : store.saved })
+  const setDraft = (d: EnrichResult | null | ((d: EnrichResult | null) => EnrichResult | null)) =>
+    patchStore({ draft: typeof d === 'function' ? d(store.draft) : d })
   const [saving, setSaving] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const reqId = useRef(0)
 
   useEffect(() => {
     // 电脑端进入页面直接可以输入；手机端不自动弹键盘
@@ -24,19 +65,20 @@ export default function Add() {
   const runEnrich = async (text = input) => {
     const t = text.trim()
     if (!t || loading) return
-    const id = ++reqId.current
-    setLoading(true)
+    const id = ++reqSeq
+    patchStore({ loadingId: id, saved: null })
     try {
-      const r = await api.enrich(t, draft?.text === t ? draft.type : undefined)
-      if (id === reqId.current) {
-        setDraft(r)
+      const r = await api.enrich(t, store.draft?.text === t ? store.draft.type : undefined)
+      if (id === store.loadingId) {
+        patchStore({ draft: r, loadingId: 0 })
         // 大概率会保存，先把发音准备好（复习时也直接命中缓存）
         prefetch([r.text])
       }
     } catch (e) {
-      if (id === reqId.current) toast(errMsg(e), 'error')
-    } finally {
-      if (id === reqId.current) setLoading(false)
+      if (id === store.loadingId) {
+        patchStore({ loadingId: 0 })
+        toast(errMsg(e), 'error')
+      }
     }
   }
 
@@ -45,10 +87,9 @@ export default function Add() {
     if (!draft.text.trim()) return toast('内容不能为空', 'error')
     setSaving(true)
     try {
-      await api.create(draft.type, draft.text, draft.meta)
-      toast(`已保存「${draft.text}」`)
-      setDraft(null)
-      setInput('')
+      const { item } = await api.create(draft.type, draft.text, draft.meta)
+      toast(`已保存到词库「${item.text}」`, 'success')
+      patchStore({ draft: null, input: '', saved: item.text })
       refreshStats()
       inputRef.current?.focus()
     } catch (e) {
@@ -59,10 +100,7 @@ export default function Add() {
   }
 
   const clear = () => {
-    reqId.current++
-    setLoading(false)
-    setInput('')
-    setDraft(null)
+    patchStore({ loadingId: 0, input: '', draft: null, saved: null })
     inputRef.current?.focus()
   }
 
@@ -127,6 +165,31 @@ export default function Add() {
             >
               <IconRefresh size={18} className={loading ? 'animate-spin' : ''} />
             </button>
+          </div>
+        )}
+
+        {loading && (
+          <WaitProgress
+            key={store.loadingId}
+            stages={[
+              [0, '正在查词典…'],
+              [3, 'AI 正在写释义、例句和搭配…通常 5–20 秒'],
+            ]}
+            slowAfter={20}
+            timeout={ENRICH_TIMEOUT}
+            timeoutHint={`可以先去别的页面，回来结果还在；超过 ${ENRICH_TIMEOUT} 秒会提示超时，或点「跳过 AI，手动填写」`}
+          />
+        )}
+
+        {saved && !draft && !loading && (
+          <div role="status" className="flex animate-rise items-center gap-2.5 rounded-2xl bg-accent-soft px-4 py-3 text-[15px] text-accent">
+            <IconCheckCircle size={20} />
+            <span className="min-w-0 flex-1 truncate">
+              已保存「<span className="font-serif">{saved}</span>」到词库
+            </span>
+            <Link to="/library" className="shrink-0 text-[13px] text-accent">
+              去词库看看 ›
+            </Link>
           </div>
         )}
 
@@ -246,10 +309,11 @@ export default function Add() {
           </Card>
         )}
 
-        {!draft && !loading && input.trim() && (
+        {!draft && input.trim() && (
           <button
             type="button"
             onClick={() => {
+              patchStore({ loadingId: 0 })
               const t = input.trim()
               setDraft({ type: /\s/.test(t) && /[.!?]$/.test(t) ? 'sentence' : 'word', text: t, meta: emptyMeta() })
             }}
