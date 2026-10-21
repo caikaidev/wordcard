@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { DEFAULT_SOURCES, VOCAB_LEVELS, formatSources, parseSources, sourceLabel, type Discovery, type DiscoverReport } from '../../shared/discover'
 import type { Settings } from '../../shared/settings'
+import type { LevelStatus } from '../../shared/level'
 import { Link } from '../router'
 import { refreshStats } from '../store'
 import { Highlighted, SpeakButton, WaitProgress, errMsg, toast } from '../components/ui'
@@ -15,6 +16,7 @@ export default function Discover() {
   const [running, setRunning] = useState(false)
   const [report, setReport] = useState<DiscoverReport | null>(null)
   const [busy, setBusy] = useState<Set<number>>(new Set())
+  const [level, setLevel] = useState<LevelStatus | null>(null)
 
   const load = () =>
     api
@@ -30,6 +32,10 @@ export default function Discover() {
     api
       .settings()
       .then((r) => setSettings(r.current))
+      .catch(() => {})
+    api
+      .level()
+      .then(setLevel)
       .catch(() => {})
   }, [])
 
@@ -106,8 +112,13 @@ export default function Discover() {
               </p>
             )}
             <div>
-              <div className="mb-1.5 text-xs text-muted">我大概认识多少词（比这更常见的词不推荐）</div>
-              <div className="grid grid-cols-4 gap-1 rounded-[14px] bg-line-soft p-1" role="radiogroup" aria-label="词汇量">
+              <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs text-muted">
+                <span>我大概认识多少词（比这更常见的词不推荐）</span>
+                <Link to="/level" className="shrink-0 text-accent no-underline">
+                  {level?.level ? `评级 ${level.level.id} · 约 ${level.vocab!.toLocaleString('zh-CN')} 词` : '测一测 ›'}
+                </Link>
+              </div>
+              <div className="grid grid-cols-5 gap-1 rounded-[14px] bg-line-soft p-1" role="radiogroup" aria-label="词汇量">
                 {VOCAB_LEVELS.map((l) => (
                   <button
                     key={l.id}

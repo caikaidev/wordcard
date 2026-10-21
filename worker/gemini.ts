@@ -144,7 +144,7 @@ export interface GeminiPart {
   inlineData?: { mimeType: string; data: string }
 }
 
-export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade' | 'translate' | 'discover'
+export type UsageKind = 'enrich' | 'remix' | 'tts' | 'lesson' | 'grade' | 'translate' | 'discover' | 'level'
 
 /** 记录一次调用的 token 用量（失败不影响主流程） */
 async function recordUsage(env: Env, kind: UsageKind, model: string, input: number, output: number) {

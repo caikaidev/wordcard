@@ -4,6 +4,7 @@ import { speak } from '../audio'
 import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
+import type { LevelStatus } from '../../shared/level'
 import { disablePush, enablePush, pushState, type PushState } from '../push'
 import { Link } from '../router'
 import StorageCard from '../components/StorageCard'
@@ -15,6 +16,7 @@ export default function Settings() {
   const [cur, setCur] = useState<S | null>(null)
   const [defaults, setDefaults] = useState<S | null>(null)
   const [me, setMe] = useState<Me | null>(null)
+  const [level, setLevel] = useState<LevelStatus | null>(null)
   const [testing, setTesting] = useState<'text' | 'tts' | null>(null)
   const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
@@ -28,6 +30,10 @@ export default function Settings() {
         setMe(r.me)
       })
       .catch((e) => toast(errMsg(e), 'error'))
+    api
+      .level()
+      .then(setLevel)
+      .catch(() => {})
   }, [])
 
   const save = async (key: keyof S, value: string | number, label = `已切换到 ${value}`) => {
@@ -113,6 +119,15 @@ export default function Settings() {
             >
               每周回顾
               <span className="text-muted">›</span>
+            </Link>
+            <Link
+              to="/level"
+              className="mt-2 flex h-12 items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[15px] text-ink no-underline"
+            >
+              词汇评级
+              <span className="text-[13px] text-muted">
+                {level?.level ? `${level.level.id} · 约 ${level.vocab!.toLocaleString('zh-CN')} 词` : '测一测'} ›
+              </span>
             </Link>
           </section>
 

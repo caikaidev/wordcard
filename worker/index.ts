@@ -12,6 +12,7 @@ import { parseImport } from '../shared/import'
 import { checkInAfterReview, streakStatus } from './streak'
 import { push, sendReminders } from './push'
 import { autoDiscover, discover } from './discover'
+import { level } from './level'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -518,6 +519,7 @@ app.put('/settings', async (c) => {
 app.route('/practice', practice)
 app.route('/push', push)
 app.route('/discover', discover)
+app.route('/level', level)
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 

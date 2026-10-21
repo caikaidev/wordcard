@@ -2,6 +2,7 @@ import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
 import type { CheckinEvent, StreakStatus } from '../shared/streak'
 import type { Discovery, DiscoverReport } from '../shared/discover'
+import type { LevelStatus, TestResult } from '../shared/level'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -98,6 +99,9 @@ export const api = {
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
   streak: () => req<StreakStatus>('/streak'),
+  level: () => req<LevelStatus>('/level'),
+  startLevelTest: () => req<{ id: number; words: string[] }>('/level/test', { method: 'POST' }, 60_000),
+  submitLevelTest: (id: number, known: string[]) => req<TestResult>(`/level/test/${id}`, { method: 'POST', body: json({ known }) }),
   discoveries: () => req<{ items: Discovery[]; redditAuth: boolean }>('/discover'),
   runDiscover: () => req<{ report: DiscoverReport; count: number }>('/discover/run', { method: 'POST' }, 120_000),
   learnDiscoveries: (ids: number[]) => req<{ added: number }>('/discover/add', { method: 'POST', body: json({ ids }) }),

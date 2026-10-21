@@ -5,8 +5,8 @@ import { aiEnv, loadSettings } from './settings'
 import { isAdminEmail } from './auth'
 import { DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
 import type { CardMeta } from '../shared/types'
-// 英语词频排名（wordfreq，CC BY-SA 4.0，见 THIRD_PARTY.md）：一行一个词，按常用程度排序
-import WORDLIST from '../shared/wordfreq-en.txt'
+import { rankOf } from './wordfreq'
+import { vocabEstimate } from './level'
 
 /*
  * 发现新词：读 HN / Reddit 最近的讨论 → 统计每个词出现在多少条内容里 → 去掉太常见的（按词频排名和你的词汇量）、
@@ -19,12 +19,6 @@ const FETCH_TIMEOUT = 15_000
 const MAX_CANDIDATES = 60
 /** 每批最多推荐几个 */
 const MAX_PICKS = 10
-
-let ranks: Map<string, number> | null = null
-const rankOf = (w: string) => {
-  ranks ??= new Map(WORDLIST.split('\n').map((x, i) => [x, i + 1]))
-  return ranks.get(w)
-}
 
 /* ------------------------------ 读取来源 ------------------------------ */
 
@@ -270,6 +264,13 @@ async function excluded(db: D1Database, user: string) {
   return new Set([...items.results, ...known.results, ...seen.results].map((r) => r.w).filter(Boolean))
 }
 
+/** 词汇量选「自动」时，用词汇评级的估算；还没测过就按 5000 */
+async function vocabCutoff(env: Env, user: string, level: number) {
+  if (level) return level
+  const est = await vocabEstimate(env, user)
+  return Math.min(20000, Math.max(1000, Math.round(est.vocab ?? 5000)))
+}
+
 export async function runDiscover(env: Env, user: string, admin: boolean): Promise<{ report: DiscoverReport; ids: number[] }> {
   const settings = await loadSettings(env, user)
   const sources = parseSources(settings.discoverSources)
@@ -289,12 +290,13 @@ export async function runDiscover(env: Env, user: string, admin: boolean): Promi
   if (!docs.length) return { report, ids: [] }
 
   const skip = await excluded(env.DB, user)
-  const cands = extractCandidates(docs, settings.vocabLevel, skip)
+  const cutoff = await vocabCutoff(env, user, settings.vocabLevel)
+  const cands = extractCandidates(docs, cutoff, skip)
   report.candidates = cands.length
   if (!cands.length) return { report, ids: [] }
 
   const ai = await aiEnv(env, user, admin)
-  const { picks } = await generateJson<{ picks: Pick[] }>(ai, pickPrompt(cands, settings.coachProfile, settings.vocabLevel), pickSchema, 'discover', 0.4)
+  const { picks } = await generateJson<{ picks: Pick[] }>(ai, pickPrompt(cands, settings.coachProfile, cutoff), pickSchema, 'discover', 0.4)
   const now = Date.now()
   const insert = env.DB.prepare(
     `INSERT OR IGNORE INTO discoveries (user_id, text, meta, source, url, hits, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,

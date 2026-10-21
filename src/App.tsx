@@ -14,6 +14,7 @@ import LessonPage from './pages/Lesson'
 import Reader from './pages/Reader'
 import Weekly from './pages/Weekly'
 import Discover from './pages/Discover'
+import Level from './pages/Level'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -34,7 +35,7 @@ export default function App() {
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
-    path !== '/add' && path !== '/discover' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
+    path !== '/add' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
   )
   useEffect(() => {
     refreshStats()
@@ -60,6 +61,7 @@ export default function App() {
         {path === '/remix' && <Remix />}
         {path === '/weekly' && <Weekly />}
         {path === '/discover' && <Discover />}
+        {path === '/level' && <Level />}
         {path === '/settings' && <Settings />}
         {path === '/practice' && <Practice />}
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
@@ -68,7 +70,7 @@ export default function App() {
       </main>
       </div>
       </div>
-      {path !== '/remix' && path !== '/settings' && path !== '/discover' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
     </div>

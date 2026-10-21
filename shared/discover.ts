@@ -2,15 +2,16 @@
 
 import type { CardMeta } from './types'
 
-/** 词汇量档位：词频排名在这之前的词默认认识，不推荐 */
+/** 词汇量档位：词频排名在这之前的词默认认识，不推荐；0 = 自动，用词汇评级的估算 */
 export const VOCAB_LEVELS = [
+  { id: 0, name: '自动', desc: '按词汇评级的估算' },
   { id: 3000, name: '3千', desc: '日常词还在补' },
   { id: 5000, name: '5千', desc: '能读懂大部分帖子' },
   { id: 8000, name: '8千', desc: '读技术文章基本不查词' },
   { id: 12000, name: '1.2万', desc: '只想要更地道、更少见的词' },
 ] as const
 export type VocabLevel = (typeof VOCAB_LEVELS)[number]['id']
-export const DEFAULT_VOCAB_LEVEL: VocabLevel = 5000
+export const DEFAULT_VOCAB_LEVEL: VocabLevel = 0
 export const isVocabLevel = (v: unknown): v is VocabLevel => VOCAB_LEVELS.some((l) => l.id === v)
 
 /** 来源：hn 表示 Hacker News，r/xxx 表示某个 subreddit */

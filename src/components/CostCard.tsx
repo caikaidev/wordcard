@@ -11,6 +11,7 @@ const KINDS: { id: string; label: string }[] = [
   { id: 'remix', label: 'AI 重组' },
   { id: 'translate', label: '段落翻译' },
   { id: 'discover', label: '发现新词' },
+  { id: 'level', label: '词汇评级' },
   { id: 'tts', label: '语音' },
 ]
 
