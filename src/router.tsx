@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
 
-export type Path = '/' | '/add' | '/library' | '/remix' | '/weekly' | '/settings' | '/practice' | `/practice/${number}` | `/practice/${number}/read` | `/practice/saved/${number}`
+export type Path = '/' | '/add' | '/library' | '/remix' | '/weekly' | '/settings' | '/discover' | '/level' | '/practice' | `/practice/${number}` | `/practice/${number}/read` | `/practice/${number}/path` | `/practice/saved/${number}`
 
 const subscribe = (cb: () => void) => {
   window.addEventListener('popstate', cb)
@@ -9,8 +9,8 @@ const subscribe = (cb: () => void) => {
 
 export function usePath(): Path {
   const p = useSyncExternalStore(subscribe, () => window.location.pathname)
-  if (/^\/practice\/(\d+(\/read)?|saved\/\d+)$/.test(p)) return p as Path
-  return (['/', '/add', '/library', '/remix', '/weekly', '/settings', '/practice'] as const).find((x) => x === p) ?? '/'
+  if (/^\/practice\/(\d+(\/read|\/path)?|saved\/\d+)$/.test(p)) return p as Path
+  return (['/', '/add', '/library', '/remix', '/weekly', '/settings', '/discover', '/level', '/practice'] as const).find((x) => x === p) ?? '/'
 }
 
 export function navigate(to: Path) {
@@ -44,6 +44,12 @@ export const lessonIdOf = (p: Path) => {
 /** /practice/123/read → 123 */
 export const readerIdOf = (p: Path) => {
   const m = /^\/practice\/(\d+)\/read$/.exec(p)
+  return m ? Number(m[1]) : null
+}
+
+/** /practice/123/path → 123 */
+export const pathIdOf = (p: Path) => {
+  const m = /^\/practice\/(\d+)\/path$/.exec(p)
   return m ? Number(m[1]) : null
 }
 

@@ -4,6 +4,7 @@
  * - /assets/*（带 hash 的 JS/CSS/字体）：缓存优先，永不过期 → 秒开
  * - /api/tts 语音：缓存优先，最多保留 MAX_AUDIO 段 → 听过的再点瞬间播放，没网也能播
  * - 其它 /api：不经过缓存，始终走网络
+ * - 推送：收到每日提醒就弹通知，并把主屏幕图标上的数字更新为今天到期张数
  */
 const VERSION = 'v3'
 const SHELL = `shell-${VERSION}`
@@ -94,3 +95,44 @@ async function trim(cache) {
   const keys = await cache.keys()
   for (let i = 0; i < keys.length - MAX_AUDIO; i++) await cache.delete(keys[i])
 }
+
+self.addEventListener('push', (event) => {
+  let msg = {}
+  try {
+    msg = event.data ? event.data.json() : {}
+  } catch {
+    msg = { body: event.data ? event.data.text() : '' }
+  }
+  event.waitUntil(
+    (async () => {
+      if (typeof msg.badge === 'number' && self.navigator.setAppBadge) {
+        await (msg.badge > 0 ? self.navigator.setAppBadge(msg.badge) : self.navigator.clearAppBadge()).catch(() => {})
+      }
+      await self.registration.showNotification(msg.title || '拾句', {
+        body: msg.body || '',
+        icon: '/icon-192.png?v=2',
+        tag: msg.tag || 'daily',
+        renotify: true,
+        data: { url: msg.url || '/' },
+      })
+    })(),
+  )
+})
+
+// 点通知：已经开着拾句就切过去，否则新开一个
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url || '/', self.location.origin).href
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      const win = wins.find((w) => new URL(w.url).origin === self.location.origin)
+      if (win) {
+        await win.focus()
+        if ('navigate' in win && win.url !== url) await win.navigate(url).catch(() => {})
+        return
+      }
+      await self.clients.openWindow(url)
+    })(),
+  )
+})

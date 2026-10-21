@@ -6,6 +6,7 @@ import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
 import { Chip, Highlighted, SpeakButton, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconArrowRight, IconBack, IconBook, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
+import { celebrate } from '../components/Streak'
 
 const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
 
@@ -108,6 +109,12 @@ export default function LessonPage({ id }: { id: number }) {
             <p className="m-0 flex-1 font-serif text-[17px] leading-relaxed">{c.summary}</p>
             <SpeakButton text={c.summary} size={40} waves={1} label="播放概要" />
           </div>
+          <Link
+            to={`/practice/${lesson.id}/path`}
+            className="mt-3 flex h-12 items-center justify-center gap-1.5 rounded-xl border-0 bg-accent text-[15px] font-medium text-on-accent no-underline"
+          >
+            闯关模式 · 认词、听、读，一题一屏
+          </Link>
           {lesson.readable && (
             <Link
               to={`/practice/${lesson.id}/read`}
@@ -318,6 +325,7 @@ function TaskStep({
     setBusy(true)
     try {
       const r = await api.submit(lesson.id, idx, composed.replace(/\s+/g, ' ').trim())
+      celebrate(r.checkin)
       justGraded.current = true
       setText(composed.replace(/\s+/g, ' ').trim())
       setMode('free')

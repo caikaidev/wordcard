@@ -71,6 +71,8 @@ npx wrangler r2 bucket create wordcard-audio
 | `ACCESS_AUD` | 第 7 步再填 | 64 位十六进制的 AUD |
 | `ADMIN_EMAILS` | 建议 | 你的登录邮箱，多个用英文逗号隔开。管理员可以改模型、管理语音缓存、查看各成员用量 |
 | `MW_LEARNERS_KEY` / `MW_COLLEGIATE_KEY` | 否 | Merriam-Webster key，二选一或都填 |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 「发现新词」读 Reddit 用。Reddit 经常拒绝来自云服务器的匿名请求，配上就走官方接口：登录 Reddit 后打开 <https://www.reddit.com/prefs/apps>，点 create app，类型选 **script**，redirect uri 随便填（如 `http://localhost`）。创建后应用名下面那串是 client id，`secret` 是 client secret。只读 HN 的话不用配 |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | 否 | 每日提醒（推送通知）用的密钥对。本地运行 `node scripts/vapid-keys.mjs`，把输出的两行分别填进来。生成一次就别再换，换了之后已开启提醒的设备要在设置页关掉再打开 |
 
 Secret 只存在 GitHub 和 Cloudflare 里，不会出现在代码、构建产物或前端页面中。
 
@@ -112,6 +114,18 @@ Secret 只存在 GitHub 和 Cloudflare 里，不会出现在代码、构建产�
 
 Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名、签发方和 AUD）。就算有人绕过登录页直接请求接口，也拿不到数据，也刷不了你的 AI 额度。
 
+### 7.5 给外部接口放行（可选）
+
+想让脚本、快捷指令或 AI 助手通过接口导入练习（[`shiju-lesson-v1`](lesson-format.md)）时才需要。外部请求没有 Access 登录，要单独给 `/api/ext` 这个路径放行；Worker 自己会校验个人令牌（设置页「API 令牌」里创建），没有令牌照样拿不到数据。
+
+1. Zero Trust → Access → 应用程序 → **添加应用程序** → **自托管**（Self-hosted）。
+2. 域名填和 7.2 一样的地址（`wordcard.<你的子域>.workers.dev` 或自定义域名），**路径**填 `api/ext`。
+3. 策略：操作选 **Bypass**，包含（Include）选 **Everyone**。
+4. 保存。Access 按最具体的路径匹配，所以只有 `/api/ext/*` 跳过登录，其它页面和接口照旧要登录。
+5. 测试：`curl https://你的域名/api/ext/me -H "Authorization: Bearer shiju_…"`，返回你的邮箱就对了。
+
+接口自带限流：同一个人两次导入至少隔 3 分钟、24 小时内最多 30 次，同一 IP 试错令牌 10 次会被封 10 分钟。要调整就改 `wrangler.jsonc` 里的 `EXT_IMPORT_INTERVAL`、`EXT_IMPORT_DAILY_LIMIT`。
+
 ### 使用自定义域名（可选）
 
 1. 在 `wrangler.jsonc` 里打开 `routes`，填你的域名（域名需要托管在 Cloudflare），并把 `workers_dev` 改成 `false`。
@@ -135,6 +149,8 @@ Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名�
 - **手动重新部署**：Actions → Deploy → Run workflow。
 - **邀请别人**：把对方邮箱加进 7.3 的放行名单。每个人的词库、练习和用量相互隔离；每人每天的 AI 额度见 `wrangler.jsonc` 的 `USER_DAILY_*`。
 - **装到手机主屏幕**：手机浏览器打开 → 分享或菜单 → 「添加到主屏幕」。
+- **发现新词**：「添加」页 → 「从 HN / Reddit 发现新词」。每次读几百条讨论，调用一次 AI。开了「每天早上自动找一批」的话，Worker 在北京时间 6 点的定时任务里运行。Workers 免费版每次请求的 CPU 时间很短，偶尔会因为超时失败，重试一次即可。
+- **每日提醒**：配好 `VAPID_*` 两个 Secret 后，在设置页「每日提醒」里打开。iPhone / iPad 要 iOS 16.4 以上，并且必须从主屏幕图标打开拾句才能开启。Worker 每小时整点检查一次（`wrangler.jsonc` 的 `triggers`），到了你设定的钟点、今天还没打卡才推送；有连续天数的，22 点再提醒一次。
 - **备份数据**：`npx wrangler d1 export wordcard --remote --output backup.sql`。
 
 ## 故障排查

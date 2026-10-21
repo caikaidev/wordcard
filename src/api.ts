@@ -1,5 +1,10 @@
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
+import type { CheckinEvent, StreakStatus } from '../shared/streak'
+import type { Discovery, DiscoverReport } from '../shared/discover'
+import type { LevelStatus, TestResult } from '../shared/level'
+import type { Quest, QuestProgress, StageId } from '../shared/quest'
+import type { LessonImportReport } from '../shared/lesson-import'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -66,7 +71,7 @@ export const api = {
   remove: (id: number) => req<void>(`/items/${id}`, { method: 'DELETE' }),
   define: (id: number) => req<{ item: Item }>(`/items/${id}/define`, { method: 'POST' }),
   review: () => req<{ items: Item[] }>('/review'),
-  grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
+  grade: (id: number, grade: Grade) => req<{ item: Item; checkin: CheckinEvent | null }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType, context?: string) =>
     req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
   lookup: (word: string) => req<{ source: string; senses: { pos: string; def: string }[] }>(`/lookup?word=${encodeURIComponent(word)}`),
@@ -90,11 +95,30 @@ export const api = {
     req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }, 180_000),
   deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),
   submit: (id: number, idx: number, text: string) =>
-    req<{ lesson: Lesson }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
+    req<{ lesson: Lesson; checkin: CheckinEvent | null }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
   storage: () =>
     req<{ count: number; bytes: number; unusedCount: number; unusedBytes: number; limitBytes: number }>('/storage'),
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
+  streak: () => req<StreakStatus>('/streak'),
+  importLesson: (body: unknown) => req<LessonImportReport>('/lessons/import', { method: 'POST', body: json(body) }, 180_000),
+  tokens: () => req<{ tokens: ApiToken[] }>('/tokens'),
+  createToken: (name: string) => req<{ id: number; name: string; token: string }>('/tokens', { method: 'POST', body: json({ name }) }),
+  deleteToken: (id: number) => req<void>(`/tokens/${id}`, { method: 'DELETE' }),
+  quest: (lessonId: number) => req<Quest>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
+  passStage: (lessonId: number, stage: StageId, accuracy: number) =>
+    req<{ progress: QuestProgress; gained: number; checkin: CheckinEvent | null }>(`/quest/${lessonId}/stages/${stage}`, { method: 'POST', body: json({ accuracy }) }),
+  level: () => req<LevelStatus>('/level'),
+  startLevelTest: () => req<{ id: number; words: string[] }>('/level/test', { method: 'POST' }, 60_000),
+  submitLevelTest: (id: number, known: string[]) => req<TestResult>(`/level/test/${id}`, { method: 'POST', body: json({ known }) }),
+  discoveries: () => req<{ items: Discovery[]; redditAuth: boolean }>('/discover'),
+  runDiscover: () => req<{ report: DiscoverReport; count: number }>('/discover/run', { method: 'POST' }, 120_000),
+  learnDiscoveries: (ids: number[]) => req<{ added: number }>('/discover/add', { method: 'POST', body: json({ ids }) }),
+  knowDiscoveries: (ids: number[]) => req<{ known: number }>('/discover/known', { method: 'POST', body: json({ ids }) }),
+  pushKey: () => req<{ key: string | null }>('/push/key'),
+  pushSubscribe: (sub: PushSubscriptionJSON) => req<void>('/push/subscribe', { method: 'POST', body: json(sub) }),
+  pushUnsubscribe: (endpoint: string) => req<void>('/push/unsubscribe', { method: 'POST', body: json({ endpoint }) }),
+  pushTest: () => req<{ sent: number }>('/push/test', { method: 'POST' }, 30_000),
   remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, 40_000),
 }
 
@@ -114,3 +138,5 @@ export type UsageReport = {
 export type ImportReport = { packageId: number; added: number; skipped: number; invalid: string[] }
 
 export type Me = { email: string; admin: boolean }
+
+export type ApiToken = { id: number; name: string; prefix: string; created_at: number; last_used_at: number | null }

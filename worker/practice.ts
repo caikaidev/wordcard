@@ -4,6 +4,7 @@ import { generateJson, type GeminiPart } from './gemini'
 import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
+import { checkIn, streakStatus } from './streak'
 import {
   LEVEL_RULES,
   TASK_GOALS,
@@ -102,7 +103,7 @@ ${LEVEL_RULES[level].task}
 ${source}`
 }
 
-function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
+export function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
   const str = (v: unknown, max = 1000) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
   const arr = <T,>(v: unknown, n: number) => (Array.isArray(v) ? (v.slice(0, n) as T[]) : [])
   const tasks = arr<LessonContent['tasks'][number]>(r.tasks, 3).map((t, i) => ({
@@ -133,6 +134,20 @@ function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
       hint: str(q?.hint, 300),
     })),
   }
+}
+
+/** 根据原文（和截图）让 AI 出一份练习 */
+export async function generateLesson(ai: Env, profile: string, level: Level, source: string, images: { mime: string; data: string }[] = []) {
+  const prompt = lessonPrompt(
+    profile,
+    level,
+    images.length
+      ? `${source ? source.slice(0, MAX_ARTICLE_CHARS) + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）`
+      : source.slice(0, MAX_ARTICLE_CHARS),
+  )
+  const parts: GeminiPart[] = [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mime, data: i.data } }))]
+  const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
+  return cleanLesson(raw, level)
 }
 
 practice.post('/lessons', async (c) => {
@@ -171,19 +186,7 @@ practice.post('/lessons', async (c) => {
   if (!source && !images.length) return c.json({ error: '请提供链接、正文或截图' }, 400)
   if (url && !sourceUrl) sourceUrl = url
 
-  const prompt = lessonPrompt(
-    settings.coachProfile,
-    level,
-    images.length
-      ? `${source ? source.slice(0, MAX_ARTICLE_CHARS) + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）`
-      : source.slice(0, MAX_ARTICLE_CHARS),
-  )
-  const parts: GeminiPart[] = [
-    { text: prompt },
-    ...images.map((i) => ({ inlineData: { mimeType: i.mime as string, data: i.data as string } })),
-  ]
-  const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
-  const content = cleanLesson(raw, level)
+  const content = await generateLesson(ai, settings.coachProfile, level, source, images as { mime: string; data: string }[])
   if (fetchedTitle && (!content.title || content.title === 'Untitled')) content.title = fetchedTitle
 
   const row = await c.env.DB.prepare(
@@ -408,6 +411,7 @@ practice.delete('/lessons/:id', async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user),
     c.env.DB.prepare('DELETE FROM lesson_cards WHERE lesson_id = ? AND user_id = ?').bind(id, user),
+    c.env.DB.prepare('DELETE FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user),
     c.env.DB.prepare('DELETE FROM lessons WHERE id = ? AND user_id = ?').bind(id, user),
   ])
   return c.body(null, 204)
@@ -556,9 +560,14 @@ practice.post('/lessons/:id/submit', async (c) => {
   )
     .bind(id, idx, attempt, text, result.verdict === 'pass' ? 1 : 0, JSON.stringify(result), Date.now(), user)
     .run()
+  // 写一句就算今天打卡
+  const checkin = await checkIn(c.env.DB, user).catch((e) => {
+    console.error('checkin failed', e)
+    return null
+  })
 
   const fresh = await loadLesson(c.env, id, user)
-  return c.json({ lesson: fresh })
+  return c.json({ lesson: fresh, checkin })
 })
 
 /* ============================== 稍后学 ============================== */
@@ -684,28 +693,21 @@ practice.post('/translate', async (c) => {
 
 /* ============================== 打卡统计 ============================== */
 
-practice.get('/stats', async (c) => c.json(await practiceStats(c.env.DB, c.get('user'))))
+practice.get('/stats', async (c) => c.json(await practiceStats(c.env, c.get('user'))))
 
-async function practiceStats(db: D1Database, user: string): Promise<PracticeStats> {
+async function practiceStats(env: Env, user: string): Promise<PracticeStats> {
+  const db = env.DB
   const now = Date.now()
   const today = dayOf(now)
   const d = new Date(now + TZ)
   const monthStartDay = dayOf(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) - TZ)
   const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()
 
-  // 近 400 天有提交的日期（用来算连续天数）
-  const { results } = await db.prepare(
-    `SELECT DISTINCT CAST((created_at + ?) / ? AS INTEGER) AS day FROM submissions
-     WHERE user_id = ? AND created_at >= ? ORDER BY day DESC`,
-  )
-    .bind(TZ, DAY, user, now - 400 * DAY)
-    .all<{ day: number }>()
-  const days = new Set(results.map((r) => r.day))
-
-  let streak = 0
-  for (let dd = days.has(today) ? today : today - 1; days.has(dd); dd--) streak++
-
-  const monthDays = [...days].filter((x) => x >= monthStartDay).map((x) => x - monthStartDay + 1).sort((a, b) => a - b)
+  // 打卡：练习过、或复习达到每日目标的日子（见 streak.ts）
+  const { chain, ...streak } = await streakStatus(env, user, now)
+  const inMonth = (kind: 'done' | 'freeze') =>
+    [...chain].filter(([day, k]) => k === kind && day >= monthStartDay).map(([day]) => day - monthStartDay + 1).sort((a, b) => a - b)
+  const monthDays = inMonth('done')
 
   const monthStartTs = monthStartDay * DAY - TZ
   const counts = await db.prepare(
@@ -724,8 +726,10 @@ async function practiceStats(db: D1Database, user: string): Promise<PracticeStat
     checkinDays: monthDays.length,
     completed: counts?.completed ?? 0,
     submissions: counts?.submissions ?? 0,
-    streak,
-    missedYesterday: !days.has(today) && !days.has(today - 1) && days.size > 0,
+    streak: streak.streak,
+    frozen: inMonth('freeze'),
+    detail: streak,
+    missedYesterday: !chain.has(today) && !chain.has(today - 1) && chain.size > 0,
     today: today - monthStartDay + 1,
     daysInMonth,
     targets: { days: 20, completed: 20 },
@@ -743,7 +747,7 @@ practice.get('/share', async (c) => {
   const now = Date.now()
   const todayStart = dayOf(now) * DAY - TZ
   const [stats, lib, subs, cards] = await Promise.all([
-    practiceStats(c.env.DB, user),
+    practiceStats(c.env, user),
     c.env.DB.prepare(
       `SELECT SUM(status = 'active') AS active, SUM(status = 'done') AS done FROM items WHERE user_id = ?`,
     )

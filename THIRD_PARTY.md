@@ -19,6 +19,17 @@
 - 服务地址：[dictionaryapi.dev](https://dictionaryapi.dev/)，不需要 key。
 - 数据来自 [Wiktionary](https://www.wiktionary.org/)，该接口返回的数据标注为 CC BY-SA 许可。转载或再分发释义内容时，需要署名并以相同方式共享。
 
+## 词频数据（随仓库分发）
+
+- `shared/wordfreq-en.txt`：英语最常用的 4 万个词，按常用程度排序，用于「发现新词」时过滤掉太常见的词。
+- 由 [wordfreq](https://github.com/rspeer/wordfreq) 3.1.1（Robyn Speer）的英语词频数据导出，只保留了纯字母的小写词。wordfreq 的代码以 Apache-2.0 发布，**数据以 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 发布**，其来源包括 Wikipedia、Google Books Ngrams、OpenSubtitles、Reddit 等，详见 wordfreq 的说明。
+- 因此这个文件同样以 CC BY-SA 4.0 授权，**不在本项目的 MIT 授权范围内**；再分发或修改时请保留署名，并以相同方式共享。
+
+## 社区内容（运行时读取，不随仓库分发）
+
+- 「发现新词」在运行时读取 [Hacker News](https://news.ycombinator.com/)（通过 [HN Search API by Algolia](https://hn.algolia.com/api)）和 Reddit 的公开讨论，只用来统计词频、摘出例句，保存在部署者自己的数据库里供本人学习。
+- 使用 Reddit 官方接口需要部署者自己创建应用，并遵守 [Reddit Data API 条款](https://redditinc.com/policies/data-api-terms)。例句版权归原作者所有。
+
 ## AI 生成内容
 
 - 卡片补全、练习题、批改和语音由部署者自己的 Gemini API key 生成，受 [Gemini API 条款](https://ai.google.dev/gemini-api/terms)约束。

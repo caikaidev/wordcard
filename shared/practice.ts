@@ -1,5 +1,7 @@
 /* ---------------------------- 练习：共享类型与档位 ---------------------------- */
 
+import type { StreakStatus } from './streak'
+
 export type Level = 1 | 2 | 3
 
 export const LEVELS: { id: Level; name: string; short: string; desc: string }[] = [
@@ -110,6 +112,10 @@ export interface PracticeStats {
   completed: number
   submissions: number
   streak: number
+  /** 本月用掉保护卡的日期（几号） */
+  frozen: number[]
+  /** 今日目标、保护卡、下一个里程碑等 */
+  detail: StreakStatus
   /** 昨天没练、今天也还没练 */
   missedYesterday: boolean
   today: number

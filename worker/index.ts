@@ -9,6 +9,12 @@ import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
 import { costOf } from '../shared/pricing'
 import { parseImport } from '../shared/import'
+import { checkInAfterReview, streakStatus } from './streak'
+import { push, sendReminders } from './push'
+import { autoDiscover, discover } from './discover'
+import { level } from './level'
+import { quest } from './quest'
+import { ext, importLesson, tokens } from './lesson-import'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -56,7 +62,9 @@ type Ctx = Context<AppEnv>
 const who = (c: Ctx) => ({ user: c.get('user'), admin: c.get('admin') })
 const ai = (c: Ctx) => aiEnv(c.env, c.get('user'), c.get('admin'))
 
-app.use('*', requireAccess)
+// /api/ext/* 给脚本和 AI 助手用，用个人令牌鉴权（见 lesson-import.ts），其余接口都要 Cloudflare Access 登录
+app.use('*', (c, next) => (c.req.path.startsWith('/api/ext/') ? next() : requireAccess(c, next)))
+app.route('/ext', ext)
 
 app.onError((err, c) => {
   if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
@@ -305,7 +313,19 @@ app.post('/review/:id', async (c) => {
     .bind(who(c).user, id, grade, now)
     .run()
     .catch((e) => console.error('log review failed', e))
-  return c.json({ item: toItem(row!) })
+  // 这一张让今天达成了每日目标：告诉前端，好放个小庆祝；打卡失败不影响复习
+  const checkin = await checkInAfterReview(c.env, who(c).user, now).catch((e) => {
+    console.error('checkin failed', e)
+    return null
+  })
+  return c.json({ item: toItem(row!), checkin })
+})
+
+/* ------------------------------ 连续打卡 ------------------------------ */
+
+app.get('/streak', async (c) => {
+  const { chain: _, ...s } = await streakStatus(c.env, who(c).user)
+  return c.json(s)
 })
 
 /* ------------------------------ 每周回顾 ------------------------------ */
@@ -501,6 +521,19 @@ app.put('/settings', async (c) => {
 })
 
 app.route('/practice', practice)
+app.route('/push', push)
+app.route('/discover', discover)
+app.route('/level', level)
+app.route('/quest', quest)
+app.route('/tokens', tokens)
+
+/** 页面上传练习 JSON */
+app.post('/lessons/import', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const r = await importLesson(c.env, c.get('user'), c.get('admin'), body, new URL(c.req.url).origin)
+  if ('error' in r) return c.json(r, 400)
+  return c.json(r, 201)
+})
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 
@@ -645,4 +678,12 @@ app.post('/storage/cleanup', async (c) => {
 
 app.all('*', (c) => c.json({ error: 'Not found' }, 404))
 
-export default app satisfies ExportedHandler<Env>
+export default {
+  fetch: app.fetch,
+  // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送；
+  // 北京时间早上 6 点给开了自动的人找一批新词，赶在早上的提醒之前
+  scheduled: (event, env, ctx) => {
+    if (new Date(event.scheduledTime + 8 * 3600_000).getUTCHours() === 6) ctx.waitUntil(autoDiscover(env))
+    ctx.waitUntil(sendReminders(env, event.scheduledTime))
+  },
+} satisfies ExportedHandler<Env>

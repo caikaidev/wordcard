@@ -25,6 +25,8 @@ export interface Env {
   MW_COLLEGIATE_KEY?: string
   /** 仅本地测试：把词典请求指向模拟服务 */
   DICT_TEST_BASE?: string
+  /** 仅本地测试：把 HN / Reddit 请求指向模拟服务 */
+  SOURCE_TEST_BASE?: string
   /** 可选：Cloudflare Browser Run，渲染需要执行 JS 的页面 */
   BROWSER?: Fetcher
   /** Zero Trust 团队域名，如 yourteam.cloudflareaccess.com */
@@ -41,6 +43,17 @@ export interface Env {
   PER_MINUTE_LIMIT?: string
   /** 每分钟最多生成几段语音（Gemini TTS 第 1 层级是每分钟 10 次） */
   TTS_PER_MINUTE_LIMIT?: string
+  /** Web Push（每日提醒）的 VAPID 公钥 / 私钥（base64url），用 scripts/vapid-keys.mjs 生成；不配就没有提醒功能 */
+  VAPID_PUBLIC_KEY?: string
+  VAPID_PRIVATE_KEY?: string
+  /** 可选：推送服务联系方式（mailto: 或 https:），默认用第一个管理员邮箱 */
+  VAPID_SUBJECT?: string
+  /** 可选：Reddit 应用（script 类型）的 client id / secret。不配的话从云服务器读 Reddit 经常被拒 */
+  REDDIT_CLIENT_ID?: string
+  REDDIT_CLIENT_SECRET?: string
+  /** 外部接口导入练习：两次之间至少间隔多少秒（默认 180）、每人每天最多几次（默认 30） */
+  EXT_IMPORT_INTERVAL?: string
+  EXT_IMPORT_DAILY_LIMIT?: string
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }

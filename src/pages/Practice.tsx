@@ -6,6 +6,8 @@ import { PageTitle, errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
 import PackagePractice from '../components/PackagePractice'
+import { StreakDetail } from '../components/Streak'
+import { LESSON_DOC_URL } from '../../shared/lesson-import'
 import type { PackageInfo } from '../../shared/types'
 
 type Source = 'url' | 'text' | 'image'
@@ -54,7 +56,10 @@ export default function Practice() {
         </>
       )}
 
-      <h2 className="mt-6 mb-1 text-[13px] font-semibold">最近的练习</h2>
+      <div className="mt-6 mb-1 flex items-baseline justify-between">
+        <h2 className="m-0 text-[13px] font-semibold">最近的练习</h2>
+        <ImportLessonButton />
+      </div>
       {!lessons ? (
         <div className="mt-2 h-32 animate-shimmer rounded-2xl bg-surface" />
       ) : lessons.length === 0 ? (
@@ -169,12 +174,59 @@ function Progress({ passed, submitted }: { passed: number; submitted: number }) 
   )
 }
 
+/* ---------------------------- 导入练习 ---------------------------- */
+
+/** 导入按 shiju-lesson-v1 整理好的练习（可以带闯关题库），带了题库直接进闯关 */
+function ImportLessonButton() {
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const onFile = async (f: File | undefined) => {
+    if (!f) return
+    setBusy(true)
+    try {
+      let body: unknown
+      try {
+        body = JSON.parse(await f.text())
+      } catch {
+        throw new Error('文件不是合法的 JSON')
+      }
+      const r = await api.importLesson(body)
+      toast(
+        `已导入「${r.title}」${r.generatedLesson ? '，练习内容由 AI 补全' : ''}${r.dropped ? `，${r.dropped} 道不完整的题被跳过` : ''}`,
+        'success',
+      )
+      navigate(r.hasQuest ? `/practice/${r.id}/path` : `/practice/${r.id}`)
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setBusy(false)
+      if (input.current) input.current.value = ''
+    }
+  }
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      <a href={LESSON_DOC_URL} target="_blank" rel="noreferrer" className="text-muted">
+        格式说明
+      </a>
+      <button
+        onClick={() => input.current?.click()}
+        disabled={busy}
+        className="border-0 bg-transparent p-0 text-xs font-medium text-accent disabled:opacity-50"
+      >
+        {busy ? '导入中…' : '＋ 导入 JSON'}
+      </button>
+      <input ref={input} type="file" accept="application/json,.json" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+    </span>
+  )
+}
+
 /* ---------------------------- 打卡统计 ---------------------------- */
 
 function StatsCard({ stats }: { stats: PracticeStats | null }) {
   const [sharing, setSharing] = useState(false)
   if (!stats) return <div className="mt-4 h-[168px] animate-shimmer rounded-2xl bg-surface md:mt-0" />
   const checked = new Set(stats.days)
+  const frozen = new Set(stats.frozen)
   const checkedToday = checked.has(stats.today)
   return (
     <section className="mt-4 rounded-2xl border border-line-soft bg-surface p-4 md:mt-0" aria-label="本月打卡">
@@ -182,7 +234,7 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
         <Stat label="本月打卡" value={stats.checkinDays} target={stats.targets.days} unit="天" />
         <Stat label="完成练习" value={stats.completed} target={stats.targets.completed} unit="次" />
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">连续</span>
+          <span className="text-xs text-muted">连续{stats.detail.best > stats.streak && ` · 最长 ${stats.detail.best}`}</span>
           <span className="tabular flex items-center gap-1 text-[22px] leading-tight font-semibold">
             <IconFlame size={18} className={stats.streak ? 'text-forgot-fg' : 'text-faint'} />
             {stats.streak}
@@ -196,11 +248,13 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
           <span
             key={d}
             className={`h-2.5 w-2.5 rounded-[3px] ${
-              checked.has(d) ? 'bg-accent' : d === stats.today ? 'border-[1.5px] border-accent' : d < stats.today ? 'bg-line' : 'bg-line-soft'
+              checked.has(d) ? 'bg-accent' : frozen.has(d) ? 'bg-accent-soft' : d === stats.today ? 'border-[1.5px] border-accent' : d < stats.today ? 'bg-line' : 'bg-line-soft'
             }`}
           />
         ))}
       </div>
+
+      <StreakDetail s={stats.detail} />
 
       {checkedToday && (
         <button
@@ -214,7 +268,7 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
 
       {stats.missedYesterday && (
         <div className="mt-3 rounded-xl bg-forgot-bg px-3 py-2 text-[13px] text-forgot-fg">
-          昨天没练，今天练一次就不算连断两天。
+          昨天没打卡，今天复习 {stats.detail.goal} 张或练一次，重新开始。
         </div>
       )}
     </section>
