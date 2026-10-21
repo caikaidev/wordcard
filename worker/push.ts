@@ -143,7 +143,7 @@ async function send(env: Env, sub: Sub, msg: PushMessage): Promise<SendResult> {
         'content-type': 'application/octet-stream',
         ttl: String(6 * 3600), // 手机离线超过 6 小时就不送了：过时的“今天还没打卡”没有意义
         urgency: 'normal',
-        topic: msg.tag ?? 'daily', // 同一主题只保留最新一条
+        // 不发 Topic 头：苹果推送服务会以 BadWebPushTopic 拒绝；同类通知由 Service Worker 里的 tag 在手机上合并
       },
       body,
     })
