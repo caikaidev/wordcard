@@ -480,8 +480,9 @@ function Reminder({ hour, onHour }: { hour: number; onHour: (h: number) => void 
     })
   const test = () =>
     run(async () => {
-      await api.pushTest()
-      toast('已发送，几秒内会收到')
+      const r = await api.pushTest()
+      if (r.note) toast(`发出 ${r.sent} 条，另有 ${r.failed} 台设备失败：${r.note}`, 'error')
+      else toast('已发送，几秒内会收到')
     })
 
   if (!state) return <div className="h-14 animate-shimmer rounded-2xl bg-surface" />

@@ -84,19 +84,31 @@ export async function encryptPayload(sub: Pick<Sub, 'p256dh' | 'auth'>, plaintex
   return concat(header, cipher)
 }
 
-const vapidKeys = (env: Env) => (env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY ? { pub: env.VAPID_PUBLIC_KEY, priv: env.VAPID_PRIVATE_KEY } : null)
+/** 填 Secret 时常见的手误：连着「VAPID_PRIVATE_KEY=」一起复制、带了引号或换行，这里都去掉 */
+const cleanKey = (v: string | undefined, name: string) =>
+  (v ?? '')
+    .trim()
+    .replace(new RegExp(`^${name}\\s*=\\s*`), '')
+    .replace(/^["']|["']$/g, '')
+    .trim()
 
-let signingKey: { pub: string; key: CryptoKey } | null = null
+const vapidKeys = (env: Env) => {
+  const pub = cleanKey(env.VAPID_PUBLIC_KEY, 'VAPID_PUBLIC_KEY')
+  const priv = cleanKey(env.VAPID_PRIVATE_KEY, 'VAPID_PRIVATE_KEY')
+  return pub && priv ? { pub, priv } : null
+}
+
+let signingKey: { id: string; key: CryptoKey } | null = null
 
 async function vapidAuth(env: Env, endpoint: string) {
   const keys = vapidKeys(env)!
-  if (signingKey?.pub !== keys.pub) {
+  if (signingKey?.id !== `${keys.pub}|${keys.priv}`) {
     const pub = b64u.decode(keys.pub)
     const key = await importJWK(
       { kty: 'EC', crv: 'P-256', x: b64u.encode(pub.slice(1, 33)), y: b64u.encode(pub.slice(33, 65)), d: keys.priv },
       'ES256',
     )
-    signingKey = { pub: keys.pub, key: key as CryptoKey }
+    signingKey = { id: `${keys.pub}|${keys.priv}`, key: key as CryptoKey }
   }
   const admin = (env.ADMIN_EMAILS ?? '').split(',')[0]?.trim()
   const jwt = await new SignJWT({})
@@ -108,39 +120,71 @@ async function vapidAuth(env: Env, endpoint: string) {
   return `vapid t=${jwt}, k=${keys.pub}`
 }
 
-/** 发一条推送；返回推送服务的状态码。404 / 410 说明订阅已失效 */
-async function send(env: Env, sub: Sub, msg: PushMessage) {
-  const body = await encryptPayload(sub, enc.encode(JSON.stringify(msg)))
-  const res = await fetch(sub.endpoint, {
-    method: 'POST',
-    headers: {
-      authorization: await vapidAuth(env, sub.endpoint),
-      'content-encoding': 'aes128gcm',
-      'content-type': 'application/octet-stream',
-      ttl: String(6 * 3600), // 手机离线超过 6 小时就不送了：过时的“今天还没打卡”没有意义
-      urgency: 'normal',
-      topic: msg.tag ?? 'daily', // 同一主题只保留最新一条
-    },
-    body,
-  })
-  if (!res.ok) console.warn('push failed', res.status, await res.text().catch(() => ''))
-  return res.status
+type SendResult = { status: number; detail: string; host: string }
+
+/** 发一条推送；返回推送服务的状态码和它给的原因。404 / 410 说明订阅已失效，0 表示还没发出去就出错了 */
+async function send(env: Env, sub: Sub, msg: PushMessage): Promise<SendResult> {
+  const host = new URL(sub.endpoint).host
+  // 签名失败（-1，多半是私钥格式不对）和加密失败（0，订阅数据有问题）分开报，方便对症处理
+  let authorization: string
+  try {
+    authorization = await vapidAuth(env, sub.endpoint)
+  } catch (e) {
+    console.error('vapid sign error', e)
+    return { status: -1, detail: e instanceof Error ? e.message : String(e), host }
+  }
+  try {
+    const body = await encryptPayload(sub, enc.encode(JSON.stringify(msg)))
+    const res = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: {
+        authorization,
+        'content-encoding': 'aes128gcm',
+        'content-type': 'application/octet-stream',
+        ttl: String(6 * 3600), // 手机离线超过 6 小时就不送了：过时的“今天还没打卡”没有意义
+        urgency: 'normal',
+        topic: msg.tag ?? 'daily', // 同一主题只保留最新一条
+      },
+      body,
+    })
+    const detail = res.ok ? '' : (await res.text().catch(() => '')).slice(0, 300)
+    if (!res.ok) console.warn('push failed', host, res.status, detail)
+    return { status: res.status, detail, host }
+  } catch (e) {
+    console.error('push error', host, e)
+    return { status: 0, detail: e instanceof Error ? e.message : String(e), host }
+  }
 }
 
-/** 推给这个人的所有设备；顺手清掉失效的订阅。返回成功条数 */
+/** 推给这个人的所有设备；顺手清掉失效的订阅。返回成功条数和失败原因 */
 export async function sendToUser(env: Env, user: string, msg: PushMessage) {
-  if (!vapidKeys(env)) return 0
+  const failures: SendResult[] = []
+  if (!vapidKeys(env)) return { sent: 0, failures }
   const { results } = await env.DB.prepare('SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = ?').bind(user).all<Sub>()
-  let ok = 0
+  let sent = 0
   for (const sub of results) {
-    const status = await send(env, sub, msg).catch((e) => {
-      console.error('push error', e)
-      return 0
-    })
-    if (status >= 200 && status < 300) ok++
-    else if (status === 404 || status === 410) await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(sub.endpoint).run()
+    const r = await send(env, sub, msg)
+    if (r.status >= 200 && r.status < 300) sent++
+    else {
+      failures.push(r)
+      if (r.status === 404 || r.status === 410) await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(sub.endpoint).run()
+    }
   }
-  return ok
+  return { sent, failures }
+}
+
+/** 把推送服务的拒绝原因翻译成能照着改的话 */
+function explain(f: SendResult) {
+  const why = f.detail.replace(/\s+/g, ' ').trim()
+  const raw = `（${f.host} ${f.status > 0 ? `返回 ${f.status}` : '出错'}${why ? `：${why.slice(0, 120)}` : ''}）`
+  if (f.status === -1) return `VAPID 私钥用不了：Secret 里只填生成结果「=」后面那一串，公钥私钥要是同一次生成的，改完重新部署${raw}`
+  if (f.status === 0) return `这台设备的订阅数据有问题，或者连不上推送服务：把提醒关掉再打开一次${raw}`
+  if (f.status === 404 || f.status === 410) return `这台设备的订阅已经失效（已自动清掉），把提醒关掉再打开一次${raw}`
+  if (f.status === 401 || f.status === 403)
+    return `推送服务不认这个签名：检查 VAPID_PUBLIC_KEY 和 VAPID_PRIVATE_KEY 是不是同一次生成的一对；如果换过密钥，要把提醒关掉再打开一次${raw}`
+  if (f.status === 413) return `通知内容太长${raw}`
+  if (f.status === 429) return `推送服务限流了，过几分钟再试${raw}`
+  return `推送服务拒绝了这条通知${raw}`
 }
 
 /* ------------------------------ 提醒文案 ------------------------------ */
@@ -245,7 +289,11 @@ push.post('/test', async (c) => {
   const msg = s.today
     ? { title: '拾句 · 测试提醒', body: `今天已经打卡了，连续 ${s.streak} 天。提醒会在你设定的钟点发出。`, url: '/', tag: 'test' }
     : reminderMessage(s, due?.n ?? 0, false)
-  const sent = await sendToUser(c.env, user, msg)
-  if (!sent) return c.json({ error: '没有发出去：这台设备的订阅可能已失效，关掉提醒再重新打开试试' }, 502)
-  return c.json({ sent })
+  const { sent, failures } = await sendToUser(c.env, user, msg)
+  if (!sent) {
+    if (!failures.length) return c.json({ error: '服务器上没有这台设备的订阅，把提醒关掉再打开一次' }, 404)
+    return c.json({ error: `没有发出去：${explain(failures[0])}` }, 502)
+  }
+  // 有的设备成功、有的失败：也告诉一声
+  return c.json({ sent, failed: failures.length, note: failures.length ? explain(failures[0]) : undefined })
 })
