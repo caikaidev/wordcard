@@ -25,6 +25,8 @@ export interface Env {
   MW_COLLEGIATE_KEY?: string
   /** 仅本地测试：把词典请求指向模拟服务 */
   DICT_TEST_BASE?: string
+  /** 仅本地测试：把 HN / Reddit 请求指向模拟服务 */
+  SOURCE_TEST_BASE?: string
   /** 可选：Cloudflare Browser Run，渲染需要执行 JS 的页面 */
   BROWSER?: Fetcher
   /** Zero Trust 团队域名，如 yourteam.cloudflareaccess.com */
@@ -46,6 +48,9 @@ export interface Env {
   VAPID_PRIVATE_KEY?: string
   /** 可选：推送服务联系方式（mailto: 或 https:），默认用第一个管理员邮箱 */
   VAPID_SUBJECT?: string
+  /** 可选：Reddit 应用（script 类型）的 client id / secret。不配的话从云服务器读 Reddit 经常被拒 */
+  REDDIT_CLIENT_ID?: string
+  REDDIT_CLIENT_SECRET?: string
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }

@@ -1,6 +1,7 @@
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
 import type { CheckinEvent, StreakStatus } from '../shared/streak'
+import type { Discovery, DiscoverReport } from '../shared/discover'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -97,6 +98,10 @@ export const api = {
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
   streak: () => req<StreakStatus>('/streak'),
+  discoveries: () => req<{ items: Discovery[]; redditAuth: boolean }>('/discover'),
+  runDiscover: () => req<{ report: DiscoverReport; count: number }>('/discover/run', { method: 'POST' }, 120_000),
+  learnDiscoveries: (ids: number[]) => req<{ added: number }>('/discover/add', { method: 'POST', body: json({ ids }) }),
+  knowDiscoveries: (ids: number[]) => req<{ known: number }>('/discover/known', { method: 'POST', body: json({ ids }) }),
   pushKey: () => req<{ key: string | null }>('/push/key'),
   pushSubscribe: (sub: PushSubscriptionJSON) => req<void>('/push/subscribe', { method: 'POST', body: json(sub) }),
   pushUnsubscribe: (endpoint: string) => req<void>('/push/unsubscribe', { method: 'POST', body: json({ endpoint }) }),

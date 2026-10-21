@@ -13,6 +13,7 @@ import Practice from './pages/Practice'
 import LessonPage from './pages/Lesson'
 import Reader from './pages/Reader'
 import Weekly from './pages/Weekly'
+import Discover from './pages/Discover'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -33,7 +34,7 @@ export default function App() {
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
-    path !== '/add' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
+    path !== '/add' && path !== '/discover' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
   )
   useEffect(() => {
     refreshStats()
@@ -58,6 +59,7 @@ export default function App() {
         {path === '/library' && <Library />}
         {path === '/remix' && <Remix />}
         {path === '/weekly' && <Weekly />}
+        {path === '/discover' && <Discover />}
         {path === '/settings' && <Settings />}
         {path === '/practice' && <Practice />}
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
@@ -66,7 +68,7 @@ export default function App() {
       </main>
       </div>
       </div>
-      {path !== '/remix' && path !== '/settings' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && path !== '/discover' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
     </div>
@@ -79,7 +81,7 @@ function MobileTabBar({ path }: { path: Path }) {
     <>
       <nav className="pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-bg px-3 pt-1 md:hidden">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
           return (
             <Link
               key={t.to}
@@ -109,7 +111,7 @@ function DesktopHeader({ path }: { path: Path }) {
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
           return (
             <Link
               key={t.to}

@@ -1,12 +1,13 @@
 import type { Env } from './env'
 import { COACH_PROFILE_MAX, isSafeId, type Settings } from '../shared/settings'
 import { DEFAULT_COACH_PROFILE, isLevel } from '../shared/practice'
+import { DEFAULT_SOURCES, DEFAULT_VOCAB_LEVEL, formatSources, isVocabLevel, parseSources } from '../shared/discover'
 import { DEFAULT_DAILY_GOAL, DEFAULT_REMINDER_HOUR, REMINDER_HOURS, isDailyGoal } from '../shared/streak'
 
 /** 全站共用、只有管理员能改的设置 */
 const GLOBAL_KEYS = ['textModel', 'ttsModel', 'voice'] as const
 /** 每个人自己的设置 */
-const USER_KEYS = ['practiceLevel', 'coachProfile', 'reviewMode', 'dailyGoal', 'reminderHour'] as const
+const USER_KEYS = ['practiceLevel', 'coachProfile', 'reviewMode', 'dailyGoal', 'reminderHour', 'discoverSources', 'vocabLevel', 'discoverAuto'] as const
 
 const isReminderHour = (v: unknown): v is number => v === -1 || REMINDER_HOURS.includes(v as number)
 
@@ -23,6 +24,7 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
   const level = Number(um.practiceLevel)
   const goal = Number(um.dailyGoal)
   const hour = um.reminderHour === undefined ? NaN : Number(um.reminderHour)
+  const vocab = Number(um.vocabLevel)
   return {
     textModel: isSafeId(gm.textModel) ? gm.textModel : env.GEMINI_TEXT_MODEL,
     ttsModel: isSafeId(gm.ttsModel) ? gm.ttsModel : env.GEMINI_TTS_MODEL,
@@ -32,6 +34,9 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
     reviewMode: isReviewMode(um.reviewMode) ? um.reviewMode : 'mixed',
     dailyGoal: isDailyGoal(goal) ? goal : DEFAULT_DAILY_GOAL,
     reminderHour: isReminderHour(hour) ? hour : DEFAULT_REMINDER_HOUR,
+    discoverSources: um.discoverSources && parseSources(um.discoverSources).length ? um.discoverSources : DEFAULT_SOURCES,
+    vocabLevel: isVocabLevel(vocab) ? vocab : DEFAULT_VOCAB_LEVEL,
+    discoverAuto: um.discoverAuto === '1',
   }
 }
 
@@ -45,6 +50,9 @@ export function defaultSettings(env: Env): Settings {
     reviewMode: 'mixed',
     dailyGoal: DEFAULT_DAILY_GOAL,
     reminderHour: DEFAULT_REMINDER_HOUR,
+    discoverSources: DEFAULT_SOURCES,
+    vocabLevel: DEFAULT_VOCAB_LEVEL,
+    discoverAuto: false,
   }
 }
 
@@ -101,6 +109,21 @@ export async function saveSettings(env: Env, user: string, admin: boolean, body:
     if (body.reminderHour === null || body.reminderHour === '') stmts.push(resetUser('reminderHour'))
     else if (isReminderHour(Number(body.reminderHour))) stmts.push(upsertUser('reminderHour', String(Number(body.reminderHour))))
     else return 'reminderHour 不在可选范围内'
+  }
+  if (body.discoverSources !== undefined) {
+    if (body.discoverSources === null || body.discoverSources === '') stmts.push(resetUser('discoverSources'))
+    else if (typeof body.discoverSources === 'string' && parseSources(body.discoverSources).length)
+      stmts.push(upsertUser('discoverSources', formatSources(parseSources(body.discoverSources))))
+    else return '来源写法：hn 或 r/子版块名，用逗号隔开'
+  }
+  if (body.vocabLevel !== undefined) {
+    if (body.vocabLevel === null || body.vocabLevel === '') stmts.push(resetUser('vocabLevel'))
+    else if (isVocabLevel(Number(body.vocabLevel))) stmts.push(upsertUser('vocabLevel', String(Number(body.vocabLevel))))
+    else return 'vocabLevel 不在可选范围内'
+  }
+  if (body.discoverAuto !== undefined) {
+    if (body.discoverAuto === true || body.discoverAuto === 1 || body.discoverAuto === '1') stmts.push(upsertUser('discoverAuto', '1'))
+    else stmts.push(resetUser('discoverAuto'))
   }
   if (body.coachProfile !== undefined) {
     const v = body.coachProfile

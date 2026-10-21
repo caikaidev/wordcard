@@ -1,4 +1,5 @@
 import type { DailyGoal } from './streak'
+import type { VocabLevel } from './discover'
 
 /** 页面上可切换的模型与音色（选项以 Google AI Studio 当前可用为准） */
 export const TEXT_MODELS = [
@@ -39,6 +40,12 @@ export interface Settings {
   dailyGoal: DailyGoal
   /** 每日提醒：北京时间几点推送，-1 不提醒 */
   reminderHour: number
+  /** 发现新词的来源，如 "hn, r/cscareerquestions" */
+  discoverSources: string
+  /** 词汇量：词频排名在这之前的词不推荐 */
+  vocabLevel: VocabLevel
+  /** 每天早上自动找一批新词，直接加入复习 */
+  discoverAuto: boolean
 }
 
 export const REVIEW_MODES: { id: Settings['reviewMode']; name: string; desc: string }[] = [

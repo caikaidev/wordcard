@@ -113,6 +113,14 @@ export default function Add() {
       </div>
 
       <div className="flex flex-1 flex-col gap-3 pt-4 pb-3 md:pt-0">
+        <Link
+          to="/discover"
+          className="flex h-12 items-center gap-2.5 rounded-2xl border border-line-soft bg-surface px-4 text-[14px] text-ink no-underline"
+        >
+          <IconSparkle size={16} className="text-accent" />
+          <span className="flex-1">从 HN / Reddit 发现新词</span>
+          <span className="text-xs text-muted">挑你还没学的高频词 ›</span>
+        </Link>
         <form
           className="flex flex-col gap-2"
           onSubmit={(e) => {

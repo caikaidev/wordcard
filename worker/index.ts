@@ -11,6 +11,7 @@ import { costOf } from '../shared/pricing'
 import { parseImport } from '../shared/import'
 import { checkInAfterReview, streakStatus } from './streak'
 import { push, sendReminders } from './push'
+import { autoDiscover, discover } from './discover'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -516,6 +517,7 @@ app.put('/settings', async (c) => {
 
 app.route('/practice', practice)
 app.route('/push', push)
+app.route('/discover', discover)
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 
@@ -662,6 +664,10 @@ app.all('*', (c) => c.json({ error: 'Not found' }, 404))
 
 export default {
   fetch: app.fetch,
-  // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送
-  scheduled: (event, env, ctx) => ctx.waitUntil(sendReminders(env, event.scheduledTime)),
+  // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送；
+  // 北京时间早上 6 点给开了自动的人找一批新词，赶在早上的提醒之前
+  scheduled: (event, env, ctx) => {
+    if (new Date(event.scheduledTime + 8 * 3600_000).getUTCHours() === 6) ctx.waitUntil(autoDiscover(env))
+    ctx.waitUntil(sendReminders(env, event.scheduledTime))
+  },
 } satisfies ExportedHandler<Env>

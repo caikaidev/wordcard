@@ -129,10 +129,12 @@ jobs:
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
         run: |
           python3 - <<'PY'
           import json, os
-          names = ["GEMINI_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MW_LEARNERS_KEY", "MW_COLLEGIATE_KEY", "ADMIN_EMAILS", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]
+          names = ["GEMINI_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MW_LEARNERS_KEY", "MW_COLLEGIATE_KEY", "ADMIN_EMAILS", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "REDDIT_CLIENT_ID", "REDDIT_CLIENT_SECRET"]
           found = {n: os.environ[n] for n in names if os.environ.get(n)}
           for n in names:
               if n not in found:
