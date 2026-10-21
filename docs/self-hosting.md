@@ -161,6 +161,7 @@ Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名�
 | 「Access 配置不完整」 | `ACCESS_TEAM_DOMAIN` 和 `ACCESS_AUD` 只填了一个，两个要同时填 |
 | 页面提示「尚未配置 Cloudflare Access」 | 还在初始化阶段，完成第 7 步 |
 | 「登录已失效，请刷新页面」且刷新无效 | `ACCESS_AUD` 和 Worker 实际使用的 Access 应用对不上（比如换过域名或重建过应用）。到 Zero Trust 里核对 AUD，更新 Secret 后重新部署 |
+| 打开后停在 Cloudflare 的「Current authentication token is expired」页面 | 手机把很久以前的登录跳转页恢复了出来，里面的一次性凭证已经过期。关掉这个页面，重新从主屏幕图标或网址打开拾句即可。想少遇到登录过期，可以在 Zero Trust → Access → 应用程序 → 这个应用 → 会话持续时间（Session Duration）里调长，比如 1 个月 |
 | 输入邮箱后收不到验证码 | 这个邮箱不在 7.3 的放行名单里 |
 | 上传 Secret 失败，提示名字已被占用（already in use） | `wrangler.jsonc` 的 `vars` 里有和 Secret 同名的变量。删掉同名变量再部署 |
 | AI 报 `User location is not supported` | 见下方「关于执行区域」 |

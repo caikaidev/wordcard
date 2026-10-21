@@ -16,6 +16,26 @@ export class ApiError extends Error {
 /** 请求默认超时：服务端卡住时给出明确提示，而不是让页面一直转圈 */
 const TIMEOUT_MS = 90_000
 
+const RELOGIN_KEY = 'shiju:relogin'
+
+/**
+ * Cloudflare Access 登录过期：整页重新打开当前地址，让 Access 现场生成一个新的登录跳转。
+ * 不能等用户自己去刷新——系统恢复后台页面、重开旧标签时可能带着早已过期的登录链接，
+ * 会落到 Access 的「Current authentication token is expired」错误页。
+ * 30 秒内只跳一次，避免配置有误（比如 AUD 对不上）时无限刷新。
+ */
+export function relogin(): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(RELOGIN_KEY) || 0)
+    if (Date.now() - last < 30_000) return false
+    sessionStorage.setItem(RELOGIN_KEY, String(Date.now()))
+  } catch {
+    // 存储不可用时照样跳转
+  }
+  window.location.reload()
+  return true
+}
+
 async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
   let res: Response
   try {
@@ -23,16 +43,22 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS):
       ...init,
       signal: AbortSignal.timeout(timeoutMs),
       credentials: 'same-origin',
+      // Access 登录过期时会把请求重定向到登录页；不跟随，才能准确认出这种情况
+      redirect: 'manual',
       headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
     })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'TimeoutError') throw new ApiError('等得太久了，请求超时，请重试', 0)
-    // 断网，或 Cloudflare Access 登录过期（请求被重定向到登录页）
-    throw new ApiError(navigator.onLine ? '登录可能已过期，请刷新页面重新登录' : '网络断开了，联网后再试', 0)
+    throw new ApiError(navigator.onLine ? '连不上服务器，请稍后重试' : '网络断开了，联网后再试', 0)
+  }
+  if (res.type === 'opaqueredirect') {
+    relogin()
+    throw new ApiError('登录已过期，正在重新登录…', 401)
   }
   if (res.status === 204) return undefined as T
   const data = await res.json().catch(() => null)
   if (!res.ok) {
+    if ((data as { login?: boolean } | null)?.login && relogin()) throw new ApiError('登录已过期，正在重新登录…', res.status)
     const msg =
       (data as { error?: string } | null)?.error ??
       (res.status === 401 || res.status === 403 ? '登录已失效，请刷新页面' : `请求失败（${res.status}）`)

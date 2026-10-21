@@ -42,6 +42,17 @@ export default function App() {
     refreshStats()
     scroller.current?.scrollTo(0, 0)
   }, [path])
+  // 从后台切回来（手机上常常隔了很久）：顺手拉一次数据，登录过期的话 api 会立刻带去重新登录，
+  // 而不是等用户点了按钮才报错
+  useEffect(() => {
+    let hiddenAt = 0
+    const onVisibility = () => {
+      if (document.hidden) hiddenAt = Date.now()
+      else if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) refreshStats()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   // 整页固定为可视高度：内容区自己滚动，底部 Tab 永远不会盖住按钮
   return (
