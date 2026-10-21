@@ -233,7 +233,7 @@ function Runner({
   const progress = queue.length ? Math.min(pos + (answer ? 1 : 0), queue.length) / queue.length : 1
 
   return (
-    <div className="pt-safe flex min-h-0 flex-1 flex-col">
+    <div className="pt-safe flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex items-center gap-3 px-3 pt-3 md:px-6 md:pt-6">
         <button onClick={leave} aria-label="退出这一关" className="flex h-10 w-10 items-center justify-center rounded-full border-0 bg-transparent text-muted">
           <IconClose size={22} />
@@ -272,9 +272,12 @@ function Runner({
         <Finish stage={stage} result={finished} saving={saving} onBack={onExit} />
       ) : (
         <>
-          {/* 题目区 + 底部固定操作区；反馈条浮在操作区上面，弹出时不改变布局，页面不会跳 */}
-          <div className="relative flex min-h-0 flex-1 flex-col">
-            <div className={`min-h-0 flex-1 overflow-y-auto px-4 pt-5 md:px-6 ${answer ? 'pb-44' : 'pb-4'}`}>
+          {/*
+            题目区 + 底部固定操作区；反馈条浮在操作区上面，弹出时不改变布局。
+            overflow-hidden 必须有：反馈条从屏幕下方滑上来时，没裁掉的部分会让外层页面临时多出一截可滚动高度，iPhone 上整页会跳一下
+          */}
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className={`min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 pt-5 md:px-6 ${answer ? 'pb-44' : 'pb-4'}`}>
               <ExerciseView key={`${pos}-${item.retry}`} ex={item.ex} answered={answer} onSubmit={submit} bindCheck={bindCheck} />
             </div>
             <div className="pb-safe shrink-0 px-4 pt-2 pb-3 md:px-6">
@@ -359,7 +362,7 @@ function Finish({ stage, result, saving, onBack }: { stage: StageId; result: { a
     if (result) sfx.finish()
   }, [result])
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+    <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden px-6 text-center">
       {result && <Confetti />}
       <span className="animate-bounce-in text-6xl">{perfect ? '🏆' : '🎉'}</span>
       <div className="animate-rise text-2xl font-semibold" style={{ animationDelay: '0.1s' }}>
