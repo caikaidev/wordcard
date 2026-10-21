@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { speak, speakFast, stop, prefetch, prefetchCached } from '../audio'
 import { setSfx, sfx, sfxOn } from '../sfx'
@@ -164,6 +164,14 @@ function Runner({
   const item = queue[pos]
   const done = pos >= queue.length
 
+  // 当前题的「检查」：题目组件告诉外层能不能点、点了做什么（按钮本身固定在底部，不随题目进出）
+  const checkRef = useRef<(() => void) | null>(null)
+  const [canCheck, setCanCheck] = useState(false)
+  const bindCheck = useCallback<BindCheck>((fn) => {
+    checkRef.current = fn
+    setCanCheck(!!fn)
+  }, [])
+
   // 听力题的句子提前准备好音频
   useEffect(() => {
     prefetch(initial.flatMap((e) => (e.kind === 'order' ? [e.audio] : e.kind === 'choice' && e.prompt === 'audio' ? [e.text] : [])))
@@ -238,13 +246,16 @@ function Runner({
             style={{ width: `${progress * 100}%` }}
           />
         </div>
-        {combo >= 3 && !done ? (
-          <span key={combo} className="animate-pop text-xs font-semibold whitespace-nowrap text-forgot-fg">
-            🔥 连对 {combo}
-          </span>
-        ) : (
-          item?.retry && !done && <span className="text-xs text-forgot-fg">再来一次</span>
-        )}
+        {/* 固定宽度的位置：「连对 N」「再来一次」出现、消失时进度条长度不变 */}
+        <span className="flex w-[4.5rem] shrink-0 justify-end text-xs whitespace-nowrap text-forgot-fg">
+          {combo >= 3 && !done ? (
+            <span key={combo} className="animate-pop font-semibold">
+              🔥 连对 {combo}
+            </span>
+          ) : (
+            item?.retry && !done && '再来一次'
+          )}
+        </span>
         <button
           onClick={() => {
             setSfx(!sound)
@@ -261,10 +272,30 @@ function Runner({
         <Finish stage={stage} result={finished} saving={saving} onBack={onExit} />
       ) : (
         <>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-5 pb-4 md:px-6">
-            <ExerciseView key={`${pos}-${item.retry}`} ex={item.ex} answered={answer} onSubmit={submit} />
+          {/* 题目区 + 底部固定操作区；反馈条浮在操作区上面，弹出时不改变布局，页面不会跳 */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <div className={`min-h-0 flex-1 overflow-y-auto px-4 pt-5 md:px-6 ${answer ? 'pb-44' : 'pb-4'}`}>
+              <ExerciseView key={`${pos}-${item.retry}`} ex={item.ex} answered={answer} onSubmit={submit} bindCheck={bindCheck} />
+            </div>
+            <div className="pb-safe shrink-0 px-4 pt-2 pb-3 md:px-6">
+              {item.ex.kind === 'match' ? (
+                <div className="flex h-12 items-center justify-center text-[13px] text-muted">先点英文，再点它的意思</div>
+              ) : (
+                <button
+                  onClick={() => checkRef.current?.()}
+                  disabled={!canCheck || !!answer}
+                  className="h-12 w-full rounded-[14px] border-0 bg-accent text-[15px] font-semibold text-on-accent shadow-[0_4px_0_color-mix(in_srgb,var(--accent)_60%,black)] transition-transform active:translate-y-0.5 active:shadow-none disabled:bg-line disabled:text-muted disabled:shadow-none"
+                >
+                  检查
+                </button>
+              )}
+            </div>
+            {answer && (
+              <div className="absolute inset-x-0 bottom-0 z-10">
+                <Feedback ex={item.ex} answer={answer} combo={combo} onNext={next} />
+              </div>
+            )}
           </div>
-          {answer && <Feedback ex={item.ex} answer={answer} combo={combo} onNext={next} />}
         </>
       )}
     </div>
@@ -374,10 +405,13 @@ function Feedback({ ex, answer, combo, onNext }: { ex: Exercise; answer: Answer;
   const right = ex.kind === 'choice' ? ex.answer : ex.kind === 'order' ? ex.audio : ''
   const note = ex.kind === 'choice' ? ex.note : ex.kind === 'order' ? ex.zh : undefined
   const [praise] = useState(() => (combo >= 3 ? `连对 ${combo} 题！` : PRAISE[Math.floor(Math.random() * PRAISE.length)]))
+  // 聚焦「继续」方便回车 / 读屏，但不能让 iOS 为了聚焦去滚动页面
+  const btn = useRef<HTMLButtonElement>(null)
+  useEffect(() => btn.current?.focus({ preventScroll: true }), [])
   return (
     <div
       role="status"
-      className={`pb-safe animate-sheet px-4 pt-4 md:px-6 ${answer.correct ? 'bg-accent-soft' : 'bg-forgot-bg'}`}
+      className={`pb-safe animate-sheet px-4 pt-4 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] md:px-6 ${answer.correct ? 'bg-accent-soft' : 'bg-forgot-bg'}`}
     >
       <div className={`flex items-center gap-2.5 text-[18px] font-bold ${answer.correct ? 'text-accent' : 'text-forgot-fg'}`}>
         <span
@@ -391,8 +425,8 @@ function Feedback({ ex, answer, combo, onNext }: { ex: Exercise; answer: Answer;
       {!answer.correct && right && <div className="mt-1 text-[15px] text-ink">{right}</div>}
       {note && <div className="mt-1 text-[13px] leading-relaxed text-muted-2">{note}</div>}
       <button
+        ref={btn}
         onClick={onNext}
-        autoFocus
         className={`mt-3 mb-3 h-12 w-full rounded-[14px] border-0 text-[15px] font-semibold text-on-accent active:translate-y-0.5 ${
           answer.correct ? 'bg-accent shadow-[0_4px_0_color-mix(in_srgb,var(--accent)_60%,black)]' : 'bg-forgot-fg shadow-[0_4px_0_color-mix(in_srgb,var(--forgot-fg)_60%,black)]'
         }`}
@@ -405,10 +439,12 @@ function Feedback({ ex, answer, combo, onNext }: { ex: Exercise; answer: Answer;
 
 /* ------------------------------ 各题型 ------------------------------ */
 
-function ExerciseView({ ex, answered, onSubmit }: { ex: Exercise; answered: Answer | null; onSubmit: (a: Answer) => void }) {
+type BindCheck = (fn: (() => void) | null) => void
+
+function ExerciseView({ ex, answered, onSubmit, bindCheck }: { ex: Exercise; answered: Answer | null; onSubmit: (a: Answer) => void; bindCheck: BindCheck }) {
   if (ex.kind === 'match') return <MatchView ex={ex} answered={!!answered} onSubmit={onSubmit} />
-  if (ex.kind === 'order') return <OrderView ex={ex} answered={answered} onSubmit={onSubmit} />
-  return <ChoiceView ex={ex} answered={answered} onSubmit={onSubmit} />
+  if (ex.kind === 'order') return <OrderView ex={ex} answered={answered} onSubmit={onSubmit} bindCheck={bindCheck} />
+  return <ChoiceView ex={ex} answered={answered} onSubmit={onSubmit} bindCheck={bindCheck} />
 }
 
 const TITLES: Record<Extract<Exercise, { kind: 'choice' }>['prompt'], string> = {
@@ -435,7 +471,7 @@ function BigSpeaker({ text }: { text: string }) {
   )
 }
 
-function ChoiceView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: 'choice' }>; answered: Answer | null; onSubmit: (a: Answer) => void }) {
+function ChoiceView({ ex, answered, onSubmit, bindCheck }: { ex: Extract<Exercise, { kind: 'choice' }>; answered: Answer | null; onSubmit: (a: Answer) => void; bindCheck: BindCheck }) {
   const [picked, setPicked] = useState<string | null>(null)
   useEffect(() => {
     if (ex.prompt === 'audio') speak(ex.text)
@@ -446,6 +482,8 @@ function ChoiceView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: 
     setPicked(o)
   }
   const check = () => picked && onSubmit({ correct: picked === ex.answer, picked })
+  // 底部的「检查」按钮在外层固定区域里，这里只告诉它现在能不能点、点了做什么
+  useEffect(() => bindCheck(!answered && picked ? check : null))
   // 数字键选项，回车检查
   const ref = useRef({ check, ex, answered })
   ref.current = { check, ex, answered }
@@ -525,22 +563,11 @@ function ChoiceView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: 
           )
         })}
       </div>
-      {!answered && (
-        <div className="mt-auto pt-5">
-          <button
-            onClick={check}
-            disabled={!picked}
-            className="h-12 w-full rounded-[14px] border-0 bg-accent text-[15px] font-semibold text-on-accent shadow-[0_4px_0_color-mix(in_srgb,var(--accent)_60%,black)] transition-transform active:translate-y-0.5 active:shadow-none disabled:bg-line disabled:text-muted disabled:shadow-none"
-          >
-            检查
-          </button>
-        </div>
-      )}
     </div>
   )
 }
 
-function OrderView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: 'order' }>; answered: Answer | null; onSubmit: (a: Answer) => void }) {
+function OrderView({ ex, answered, onSubmit, bindCheck }: { ex: Extract<Exercise, { kind: 'order' }>; answered: Answer | null; onSubmit: (a: Answer) => void; bindCheck: BindCheck }) {
   // 用下标记录选了哪些块（同一个词可能出现两次）
   const [chosen, setChosen] = useState<number[]>([])
   const [hint, setHint] = useState(false)
@@ -548,6 +575,7 @@ function OrderView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: '
     speak(ex.audio)
   }, [ex])
   const check = () => onSubmit({ correct: sameTokens(chosen.map((i) => ex.tiles[i]), ex.answer) })
+  useEffect(() => bindCheck(!answered && chosen.length ? check : null))
   return (
     <div className="flex h-full flex-col">
       <h2 className="m-0 text-xl font-semibold">听句子，把单词排好</h2>
@@ -592,17 +620,6 @@ function OrderView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: '
           )
         })}
       </div>
-      {!answered && (
-        <div className="mt-auto pt-5">
-          <button
-            onClick={check}
-            disabled={!chosen.length}
-            className="h-12 w-full rounded-[14px] border-0 bg-accent text-[15px] font-semibold text-on-accent shadow-[0_4px_0_color-mix(in_srgb,var(--accent)_60%,black)] transition-transform active:translate-y-0.5 active:shadow-none disabled:bg-line disabled:text-muted disabled:shadow-none"
-          >
-            检查
-          </button>
-        </div>
-      )}
     </div>
   )
 }
