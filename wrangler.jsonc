@@ -50,7 +50,10 @@
     // 多用户：普通成员每人每天的额度（管理员只受上面的全站上限约束）；管理员邮箱用 GitHub Secret ADMIN_EMAILS 配置
     "USER_DAILY_TEXT_LIMIT": "60",
     "USER_DAILY_TTS_LIMIT": "15",
-    "AI_DISABLED": "false"
+    "AI_DISABLED": "false",
+    // 外部接口（/api/ext/lessons）限流：每人两次导入至少间隔多少秒、每天最多几次。换令牌也绕不过
+    "EXT_IMPORT_INTERVAL": "180",
+    "EXT_IMPORT_DAILY_LIMIT": "30"
     // Cloudflare Access 的 ACCESS_TEAM_DOMAIN / ACCESS_AUD 通过 GitHub Secrets 提供，不写在这里，
     // 这样 fork 之后不会连到别人的 Access。本地开发用 .dev.vars 里的 AUTH_DISABLED=true。
   },

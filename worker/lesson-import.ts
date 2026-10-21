@@ -5,6 +5,7 @@ import { aiEnv, loadSettings } from './settings'
 import { cleanLesson, generateLesson } from './practice'
 import { cleanQuest } from './quest'
 import { parseLessonImport, type LessonImportReport } from '../shared/lesson-import'
+import { blocked, hit } from './ratelimit'
 import type { Level } from '../shared/practice'
 import type { QuestContent } from '../shared/quest'
 
@@ -102,13 +103,46 @@ tokens.delete('/:id', async (c) => {
 
 /* ------------------------------ 外部接口 /api/ext ------------------------------ */
 
+/* 防护：
+ * - 令牌是 24 字节随机数（猜不出来），库里只存 SHA-256，泄露数据库也拿不到明文
+ * - 同一个 IP 10 分钟内令牌错 10 次，之后 10 分钟内直接拒绝，不再查库
+ * - 请求体最大 1 MB；导入按用户限流（换令牌也绕不过）：两次之间至少隔几分钟、每天有上限，都可以在 wrangler.jsonc 里调
+ */
+const AUTH_FAIL_LIMIT = 10
+const AUTH_FAIL_WINDOW = 10 * 60_000
+const MAX_BODY = 1024 * 1024
+const DAY = 86_400_000
+
+const num = (v: string | undefined, d: number) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
+export const extLimits = (env: Env) => ({
+  /** 两次导入至少间隔多少秒 */
+  interval: Math.max(0, num(env.EXT_IMPORT_INTERVAL, 180)),
+  /** 每人 24 小时内最多导入几次（从第一次调用开始算） */
+  daily: Math.max(1, num(env.EXT_IMPORT_DAILY_LIMIT, 30)),
+})
+
+const tooMany = (c: Parameters<MiddlewareHandler<AppEnv>>[0], retryAfter: number, why: string) => {
+  c.header('retry-after', String(retryAfter))
+  const wait = retryAfter >= 3600 ? `${Math.ceil(retryAfter / 3600)} 小时` : retryAfter >= 60 ? `${Math.ceil(retryAfter / 60)} 分钟` : `${retryAfter} 秒`
+  return c.json({ error: `${why}，${wait}后再试`, retryAfter }, 429)
+}
+
 /** Authorization: Bearer shiju_xxx → 对应的用户；令牌不对一律 401 */
 const requireToken: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const ip = c.req.header('cf-connecting-ip') ?? 'unknown'
+  const failKey = `authfail:${ip}`
+  const wait = await blocked(c.env.DB, failKey, AUTH_FAIL_LIMIT, AUTH_FAIL_WINDOW)
+  if (wait) return tooMany(c, wait, '令牌错误次数太多')
+
+  const fail = async (msg: string) => {
+    await hit(c.env.DB, failKey, AUTH_FAIL_LIMIT, AUTH_FAIL_WINDOW)
+    return c.json({ error: msg }, 401)
+  }
   const m = /^Bearer\s+(shiju_[\w-]{20,64})$/.exec(c.req.header('authorization') ?? '')
-  if (!m) return c.json({ error: '缺少令牌：请求头加上 Authorization: Bearer shiju_…（在设置页「API 令牌」里创建）' }, 401)
+  if (!m) return fail('缺少令牌：请求头加上 Authorization: Bearer shiju_…（在设置页「API 令牌」里创建）')
   const hash = await sha256(m[1])
   const row = await c.env.DB.prepare('SELECT id, user_id FROM api_tokens WHERE hash = ?').bind(hash).first<{ id: number; user_id: string }>()
-  if (!row) return c.json({ error: '令牌无效或已被删除' }, 401)
+  if (!row) return fail('令牌无效或已被删除')
   c.executionCtx.waitUntil(c.env.DB.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').bind(Date.now(), row.id).run())
   c.set('user', row.user_id)
   c.set('admin', isAdminEmail(c.env, row.user_id))
@@ -119,12 +153,39 @@ export const ext = new Hono<AppEnv>()
 
 ext.use('*', requireToken)
 
-/** 测试令牌是否可用 */
-ext.get('/me', (c) => c.json({ email: c.get('user') }))
+/** 测试令牌是否可用；顺便告诉调用方限流规则 */
+ext.get('/me', async (c) => {
+  const r = await hit(c.env.DB, `me:${c.get('user')}`, 30, 60_000)
+  if (!r.ok) return tooMany(c, r.retryAfter, '调用太频繁')
+  const lim = extLimits(c.env)
+  return c.json({ email: c.get('user'), limits: { importIntervalSeconds: lim.interval, importDailyLimit: lim.daily } })
+})
 
 ext.post('/lessons', async (c) => {
-  const body = await c.req.json().catch(() => null)
-  const r = await importLesson(c.env, c.get('user'), c.get('admin'), body, new URL(c.req.url).origin)
+  if (Number(c.req.header('content-length') ?? 0) > MAX_BODY) return c.json({ error: '请求体太大，最多 1 MB' }, 413)
+  const text = await c.req.text()
+  if (text.length > MAX_BODY) return c.json({ error: '请求体太大，最多 1 MB' }, 413)
+  let body: unknown = null
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return c.json({ error: '请求体不是合法的 JSON' }, 400)
+  }
+  // 先检查格式（不花钱、不计次），格式对了再计入限流，调试时传错格式不会被卡住
+  const parsed = parseLessonImport(body)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+
+  const user = c.get('user')
+  const lim = extLimits(c.env)
+  // 先查间隔再计每日次数：被间隔挡下的请求不占每日额度
+  if (lim.interval) {
+    const gap = await hit(c.env.DB, `import:${user}`, 1, lim.interval * 1000)
+    if (!gap.ok) return tooMany(c, gap.retryAfter, `导入太频繁：每 ${lim.interval < 60 ? `${lim.interval} 秒` : `${Math.round(lim.interval / 60)} 分钟`}最多一次`)
+  }
+  const day = await hit(c.env.DB, `import-day:${user}`, lim.daily, DAY)
+  if (!day.ok) return tooMany(c, day.retryAfter, `24 小时内已经导入 ${lim.daily} 次了`)
+
+  const r = await importLesson(c.env, user, c.get('admin'), body, new URL(c.req.url).origin)
   if ('error' in r) return c.json(r, 400)
   return c.json(r, 201)
 })

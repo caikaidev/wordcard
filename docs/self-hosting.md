@@ -124,6 +124,8 @@ Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名�
 4. 保存。Access 按最具体的路径匹配，所以只有 `/api/ext/*` 跳过登录，其它页面和接口照旧要登录。
 5. 测试：`curl https://你的域名/api/ext/me -H "Authorization: Bearer shiju_…"`，返回你的邮箱就对了。
 
+接口自带限流：同一个人两次导入至少隔 3 分钟、24 小时内最多 30 次，同一 IP 试错令牌 10 次会被封 10 分钟。要调整就改 `wrangler.jsonc` 里的 `EXT_IMPORT_INTERVAL`、`EXT_IMPORT_DAILY_LIMIT`。
+
 ### 使用自定义域名（可选）
 
 1. 在 `wrangler.jsonc` 里打开 `routes`，填你的域名（域名需要托管在 Cloudflare），并把 `workers_dev` 改成 `false`。

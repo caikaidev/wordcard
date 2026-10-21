@@ -51,6 +51,9 @@ export interface Env {
   /** 可选：Reddit 应用（script 类型）的 client id / secret。不配的话从云服务器读 Reddit 经常被拒 */
   REDDIT_CLIENT_ID?: string
   REDDIT_CLIENT_SECRET?: string
+  /** 外部接口导入练习：两次之间至少间隔多少秒（默认 180）、每人每天最多几次（默认 30） */
+  EXT_IMPORT_INTERVAL?: string
+  EXT_IMPORT_DAILY_LIMIT?: string
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }
