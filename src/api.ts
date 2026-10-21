@@ -118,7 +118,7 @@ export const api = {
   pushKey: () => req<{ key: string | null }>('/push/key'),
   pushSubscribe: (sub: PushSubscriptionJSON) => req<void>('/push/subscribe', { method: 'POST', body: json(sub) }),
   pushUnsubscribe: (endpoint: string) => req<void>('/push/unsubscribe', { method: 'POST', body: json({ endpoint }) }),
-  pushTest: () => req<{ sent: number }>('/push/test', { method: 'POST' }, 30_000),
+  pushTest: () => req<{ sent: number; failed?: number; note?: string }>('/push/test', { method: 'POST' }, 30_000),
   remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, 40_000),
 }
 
