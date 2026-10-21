@@ -409,6 +409,7 @@ practice.delete('/lessons/:id', async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare('DELETE FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user),
     c.env.DB.prepare('DELETE FROM lesson_cards WHERE lesson_id = ? AND user_id = ?').bind(id, user),
+    c.env.DB.prepare('DELETE FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user),
     c.env.DB.prepare('DELETE FROM lessons WHERE id = ? AND user_id = ?').bind(id, user),
   ])
   return c.body(null, 204)

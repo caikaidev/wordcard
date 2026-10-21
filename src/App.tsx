@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, lessonIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
+import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Confirmer, Toaster } from './components/ui'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
@@ -15,6 +15,7 @@ import Reader from './pages/Reader'
 import Weekly from './pages/Weekly'
 import Discover from './pages/Discover'
 import Level from './pages/Level'
+import QuestPage from './pages/Quest'
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -35,7 +36,7 @@ export default function App() {
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
-    path !== '/add' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
+    path !== '/add' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
   )
   useEffect(() => {
     refreshStats()
@@ -52,7 +53,7 @@ export default function App() {
       <main
         key={refreshKey}
         // 复习页锁定为一屏高：卡片内部滚动，评分按钮始终可见；其他页面正常整页滚动
-        className={`mx-auto flex w-full max-w-[640px] flex-col ${path === '/' ? 'h-full' : 'min-h-full'}`}
+        className={`mx-auto flex w-full max-w-[640px] flex-col ${path === '/' || pathIdOf(path) !== null ? 'h-full' : 'min-h-full'}`}
         style={ptr.pull ? { transform: `translateY(${ptr.pull * 0.6}px)` } : { transition: 'transform 0.2s' }}
       >
         {path === '/' && <Review />}
@@ -62,6 +63,7 @@ export default function App() {
         {path === '/weekly' && <Weekly />}
         {path === '/discover' && <Discover />}
         {path === '/level' && <Level />}
+        {pathIdOf(path) !== null && <QuestPage id={pathIdOf(path)!} />}
         {path === '/settings' && <Settings />}
         {path === '/practice' && <Practice />}
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
@@ -70,7 +72,7 @@ export default function App() {
       </main>
       </div>
       </div>
-      {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
     </div>
@@ -83,7 +85,7 @@ function MobileTabBar({ path }: { path: Path }) {
     <>
       <nav className="pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-bg px-3 pt-1 md:hidden">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null))
           return (
             <Link
               key={t.to}
@@ -113,7 +115,7 @@ function DesktopHeader({ path }: { path: Path }) {
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null))
           return (
             <Link
               key={t.to}

@@ -13,6 +13,7 @@ import { checkInAfterReview, streakStatus } from './streak'
 import { push, sendReminders } from './push'
 import { autoDiscover, discover } from './discover'
 import { level } from './level'
+import { quest } from './quest'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -520,6 +521,7 @@ app.route('/practice', practice)
 app.route('/push', push)
 app.route('/discover', discover)
 app.route('/level', level)
+app.route('/quest', quest)
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 

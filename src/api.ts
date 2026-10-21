@@ -3,6 +3,7 @@ import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../
 import type { CheckinEvent, StreakStatus } from '../shared/streak'
 import type { Discovery, DiscoverReport } from '../shared/discover'
 import type { LevelStatus, TestResult } from '../shared/level'
+import type { Quest, QuestProgress, StageId } from '../shared/quest'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -99,6 +100,9 @@ export const api = {
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
   streak: () => req<StreakStatus>('/streak'),
+  quest: (lessonId: number) => req<Quest>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
+  passStage: (lessonId: number, stage: StageId, accuracy: number) =>
+    req<{ progress: QuestProgress; gained: number; checkin: CheckinEvent | null }>(`/quest/${lessonId}/stages/${stage}`, { method: 'POST', body: json({ accuracy }) }),
   level: () => req<LevelStatus>('/level'),
   startLevelTest: () => req<{ id: number; words: string[] }>('/level/test', { method: 'POST' }, 60_000),
   submitLevelTest: (id: number, known: string[]) => req<TestResult>(`/level/test/${id}`, { method: 'POST', body: json({ known }) }),
