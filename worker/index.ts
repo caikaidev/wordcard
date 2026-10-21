@@ -14,6 +14,7 @@ import { push, sendReminders } from './push'
 import { autoDiscover, discover } from './discover'
 import { level } from './level'
 import { quest } from './quest'
+import { ext, importLesson, tokens } from './lesson-import'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -61,7 +62,9 @@ type Ctx = Context<AppEnv>
 const who = (c: Ctx) => ({ user: c.get('user'), admin: c.get('admin') })
 const ai = (c: Ctx) => aiEnv(c.env, c.get('user'), c.get('admin'))
 
-app.use('*', requireAccess)
+// /api/ext/* 给脚本和 AI 助手用，用个人令牌鉴权（见 lesson-import.ts），其余接口都要 Cloudflare Access 登录
+app.use('*', (c, next) => (c.req.path.startsWith('/api/ext/') ? next() : requireAccess(c, next)))
+app.route('/ext', ext)
 
 app.onError((err, c) => {
   if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
@@ -522,6 +525,15 @@ app.route('/push', push)
 app.route('/discover', discover)
 app.route('/level', level)
 app.route('/quest', quest)
+app.route('/tokens', tokens)
+
+/** 页面上传练习 JSON */
+app.post('/lessons/import', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const r = await importLesson(c.env, c.get('user'), c.get('admin'), body, new URL(c.req.url).origin)
+  if ('error' in r) return c.json(r, 400)
+  return c.json(r, 201)
+})
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 

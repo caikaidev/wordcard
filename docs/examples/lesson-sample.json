@@ -1,0 +1,150 @@
+{
+  "format": "shiju-lesson-v1",
+  "title": "Why the real bottleneck is organizational",
+  "source_url": "https://news.ycombinator.com/item?id=1",
+  "level": 2,
+  "text": "I think the real bottleneck here is organizational, not technical. Teams keep reinventing the wheel because nobody wants to own the tedious migration work. The overhead of maintaining two codebases is a real burden, and the tradeoff is rarely obvious. Measure first, then fix the bottleneck.",
+  "lesson": {
+    "summary": "Most engineering slowdowns come from how teams are organized, not from technology.",
+    "fit": "ok",
+    "fitNote": "话题贴近工作，句子不长，适合进阶档。",
+    "words": [
+      {
+        "word": "bottleneck",
+        "ipa": "/ˈbɑːtlnek/",
+        "meaning": "瓶颈",
+        "quote": "I think the real bottleneck here is organizational, not technical."
+      },
+      {
+        "word": "tedious",
+        "ipa": "/ˈtiːdiəs/",
+        "meaning": "繁琐乏味的",
+        "quote": "Nobody wants to own the tedious migration work."
+      },
+      {
+        "word": "overhead",
+        "ipa": "/ˈoʊvərhed/",
+        "meaning": "额外开销",
+        "quote": "The overhead of maintaining two codebases is a real burden."
+      }
+    ],
+    "expressions": [
+      {
+        "pattern": "The real ... is ..., not ...",
+        "meaning": "指出问题的真正所在",
+        "example": "The real problem is communication, not the deadline."
+      }
+    ],
+    "tasks": [
+      {
+        "goal": "讲清楚",
+        "prompt": "用一句话说文章的核心观点",
+        "template": "The author argues that ..."
+      },
+      {
+        "goal": "有观点",
+        "prompt": "你同意吗？为什么",
+        "template": "I agree / disagree because ..."
+      },
+      {
+        "goal": "连到自己",
+        "prompt": "你的团队遇到过类似的瓶颈吗",
+        "template": "In my team, ..."
+      }
+    ],
+    "speaking": [
+      {
+        "question": "What is the biggest bottleneck in your current project?",
+        "hint": "先说是什么，再说为什么、打算怎么解决"
+      }
+    ]
+  },
+  "quest": {
+    "words": [
+      {
+        "en": "bottleneck",
+        "zh": "瓶颈",
+        "distractors": [
+          "捷径",
+          "里程碑",
+          "副作用"
+        ]
+      },
+      {
+        "en": "tedious",
+        "zh": "繁琐乏味的",
+        "distractors": [
+          "紧急的",
+          "精细的",
+          "危险的"
+        ]
+      },
+      {
+        "en": "overhead",
+        "zh": "额外开销",
+        "distractors": [
+          "头顶空间",
+          "管理层",
+          "超时"
+        ]
+      }
+    ],
+    "listening": [
+      {
+        "en": "The real bottleneck is organizational, not technical.",
+        "zh": "真正的瓶颈在组织上，而不在技术上。",
+        "distractors": [
+          "真正的技术问题已经解决了。",
+          "组织调整带来了新技术。",
+          "技术瓶颈比组织问题更严重。"
+        ],
+        "extra": [
+          "budget",
+          "quickly"
+        ]
+      },
+      {
+        "en": "Measure first, then fix the bottleneck.",
+        "zh": "先测量，再解决瓶颈。",
+        "distractors": [
+          "先修好，再去测量。",
+          "测量本身就是瓶颈。",
+          "瓶颈不需要修。"
+        ],
+        "extra": [
+          "always",
+          "never"
+        ]
+      }
+    ],
+    "cloze": [
+      {
+        "sentence": "Nobody wants to own the ____ migration work.",
+        "answer": "tedious",
+        "distractors": [
+          "curious",
+          "generous",
+          "famous"
+        ],
+        "zh": "没人愿意负责那些繁琐的迁移工作。"
+      }
+    ],
+    "reading": [
+      {
+        "passage": "I think the real bottleneck here is organizational, not technical. Teams keep reinventing the wheel because nobody wants to own the tedious migration work.",
+        "questions": [
+          {
+            "question": "作者认为真正的瓶颈是什么？",
+            "answer": "组织层面的问题",
+            "distractors": [
+              "技术不够先进",
+              "预算不足",
+              "人手太多"
+            ],
+            "explain": "原文说 the real bottleneck is organizational, not technical。"
+          }
+        ]
+      }
+    ]
+  }
+}

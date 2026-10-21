@@ -4,6 +4,7 @@ import type { CheckinEvent, StreakStatus } from '../shared/streak'
 import type { Discovery, DiscoverReport } from '../shared/discover'
 import type { LevelStatus, TestResult } from '../shared/level'
 import type { Quest, QuestProgress, StageId } from '../shared/quest'
+import type { LessonImportReport } from '../shared/lesson-import'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -100,6 +101,10 @@ export const api = {
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
   streak: () => req<StreakStatus>('/streak'),
+  importLesson: (body: unknown) => req<LessonImportReport>('/lessons/import', { method: 'POST', body: json(body) }, 180_000),
+  tokens: () => req<{ tokens: ApiToken[] }>('/tokens'),
+  createToken: (name: string) => req<{ id: number; name: string; token: string }>('/tokens', { method: 'POST', body: json({ name }) }),
+  deleteToken: (id: number) => req<void>(`/tokens/${id}`, { method: 'DELETE' }),
   quest: (lessonId: number) => req<Quest>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
   passStage: (lessonId: number, stage: StageId, accuracy: number) =>
     req<{ progress: QuestProgress; gained: number; checkin: CheckinEvent | null }>(`/quest/${lessonId}/stages/${stage}`, { method: 'POST', body: json({ accuracy }) }),
@@ -133,3 +138,5 @@ export type UsageReport = {
 export type ImportReport = { packageId: number; added: number; skipped: number; invalid: string[] }
 
 export type Me = { email: string; admin: boolean }
+
+export type ApiToken = { id: number; name: string; prefix: string; created_at: number; last_used_at: number | null }

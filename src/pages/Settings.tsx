@@ -1,15 +1,16 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { api, type Me } from '../api'
+import { api, type ApiToken, type Me } from '../api'
 import { speak } from '../audio'
 import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
 import type { LevelStatus } from '../../shared/level'
+import { LESSON_DOC_URL } from '../../shared/lesson-import'
 import { disablePush, enablePush, pushState, type PushState } from '../push'
 import { Link } from '../router'
 import StorageCard from '../components/StorageCard'
 import CostCard from '../components/CostCard'
-import { MerriamWebsterLogo, errMsg, toast } from '../components/ui'
+import { MerriamWebsterLogo, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconBack, IconCheck, IconPlay, IconSparkle } from '../components/icons'
 
 export default function Settings() {
@@ -303,6 +304,10 @@ export default function Settings() {
         </>
       )}
 
+      <Section title="API 令牌" desc="让脚本、快捷指令或 AI 助手按 shiju-lesson-v1 格式把文章（和整理好的练习、闯关题）直接传进来">
+        <ApiTokens />
+      </Section>
+
       <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">词典来源</div>
       <section className="mx-4 mt-2.5 flex items-center gap-4 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6">
         <MerriamWebsterLogo size={50} />
@@ -324,6 +329,117 @@ export default function Settings() {
 
       {me?.admin && <div className="mt-6 px-4 text-[13px] font-semibold text-ink md:px-6">存储</div>}
       {me?.admin && <StorageCard />}
+    </div>
+  )
+}
+
+/** 个人令牌：明文只在创建时显示一次 */
+function ApiTokens() {
+  const [list, setList] = useState<ApiToken[] | null>(null)
+  const [name, setName] = useState('')
+  const [created, setCreated] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () =>
+    api
+      .tokens()
+      .then((r) => setList(r.tokens))
+      .catch((e) => toast(errMsg(e), 'error'))
+  useEffect(() => {
+    load()
+  }, [])
+  const create = async () => {
+    setBusy(true)
+    try {
+      const r = await api.createToken(name.trim() || '未命名')
+      setCreated(r.token)
+      setName('')
+      load()
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const remove = async (t: ApiToken) => {
+    if (!(await confirmDialog(`删除令牌「${t.name}」？用它的脚本会立刻失效。`, { ok: '删除', danger: true }))) return
+    try {
+      await api.deleteToken(t.id)
+      load()
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    }
+  }
+  const curl = created
+    ? `curl -X POST ${location.origin}/api/ext/lessons \\\n  -H "Authorization: Bearer ${created}" \\\n  -H "Content-Type: application/json" \\\n  -d @lesson.json`
+    : ''
+  const copy = (text: string) =>
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast('已复制'))
+      .catch(() => toast('复制失败，长按手动复制', 'error'))
+  return (
+    <div className="flex flex-col gap-2.5">
+      {created && (
+        <div className="animate-rise rounded-2xl border border-accent bg-surface p-4">
+          <div className="text-[13px] font-semibold text-ink">令牌已创建，只显示这一次，请现在保存</div>
+          <div className="mt-2 flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-lg bg-chip px-2.5 py-2 text-[12px] text-ink">{created}</code>
+            <button onClick={() => copy(created)} className="h-9 shrink-0 rounded-xl border border-line bg-transparent px-3 text-[13px] text-ink">
+              复制
+            </button>
+          </div>
+          <div className="mt-3 text-xs text-muted">调用示例（lesson.json 的格式见文档）：</div>
+          <pre className="mt-1 overflow-x-auto rounded-lg bg-chip p-2.5 text-[11px] leading-relaxed text-ink">{curl}</pre>
+          <div className="mt-2 flex items-center gap-3 text-xs">
+            <button onClick={() => copy(curl)} className="border-0 bg-transparent p-0 text-accent">
+              复制命令
+            </button>
+            <a href={LESSON_DOC_URL} target="_blank" rel="noreferrer" className="text-accent">
+              格式文档
+            </a>
+            <span className="flex-1" />
+            <button onClick={() => setCreated(null)} className="border-0 bg-transparent p-0 text-muted">
+              我已保存
+            </button>
+          </div>
+          <p className="mt-2 mb-0 text-xs leading-relaxed text-muted">从外部调用前，需要在 Cloudflare Access 里给 /api/ext 放行，步骤见部署文档。</p>
+        </div>
+      )}
+      {list && list.length > 0 && (
+        <div className="overflow-hidden rounded-2xl border border-line-soft bg-surface">
+          {list.map((t, i) => (
+            <div key={t.id} className={`flex items-center gap-3 px-4 py-2.5 ${i ? 'border-t border-solid border-line-soft' : ''}`}>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-[14px] text-ink">{t.name}</span>
+                <span className="truncate text-xs text-muted">
+                  {t.prefix}… · {t.last_used_at ? `最近使用 ${new Date(t.last_used_at).toLocaleDateString('zh-CN')}` : '还没用过'}
+                </span>
+              </span>
+              <button onClick={() => remove(t)} className="h-8 rounded-lg border border-line bg-transparent px-2.5 text-xs text-muted">
+                删除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          create()
+        }}
+      >
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value.slice(0, 40))}
+          placeholder="令牌名称，如「快捷指令」"
+          aria-label="令牌名称"
+          className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3.5 text-[14px] text-ink outline-none placeholder:text-faint focus:border-muted"
+        />
+        <button type="submit" disabled={busy} className="h-11 rounded-xl border-0 bg-invert-bg px-4 text-sm text-invert-fg disabled:opacity-40">
+          创建令牌
+        </button>
+      </form>
     </div>
   )
 }

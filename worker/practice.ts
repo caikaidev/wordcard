@@ -103,7 +103,7 @@ ${LEVEL_RULES[level].task}
 ${source}`
 }
 
-function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
+export function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
   const str = (v: unknown, max = 1000) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
   const arr = <T,>(v: unknown, n: number) => (Array.isArray(v) ? (v.slice(0, n) as T[]) : [])
   const tasks = arr<LessonContent['tasks'][number]>(r.tasks, 3).map((t, i) => ({
@@ -134,6 +134,20 @@ function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
       hint: str(q?.hint, 300),
     })),
   }
+}
+
+/** 根据原文（和截图）让 AI 出一份练习 */
+export async function generateLesson(ai: Env, profile: string, level: Level, source: string, images: { mime: string; data: string }[] = []) {
+  const prompt = lessonPrompt(
+    profile,
+    level,
+    images.length
+      ? `${source ? source.slice(0, MAX_ARTICLE_CHARS) + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）`
+      : source.slice(0, MAX_ARTICLE_CHARS),
+  )
+  const parts: GeminiPart[] = [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mime, data: i.data } }))]
+  const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
+  return cleanLesson(raw, level)
 }
 
 practice.post('/lessons', async (c) => {
@@ -172,19 +186,7 @@ practice.post('/lessons', async (c) => {
   if (!source && !images.length) return c.json({ error: '请提供链接、正文或截图' }, 400)
   if (url && !sourceUrl) sourceUrl = url
 
-  const prompt = lessonPrompt(
-    settings.coachProfile,
-    level,
-    images.length
-      ? `${source ? source.slice(0, MAX_ARTICLE_CHARS) + '\n\n' : ''}（文章内容见附上的 ${images.length} 张截图，请先读出其中的英文正文）`
-      : source.slice(0, MAX_ARTICLE_CHARS),
-  )
-  const parts: GeminiPart[] = [
-    { text: prompt },
-    ...images.map((i) => ({ inlineData: { mimeType: i.mime as string, data: i.data as string } })),
-  ]
-  const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
-  const content = cleanLesson(raw, level)
+  const content = await generateLesson(ai, settings.coachProfile, level, source, images as { mime: string; data: string }[])
   if (fetchedTitle && (!content.title || content.title === 'Untitled')) content.title = fetchedTitle
 
   const row = await c.env.DB.prepare(

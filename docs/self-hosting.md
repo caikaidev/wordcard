@@ -114,6 +114,16 @@ Secret 只存在 GitHub 和 Cloudflare 里，不会出现在代码、构建产�
 
 Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名、签发方和 AUD）。就算有人绕过登录页直接请求接口，也拿不到数据，也刷不了你的 AI 额度。
 
+### 7.5 给外部接口放行（可选）
+
+想让脚本、快捷指令或 AI 助手通过接口导入练习（[`shiju-lesson-v1`](lesson-format.md)）时才需要。外部请求没有 Access 登录，要单独给 `/api/ext` 这个路径放行；Worker 自己会校验个人令牌（设置页「API 令牌」里创建），没有令牌照样拿不到数据。
+
+1. Zero Trust → Access → 应用程序 → **添加应用程序** → **自托管**（Self-hosted）。
+2. 域名填和 7.2 一样的地址（`wordcard.<你的子域>.workers.dev` 或自定义域名），**路径**填 `api/ext`。
+3. 策略：操作选 **Bypass**，包含（Include）选 **Everyone**。
+4. 保存。Access 按最具体的路径匹配，所以只有 `/api/ext/*` 跳过登录，其它页面和接口照旧要登录。
+5. 测试：`curl https://你的域名/api/ext/me -H "Authorization: Bearer shiju_…"`，返回你的邮箱就对了。
+
 ### 使用自定义域名（可选）
 
 1. 在 `wrangler.jsonc` 里打开 `routes`，填你的域名（域名需要托管在 Cloudflare），并把 `workers_dev` 改成 `false`。

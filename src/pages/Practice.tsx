@@ -7,6 +7,7 @@ import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, Ic
 import { ShareSheet } from '../components/ShareSheet'
 import PackagePractice from '../components/PackagePractice'
 import { StreakDetail } from '../components/Streak'
+import { LESSON_DOC_URL } from '../../shared/lesson-import'
 import type { PackageInfo } from '../../shared/types'
 
 type Source = 'url' | 'text' | 'image'
@@ -55,7 +56,10 @@ export default function Practice() {
         </>
       )}
 
-      <h2 className="mt-6 mb-1 text-[13px] font-semibold">最近的练习</h2>
+      <div className="mt-6 mb-1 flex items-baseline justify-between">
+        <h2 className="m-0 text-[13px] font-semibold">最近的练习</h2>
+        <ImportLessonButton />
+      </div>
       {!lessons ? (
         <div className="mt-2 h-32 animate-shimmer rounded-2xl bg-surface" />
       ) : lessons.length === 0 ? (
@@ -167,6 +171,52 @@ function Progress({ passed, submitted }: { passed: number; submitted: number }) 
         />
       ))}
     </div>
+  )
+}
+
+/* ---------------------------- 导入练习 ---------------------------- */
+
+/** 导入按 shiju-lesson-v1 整理好的练习（可以带闯关题库），带了题库直接进闯关 */
+function ImportLessonButton() {
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const onFile = async (f: File | undefined) => {
+    if (!f) return
+    setBusy(true)
+    try {
+      let body: unknown
+      try {
+        body = JSON.parse(await f.text())
+      } catch {
+        throw new Error('文件不是合法的 JSON')
+      }
+      const r = await api.importLesson(body)
+      toast(
+        `已导入「${r.title}」${r.generatedLesson ? '，练习内容由 AI 补全' : ''}${r.dropped ? `，${r.dropped} 道不完整的题被跳过` : ''}`,
+        'success',
+      )
+      navigate(r.hasQuest ? `/practice/${r.id}/path` : `/practice/${r.id}`)
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setBusy(false)
+      if (input.current) input.current.value = ''
+    }
+  }
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      <a href={LESSON_DOC_URL} target="_blank" rel="noreferrer" className="text-muted">
+        格式说明
+      </a>
+      <button
+        onClick={() => input.current?.click()}
+        disabled={busy}
+        className="border-0 bg-transparent p-0 text-xs font-medium text-accent disabled:opacity-50"
+      >
+        {busy ? '导入中…' : '＋ 导入 JSON'}
+      </button>
+      <input ref={input} type="file" accept="application/json,.json" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+    </span>
   )
 }
 
