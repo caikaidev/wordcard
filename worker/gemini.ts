@@ -420,6 +420,29 @@ ${list}
 
 /* ------------------------------ 语音 ------------------------------ */
 
+/** R2 里缓存语音用的 key：同一个模型、音色、语速、文本永远对应同一个 key */
+export async function ttsKey(env: Env, text: string, slow: boolean) {
+  // v2：旧缓存里的音频带了朗读说明前缀，换个 key 让它们失效
+  const keySource = `v2|${env.GEMINI_TTS_MODEL}|${env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keySource))
+  return `tts/${[...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')}.wav`
+}
+
+/** 提前生成并缓存这些句子的语音（已缓存的跳过）；额度用完等出错就停下，不影响主流程 */
+export async function warmTts(env: Env, texts: string[]) {
+  for (const text of texts) {
+    try {
+      const key = await ttsKey(env, text, false)
+      if (await env.AUDIO.head(key)) continue
+      const wav = await tts(env, text, false)
+      await env.AUDIO.put(key, wav, { httpMetadata: { contentType: 'audio/wav' }, customMetadata: { text: text.slice(0, 200) } })
+    } catch (e) {
+      console.warn('warm tts stopped', e)
+      return
+    }
+  }
+}
+
 export async function tts(env: Env, text: string, slow: boolean): Promise<Uint8Array> {
   let audio: { data: string; mimeType: string }
   try {

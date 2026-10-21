@@ -568,6 +568,8 @@ practice.post('/lessons/:id/submit', async (c) => {
     gradeSchema,
     'grade',
     0.3,
+    // 批改规则在提示词里写得很具体，不需要多想；minimal 比 low 快一截，学习者等得更少
+    'minimal',
   )
   const result = cleanGrade(raw)
   const attempt = history.length + 1

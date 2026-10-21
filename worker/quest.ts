@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppEnv } from './env'
-import { generateJson } from './gemini'
+import { generateJson, warmTts } from './gemini'
 import { aiEnv } from './settings'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
@@ -132,8 +132,9 @@ quest.post('/:lessonId', async (c) => {
   }
 
   const content = JSON.parse(lesson.content) as LessonContent
+  const ai = await aiEnv(c.env, user, c.get('admin'))
   const raw = await generateJson<Partial<QuestContent>>(
-    await aiEnv(c.env, user, c.get('admin')),
+    ai,
     questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level),
     questSchema,
     'quest',
@@ -145,6 +146,8 @@ quest.post('/:lessonId', async (c) => {
   await c.env.DB.prepare('INSERT OR REPLACE INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
     .bind(id, user, JSON.stringify(clean), now, now)
     .run()
+  // 听力关的句子在后台先把语音生成好，等走到「听」那一关时直接播
+  c.executionCtx.waitUntil(warmTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500))))
   const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, writeDone }
   return c.json(q)
 })

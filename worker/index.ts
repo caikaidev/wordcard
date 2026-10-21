@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, tts, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { enrich, remix, tts, ttsKey, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
@@ -500,6 +500,8 @@ app.get('/tts', async (c) => {
 
   const cached = await c.env.AUDIO.get(key)
   if (cached) return new Response(cached.body, { headers })
+  // cached=1：只要缓存里现成的，没有就算了（不生成、不占额度），前端改用系统朗读
+  if (c.req.query('cached') === '1') return c.body(null, 204)
 
   const wav = await tts(env, text, slow)
   await c.env.AUDIO.put(key, wav, { httpMetadata: { contentType: 'audio/wav' }, customMetadata: { text: text.slice(0, 200) } })
@@ -614,13 +616,6 @@ app.get('/usage', async (c) => {
 
 /** R2 免费额度：10 GB 存储 */
 const R2_FREE_BYTES = 10 * 1024 ** 3
-
-async function ttsKey(env: Env, text: string, slow: boolean) {
-  // v2：旧缓存里的音频带了朗读说明前缀，换个 key 让它们失效
-  const keySource = `v2|${env.GEMINI_TTS_MODEL}|${env.GEMINI_VOICE}|${slow ? 'slow' : 'normal'}|${text}`
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(keySource))
-  return `tts/${[...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')}.wav`
-}
 
 async function listAudio(bucket: R2Bucket) {
   const objects: { key: string; size: number }[] = []

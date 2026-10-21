@@ -77,6 +77,11 @@
   --animate-flip: flip 0.32s cubic-bezier(0.2, 0.7, 0.2, 1);
   --animate-rise: rise 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) both;
   --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  --animate-pop: pop 0.32s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  --animate-shake: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  --animate-sheet: sheet 0.26s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-bounce-in: bounce-in 0.5s cubic-bezier(0.3, 1.7, 0.5, 1) both;
+  --animate-glow: glow 0.6s ease-out;
 
   @keyframes flip {
     from {
@@ -96,6 +101,69 @@
     to {
       transform: none;
       opacity: 1;
+    }
+  }
+  /* 闯关：选中 / 答对时弹一下 */
+  @keyframes pop {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.06);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  /* 答错时左右晃 */
+  @keyframes shake {
+    10%,
+    90% {
+      transform: translateX(-2px);
+    }
+    20%,
+    80% {
+      transform: translateX(4px);
+    }
+    30%,
+    50%,
+    70% {
+      transform: translateX(-7px);
+    }
+    40%,
+    60% {
+      transform: translateX(7px);
+    }
+  }
+  /* 底部反馈条从下面滑上来 */
+  @keyframes sheet {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: none;
+    }
+  }
+  @keyframes bounce-in {
+    0% {
+      transform: scale(0.3);
+      opacity: 0;
+    }
+    60% {
+      transform: scale(1.12);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  /* 进度条答对时亮一下 */
+  @keyframes glow {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+    }
+    100% {
+      box-shadow: 0 0 0 8px transparent;
     }
   }
   @keyframes shimmer {
@@ -160,5 +228,40 @@ textarea {
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 过关撒花：每片纸屑的方向、距离、旋转由内联变量给出 */
+@keyframes confetti {
+  0% {
+    transform: translate(0, 0) rotate(0);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) rotate(var(--rot));
+    opacity: 0;
+  }
+}
+.confetti-piece {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  animation: confetti 1.3s cubic-bezier(0.15, 0.6, 0.35, 1) forwards;
+}
+
+/* 系统设置了「减少动态效果」就不放动画 */
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    display: none;
+  }
+  .animate-pop,
+  .animate-shake,
+  .animate-sheet,
+  .animate-bounce-in,
+  .animate-glow {
+    animation: none !important;
   }
 }
