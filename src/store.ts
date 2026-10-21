@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { api } from './api'
+import { setBadge } from './push'
 
 /** 全局计数：今日到期、进行中、DONE。任何写操作之后调用 refreshStats() */
 export type Stats = { active: number; done: number; due: number }
@@ -14,7 +15,9 @@ export function setStats(s: Stats) {
 
 export async function refreshStats() {
   try {
-    setStats(await api.stats())
+    const s = await api.stats()
+    setStats(s)
+    setBadge(s.due)
   } catch {
     /* 统计失败不影响主流程 */
   }

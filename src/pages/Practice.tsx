@@ -6,6 +6,7 @@ import { PageTitle, errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
 import PackagePractice from '../components/PackagePractice'
+import { StreakDetail } from '../components/Streak'
 import type { PackageInfo } from '../../shared/types'
 
 type Source = 'url' | 'text' | 'image'
@@ -175,6 +176,7 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
   const [sharing, setSharing] = useState(false)
   if (!stats) return <div className="mt-4 h-[168px] animate-shimmer rounded-2xl bg-surface md:mt-0" />
   const checked = new Set(stats.days)
+  const frozen = new Set(stats.frozen)
   const checkedToday = checked.has(stats.today)
   return (
     <section className="mt-4 rounded-2xl border border-line-soft bg-surface p-4 md:mt-0" aria-label="本月打卡">
@@ -182,7 +184,7 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
         <Stat label="本月打卡" value={stats.checkinDays} target={stats.targets.days} unit="天" />
         <Stat label="完成练习" value={stats.completed} target={stats.targets.completed} unit="次" />
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted">连续</span>
+          <span className="text-xs text-muted">连续{stats.detail.best > stats.streak && ` · 最长 ${stats.detail.best}`}</span>
           <span className="tabular flex items-center gap-1 text-[22px] leading-tight font-semibold">
             <IconFlame size={18} className={stats.streak ? 'text-forgot-fg' : 'text-faint'} />
             {stats.streak}
@@ -196,11 +198,13 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
           <span
             key={d}
             className={`h-2.5 w-2.5 rounded-[3px] ${
-              checked.has(d) ? 'bg-accent' : d === stats.today ? 'border-[1.5px] border-accent' : d < stats.today ? 'bg-line' : 'bg-line-soft'
+              checked.has(d) ? 'bg-accent' : frozen.has(d) ? 'bg-accent-soft' : d === stats.today ? 'border-[1.5px] border-accent' : d < stats.today ? 'bg-line' : 'bg-line-soft'
             }`}
           />
         ))}
       </div>
+
+      <StreakDetail s={stats.detail} />
 
       {checkedToday && (
         <button
@@ -214,7 +218,7 @@ function StatsCard({ stats }: { stats: PracticeStats | null }) {
 
       {stats.missedYesterday && (
         <div className="mt-3 rounded-xl bg-forgot-bg px-3 py-2 text-[13px] text-forgot-fg">
-          昨天没练，今天练一次就不算连断两天。
+          昨天没打卡，今天复习 {stats.detail.goal} 张或练一次，重新开始。
         </div>
       )}
     </section>

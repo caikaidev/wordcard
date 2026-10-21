@@ -9,6 +9,8 @@ import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
 import { costOf } from '../shared/pricing'
 import { parseImport } from '../shared/import'
+import { checkInAfterReview, streakStatus } from './streak'
+import { push, sendReminders } from './push'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
 
@@ -305,7 +307,19 @@ app.post('/review/:id', async (c) => {
     .bind(who(c).user, id, grade, now)
     .run()
     .catch((e) => console.error('log review failed', e))
-  return c.json({ item: toItem(row!) })
+  // 这一张让今天达成了每日目标：告诉前端，好放个小庆祝；打卡失败不影响复习
+  const checkin = await checkInAfterReview(c.env, who(c).user, now).catch((e) => {
+    console.error('checkin failed', e)
+    return null
+  })
+  return c.json({ item: toItem(row!), checkin })
+})
+
+/* ------------------------------ 连续打卡 ------------------------------ */
+
+app.get('/streak', async (c) => {
+  const { chain: _, ...s } = await streakStatus(c.env, who(c).user)
+  return c.json(s)
 })
 
 /* ------------------------------ 每周回顾 ------------------------------ */
@@ -501,6 +515,7 @@ app.put('/settings', async (c) => {
 })
 
 app.route('/practice', practice)
+app.route('/push', push)
 
 /* ------------------------------ 用量与费用预估 ------------------------------ */
 
@@ -645,4 +660,8 @@ app.post('/storage/cleanup', async (c) => {
 
 app.all('*', (c) => c.json({ error: 'Not found' }, 404))
 
-export default app satisfies ExportedHandler<Env>
+export default {
+  fetch: app.fetch,
+  // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送
+  scheduled: (event, env, ctx) => ctx.waitUntil(sendReminders(env, event.scheduledTime)),
+} satisfies ExportedHandler<Env>

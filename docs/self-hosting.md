@@ -71,6 +71,7 @@ npx wrangler r2 bucket create wordcard-audio
 | `ACCESS_AUD` | 第 7 步再填 | 64 位十六进制的 AUD |
 | `ADMIN_EMAILS` | 建议 | 你的登录邮箱，多个用英文逗号隔开。管理员可以改模型、管理语音缓存、查看各成员用量 |
 | `MW_LEARNERS_KEY` / `MW_COLLEGIATE_KEY` | 否 | Merriam-Webster key，二选一或都填 |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | 否 | 每日提醒（推送通知）用的密钥对。本地运行 `node scripts/vapid-keys.mjs`，把输出的两行分别填进来。生成一次就别再换，换了之后已开启提醒的设备要在设置页关掉再打开 |
 
 Secret 只存在 GitHub 和 Cloudflare 里，不会出现在代码、构建产物或前端页面中。
 
@@ -135,6 +136,7 @@ Worker 会校验每个 `/api` 请求上的 Access 登录凭证（JWT 的签名�
 - **手动重新部署**：Actions → Deploy → Run workflow。
 - **邀请别人**：把对方邮箱加进 7.3 的放行名单。每个人的词库、练习和用量相互隔离；每人每天的 AI 额度见 `wrangler.jsonc` 的 `USER_DAILY_*`。
 - **装到手机主屏幕**：手机浏览器打开 → 分享或菜单 → 「添加到主屏幕」。
+- **每日提醒**：配好 `VAPID_*` 两个 Secret 后，在设置页「每日提醒」里打开。iPhone / iPad 要 iOS 16.4 以上，并且必须从主屏幕图标打开拾句才能开启。Worker 每小时整点检查一次（`wrangler.jsonc` 的 `triggers`），到了你设定的钟点、今天还没打卡才推送；有连续天数的，22 点再提醒一次。
 - **备份数据**：`npx wrangler d1 export wordcard --remote --output backup.sql`。
 
 ## 故障排查

@@ -41,6 +41,11 @@ export interface Env {
   PER_MINUTE_LIMIT?: string
   /** 每分钟最多生成几段语音（Gemini TTS 第 1 层级是每分钟 10 次） */
   TTS_PER_MINUTE_LIMIT?: string
+  /** Web Push（每日提醒）的 VAPID 公钥 / 私钥（base64url），用 scripts/vapid-keys.mjs 生成；不配就没有提醒功能 */
+  VAPID_PUBLIC_KEY?: string
+  VAPID_PRIVATE_KEY?: string
+  /** 可选：推送服务联系方式（mailto: 或 https:），默认用第一个管理员邮箱 */
+  VAPID_SUBJECT?: string
   /** 仅本地开发使用："true" 时跳过 Access 校验 */
   AUTH_DISABLED?: string
 }

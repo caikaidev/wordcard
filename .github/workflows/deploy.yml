@@ -63,6 +63,8 @@ jobs:
           ACCESS_AUD: ${{ secrets.ACCESS_AUD }}
           MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
           MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
         run: |
           fail=0
           need() { echo "::error title=缺少 Secret $1::$2（仓库 Settings → Secrets and variables → Actions）。详见 docs/self-hosting.md"; fail=1; }
@@ -84,6 +86,10 @@ jobs:
             echo "$ACCESS_AUD" | grep -Eq '^[0-9a-f]{64}$' || { echo "::error title=ACCESS_AUD 格式不对::应该是 64 位十六进制（Access 应用的 Application Audience Tag）"; fail=1; }
             stage="正式部署"
           fi
+          if [ "${VAPID_PUBLIC_KEY:+1}" != "${VAPID_PRIVATE_KEY:+1}" ]; then
+            echo "::error title=VAPID 配置不完整::VAPID_PUBLIC_KEY 和 VAPID_PRIVATE_KEY 需要同时设置，用 node scripts/vapid-keys.mjs 生成"; fail=1
+          fi
+          [ -n "$VAPID_PUBLIC_KEY" ] || echo "::notice title=未配置 VAPID 密钥（可选）::没有每日提醒（推送通知），其它功能不受影响。需要的话运行 node scripts/vapid-keys.mjs 生成"
           [ -n "$MW_COLLEGIATE_KEY$MW_LEARNERS_KEY" ] || echo "::notice title=未配置 Merriam-Webster key（可选）::英英释义会使用免费的 Free Dictionary API 兜底"
 
           [ "$fail" = 0 ] || exit 1
@@ -121,10 +127,12 @@ jobs:
           MW_LEARNERS_KEY: ${{ secrets.MW_LEARNERS_KEY }}
           MW_COLLEGIATE_KEY: ${{ secrets.MW_COLLEGIATE_KEY }}
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
         run: |
           python3 - <<'PY'
           import json, os
-          names = ["GEMINI_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MW_LEARNERS_KEY", "MW_COLLEGIATE_KEY", "ADMIN_EMAILS"]
+          names = ["GEMINI_API_KEY", "ACCESS_TEAM_DOMAIN", "ACCESS_AUD", "MW_LEARNERS_KEY", "MW_COLLEGIATE_KEY", "ADMIN_EMAILS", "VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY"]
           found = {n: os.environ[n] for n in names if os.environ.get(n)}
           for n in names:
               if n not in found:

@@ -9,6 +9,8 @@ import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, err
 import { useExampleZh } from '../exampleZh'
 import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconShare, IconSparkle } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
+import { StreakChip, celebrate } from '../components/Streak'
+import type { StreakStatus } from '../../shared/streak'
 
 /** 每批张数：到期很多时分批来，先完成一小批，不被总数吓到 */
 const BATCH = 20
@@ -48,6 +50,14 @@ export default function Review() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const stats = useStats()
+  const [streak, setStreak] = useState<StreakStatus | null>(null)
+  const loadStreak = useCallback(() => {
+    api
+      .streak()
+      .then(setStreak)
+      .catch(() => {})
+  }, [])
+  useEffect(loadStreak, [loadStreak])
   // 复习方式读到之前先不出卡片，免得「只产出」模式下第一张先闪一下英文正面
   const [modeSetting, setMode] = useState<ReviewMode | null>(null)
   const mode = modeSetting ?? 'mixed'
@@ -176,7 +186,11 @@ export default function Review() {
     if (!card || busy) return
     setBusy(true)
     try {
-      const { item } = await api.grade(card.id, g)
+      const { item, checkin } = await api.grade(card.id, g)
+      celebrate(checkin)
+      // 本地先把今天的复习数 +1，打卡了再从服务器拉一次准确的
+      if (checkin) loadStreak()
+      else setStreak((s) => (s ? { ...s, reviewsToday: s.reviewsToday + 1 } : s))
       // “忘了”的卡 10 分钟后到期，这里直接放到本轮队尾再来一次；给个反馈，免得看起来像没生效
       if (g === 0) {
         const name = card.text.length > 16 ? `${card.text.slice(0, 16)}…` : card.text // 句子卡很长，提示里只放开头
@@ -264,6 +278,7 @@ export default function Review() {
       </div>
 
       <div className="mt-3.5 flex items-center gap-3 md:mt-0 md:gap-4">
+        <StreakChip s={streak} />
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
@@ -339,7 +354,7 @@ export default function Review() {
             title={reviewed ? '今日完成！' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
             desc={
               reviewed
-                ? `今天复习了 ${reviewed} 张卡片，坚持就是最难的部分，你做到了。想再巩固，可以用「AI 重组」把这些词放进新句子里读一遍。`
+                ? `今天复习了 ${reviewed} 张卡片${streak?.today ? `，连续打卡 ${streak.streak} 天` : ''}，坚持就是最难的部分，你做到了。想再巩固，可以用「AI 重组」把这些词放进新句子里读一遍。`
                 : stats && stats.active + stats.done === 0
                   ? '先添加几个单词或句子，AI 会帮你补全释义和例句。'
                   : '到期的卡片会自动出现在这里。'

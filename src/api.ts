@@ -1,5 +1,6 @@
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
+import type { CheckinEvent, StreakStatus } from '../shared/streak'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -66,7 +67,7 @@ export const api = {
   remove: (id: number) => req<void>(`/items/${id}`, { method: 'DELETE' }),
   define: (id: number) => req<{ item: Item }>(`/items/${id}/define`, { method: 'POST' }),
   review: () => req<{ items: Item[] }>('/review'),
-  grade: (id: number, grade: Grade) => req<{ item: Item }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
+  grade: (id: number, grade: Grade) => req<{ item: Item; checkin: CheckinEvent | null }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType, context?: string) =>
     req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
   lookup: (word: string) => req<{ source: string; senses: { pos: string; def: string }[] }>(`/lookup?word=${encodeURIComponent(word)}`),
@@ -90,11 +91,16 @@ export const api = {
     req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }, 180_000),
   deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),
   submit: (id: number, idx: number, text: string) =>
-    req<{ lesson: Lesson }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
+    req<{ lesson: Lesson; checkin: CheckinEvent | null }>(`/practice/lessons/${id}/submit`, { method: 'POST', body: json({ idx, text }) }),
   storage: () =>
     req<{ count: number; bytes: number; unusedCount: number; unusedBytes: number; limitBytes: number }>('/storage'),
   cleanup: (mode: 'unused' | 'all') =>
     req<{ deleted: number; freedBytes: number }>('/storage/cleanup', { method: 'POST', body: json({ mode }) }),
+  streak: () => req<StreakStatus>('/streak'),
+  pushKey: () => req<{ key: string | null }>('/push/key'),
+  pushSubscribe: (sub: PushSubscriptionJSON) => req<void>('/push/subscribe', { method: 'POST', body: json(sub) }),
+  pushUnsubscribe: (endpoint: string) => req<void>('/push/unsubscribe', { method: 'POST', body: json({ endpoint }) }),
+  pushTest: () => req<{ sent: number }>('/push/test', { method: 'POST' }, 30_000),
   remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, 40_000),
 }
 

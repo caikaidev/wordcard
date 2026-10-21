@@ -6,6 +6,7 @@ import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
 import { Chip, Highlighted, SpeakButton, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconArrowRight, IconBack, IconBook, IconCheck, IconLock, IconPen, IconPlusCircle, IconTrash } from '../components/icons'
+import { celebrate } from '../components/Streak'
 
 const blankMeta = (): CardMeta => ({ ipa: '', pos: '', meaning: '', example: '', exampleZh: '', highlight: '', phrases: [] })
 
@@ -318,6 +319,7 @@ function TaskStep({
     setBusy(true)
     try {
       const r = await api.submit(lesson.id, idx, composed.replace(/\s+/g, ' ').trim())
+      celebrate(r.checkin)
       justGraded.current = true
       setText(composed.replace(/\s+/g, ' ').trim())
       setMode('free')
