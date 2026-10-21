@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { speak, stop, prefetch } from '../audio'
-import { STAGES, buildStage, sameTokens, unlocked, type Exercise, type Quest, type StageId } from '../../shared/quest'
+import { STAGES, STAGE_ICONS, buildStage, routeStatus, sameTokens, unlocked, type Exercise, type Quest, type StageId } from '../../shared/quest'
 import { Link, navigate } from '../router'
 import { celebrate } from '../components/Streak'
 import { SpeakButton, WaitProgress, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconBack, IconCheck, IconClose, IconLock, IconSpeaker } from '../components/icons'
 
-const ICONS: Record<StageId, string> = { words: '📖', listen: '🎧', read: '📄', speak: '🎙️', write: '✍️' }
 
 /** 闯关：一份练习拆成几关，一题一屏 */
 export default function QuestPage({ id }: { id: number }) {
@@ -81,11 +80,11 @@ export default function QuestPage({ id }: { id: number }) {
 
 function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void }) {
   const p = quest.progress
-  const current = STAGES.find((s) => s.id !== 'speak' && unlocked(p, s.id) && !p.stages[s.id])?.id
+  const current = routeStatus(p, quest.writeDone).next
   return (
     <div className="relative mt-8 flex flex-col items-center gap-7 pb-6">
       {STAGES.map((s, i) => {
-        const done = !!p.stages[s.id]
+        const done = s.id === 'write' ? quest.writeDone : !!p.stages[s.id]
         const open = unlocked(p, s.id)
         const isCurrent = s.id === current
         const best = p.stages[s.id]?.accuracy
@@ -110,7 +109,7 @@ function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void })
                     : 'bg-line-soft opacity-70 shadow-[0_6px_0_var(--line)]'
               }`}
             >
-              {open || done ? <span aria-hidden>{ICONS[s.id]}</span> : <IconLock size={26} className="text-faint" />}
+              {open || done ? <span aria-hidden>{STAGE_ICONS[s.id]}</span> : <IconLock size={26} className="text-faint" />}
               {done && (
                 <span className="absolute -right-1 -bottom-1 flex h-6 w-6 items-center justify-center rounded-full bg-surface text-accent shadow-card">
                   <IconCheck size={14} />

@@ -121,11 +121,13 @@ quest.post('/:lessonId', async (c) => {
     .first<{ title: string; level: number; content: string; source_text: string | null }>()
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
 
-  const row = await c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?')
-    .bind(id, user)
-    .first<{ content: string; progress: string }>()
+  const [row, written] = await Promise.all([
+    c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ content: string; progress: string }>(),
+    c.env.DB.prepare('SELECT COUNT(DISTINCT idx) AS n FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ n: number }>(),
+  ])
+  const writeDone = (written?.n ?? 0) >= 3
   if (row) {
-    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress) }
+    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress), writeDone }
     return c.json(q)
   }
 
@@ -143,7 +145,7 @@ quest.post('/:lessonId', async (c) => {
   await c.env.DB.prepare('INSERT OR REPLACE INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
     .bind(id, user, JSON.stringify(clean), now, now)
     .run()
-  const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 } }
+  const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, writeDone }
   return c.json(q)
 })
 

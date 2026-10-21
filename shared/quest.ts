@@ -26,6 +26,8 @@ export interface Quest {
   title: string
   content: QuestContent
   progress: QuestProgress
+  /** 「写」：3 句都至少提交过一次 */
+  writeDone: boolean
 }
 
 export const STAGES = [
@@ -147,4 +149,15 @@ export function unlocked(p: QuestProgress, stage: StageId) {
   const order = STAGES.map((s) => s.id).filter((id) => id !== 'speak')
   const i = order.indexOf(stage)
   return i <= 0 || !!p.stages[order[i - 1]]
+}
+
+export const STAGE_ICONS: Record<StageId, string> = { words: '📖', listen: '🎧', read: '📄', speak: '🎙️', write: '✍️' }
+
+/** 路线上算进度的关卡（「说」还没做，不算） */
+export const ROUTE: StageId[] = ['words', 'listen', 'read', 'write']
+
+/** 走到哪了：过了几关、下一关是哪关（全过了是 null） */
+export function routeStatus(p: QuestProgress, writeDone: boolean) {
+  const isDone = (id: StageId) => (id === 'write' ? writeDone : !!p.stages[id])
+  return { done: ROUTE.filter(isDone).length, total: ROUTE.length, next: ROUTE.find((id) => !isDone(id)) ?? null }
 }
