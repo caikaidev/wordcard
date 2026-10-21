@@ -115,10 +115,12 @@ export function PullIndicator({ pull, refreshing, ready }: { pull: number; refre
   )
 }
 
-/** 线上有新版本（入口脚本的 hash 变了）就返回 true */
+/** 线上有新版本（入口脚本的 hash 变了），或登录已过期需要整页重新登录，就返回 true */
 export async function hasNewVersion() {
   try {
-    const html = await (await fetch('/', { cache: 'no-store', credentials: 'same-origin' })).text()
+    const res = await fetch('/', { cache: 'no-store', credentials: 'same-origin', redirect: 'manual' })
+    if (res.type === 'opaqueredirect') return true
+    const html = await res.text()
     const latest = /\/assets\/index-[\w-]+\.js/.exec(html)?.[0]
     const current = [...document.scripts].map((s) => s.src).find((s) => s.includes('/assets/index-'))
     return !!latest && !!current && !current.endsWith(latest)

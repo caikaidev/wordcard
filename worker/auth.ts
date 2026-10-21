@@ -31,7 +31,7 @@ export const requireAccess: MiddlewareHandler<AppEnv> = async (c, next) => {
   const token =
     c.req.header('cf-access-jwt-assertion') ??
     c.req.header('cookie')?.match(/(?:^|;\s*)CF_Authorization=([^;]+)/)?.[1]
-  if (!token) return c.json({ error: '未登录' }, 401)
+  if (!token) return c.json({ error: '未登录', login: true }, 401)
 
   let jwks = jwksCache.get(team)
   if (!jwks) {
@@ -43,7 +43,7 @@ export const requireAccess: MiddlewareHandler<AppEnv> = async (c, next) => {
     const { payload } = await jwtVerify(token, jwks, { issuer: `https://${team}`, audience: aud })
     email = typeof payload.email === 'string' ? payload.email : ''
   } catch {
-    return c.json({ error: '登录已失效，请刷新页面' }, 403)
+    return c.json({ error: '登录已失效，请刷新页面', login: true }, 403)
   }
   if (!email) return c.json({ error: '登录信息里没有邮箱，请联系管理员' }, 403)
   return withUser(c, email, next)
