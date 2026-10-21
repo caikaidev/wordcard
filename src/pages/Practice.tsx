@@ -8,6 +8,7 @@ import { ShareSheet } from '../components/ShareSheet'
 import PackagePractice from '../components/PackagePractice'
 import { StreakDetail } from '../components/Streak'
 import { LESSON_DOC_URL } from '../../shared/lesson-import'
+import { STAGES, STAGE_ICONS, routeStatus } from '../../shared/quest'
 import type { PackageInfo } from '../../shared/types'
 
 type Source = 'url' | 'text' | 'image'
@@ -42,6 +43,7 @@ export default function Practice() {
         <PageTitle eyebrow="英语教练" title="练习" />
       </div>
       <StatsCard stats={stats} />
+      {lessons && <ContinueQuest lessons={lessons} />}
       <Composer onSaved={loadSaved} />
       {saved.length > 0 && <SavedList items={saved} onChange={setSaved} />}
       {packages.length > 0 && (
@@ -71,7 +73,8 @@ export default function Practice() {
           {lessons.map((l, i) => (
             <Link
               key={l.id}
-              to={`/practice/${l.id}`}
+              // 闯过关的直接进关卡路线（路线页左上角能回练习详情），没闯过的进练习详情
+              to={l.quest ? `/practice/${l.id}/path` : `/practice/${l.id}`}
               className={`flex items-center gap-3 px-4 py-3.5 text-ink no-underline ${i ? 'border-t border-line-soft' : ''}`}
             >
               <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -82,7 +85,7 @@ export default function Practice() {
                   <span>{LEVELS[l.level - 1]?.short}</span>
                 </div>
               </div>
-              <Progress passed={l.passed} submitted={l.submitted} />
+              {l.quest ? <QuestChip l={l} /> : <Progress passed={l.passed} submitted={l.submitted} />}
               <IconChevronRight size={16} className="shrink-0 text-faint" />
             </Link>
           ))}
@@ -171,6 +174,72 @@ function Progress({ passed, submitted }: { passed: number; submitted: number }) 
         />
       ))}
     </div>
+  )
+}
+
+/* ---------------------------- 闯关入口 ---------------------------- */
+
+const statusOf = (l: LessonSummary) => (l.quest ? routeStatus(l.quest.progress, l.submitted >= 3) : null)
+
+/** 列表里的闯关进度：下一关 + 过了几关；全通关显示「通关」 */
+function QuestChip({ l }: { l: LessonSummary }) {
+  const st = statusOf(l)!
+  const next = st.next ? STAGES.find((s) => s.id === st.next)! : null
+  return (
+    <span
+      className={`tabular flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs ${next ? 'bg-accent-soft text-accent' : 'bg-chip text-muted-2'}`}
+      aria-label={next ? `闯关：下一关「${next.name}」，已过 ${st.done} / ${st.total} 关` : '闯关：已通关'}
+    >
+      {next ? (
+        <>
+          <span aria-hidden>{STAGE_ICONS[next.id]}</span>
+          {next.name} · {st.done}/{st.total}
+        </>
+      ) : (
+        '🏆 通关'
+      )}
+    </span>
+  )
+}
+
+/**
+ * 练习页顶部的「继续闯关」：最近玩过、还没通关的那篇；一篇都没玩过就推荐最新一篇开始。
+ * 全都通关了就不显示
+ */
+function ContinueQuest({ lessons }: { lessons: LessonSummary[] }) {
+  const started = lessons
+    .filter((l) => l.quest && statusOf(l)!.next)
+    .sort((a, b) => (b.quest!.updated_at || 0) - (a.quest!.updated_at || 0))[0]
+  const fresh = !started && !lessons.some((l) => l.quest) ? lessons[0] : undefined
+  const l = started ?? fresh
+  if (!l) return null
+  const st = statusOf(l)
+  const nextId = st?.next ?? 'words'
+  const next = STAGES.find((s) => s.id === nextId)!
+  return (
+    <Link
+      to={`/practice/${l.id}/path`}
+      className="mt-3 flex items-center gap-3.5 rounded-2xl border-2 border-accent/30 bg-surface p-4 text-ink no-underline"
+    >
+      <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-accent text-[26px] shadow-[0_4px_0_var(--accent-soft)]" aria-hidden>
+        {STAGE_ICONS[nextId]}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="text-xs font-semibold text-accent">{started ? '继续闯关' : '试试闯关模式'}</span>
+        <span className="truncate font-serif text-[17px] leading-snug">{l.title}</span>
+        <span className="flex items-center gap-2 text-xs text-muted">
+          下一关「{next.name}」
+          {st && (
+            <span className="flex gap-1" aria-label={`已过 ${st.done} / ${st.total} 关`}>
+              {Array.from({ length: st.total }, (_, i) => (
+                <span key={i} className={`h-1.5 w-4 rounded-full ${i < st.done ? 'bg-accent' : 'bg-line'}`} />
+              ))}
+            </span>
+          )}
+        </span>
+      </span>
+      <IconChevronRight size={18} className="shrink-0 text-faint" />
+    </Link>
   )
 }
 

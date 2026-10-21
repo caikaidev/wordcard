@@ -91,6 +91,37 @@ export function prefetch(texts: (string | undefined | null)[]) {
   pump()
 }
 
+/** 只取缓存里现成的语音（不生成、不占额度）；没有的就算了 */
+export function prefetchCached(texts: (string | undefined | null)[]) {
+  for (const t of texts) {
+    const text = t?.trim()
+    if (!text || ready.has(text) || pending.has(text)) continue
+    pending.add(text)
+    fetch(`${ttsUrl(text)}&cached=1`)
+      .then((r) => (r.status === 200 ? r.blob() : null))
+      .then((b) => {
+        if (b) ready.set(text, URL.createObjectURL(b))
+      })
+      .catch(() => {})
+      .finally(() => pending.delete(text))
+  }
+}
+
+/**
+ * 要马上出声的场合（闯关里点单词）：本地已经有云端语音就放它，没有就立刻用系统朗读，不等生成
+ */
+export function speakFast(text: string) {
+  if (ready.has(text.trim()) || !window.speechSynthesis) return speak(text)
+  if (finish) done(false)
+  el?.pause()
+  current = { text, slow: false }
+  set({ text, loading: true })
+  return new Promise<boolean>((resolve) => {
+    finish = resolve
+    fallback(text, false, true)
+  })
+}
+
 /** 播放一段文本；返回的 Promise 在播放结束（或被打断）时 resolve */
 /* ---------------------------- 系统朗读兜底 ---------------------------- */
 
@@ -102,11 +133,11 @@ function pickVoice() {
   return voices.find((v) => v.lang === 'en-US') ?? voices.find((v) => v.lang.startsWith('en')) ?? null
 }
 
-function fallback(text: string, slow: boolean) {
+function fallback(text: string, slow: boolean, quiet = false) {
   current = null
   const synth = window.speechSynthesis
   if (!synth) return done(false)
-  if (!notified) {
+  if (!notified && !quiet) {
     notified = true
     import('./components/ui').then((m) => m.toast('云端语音暂时不可用（可能是今日额度用完），已改用系统朗读'))
   }

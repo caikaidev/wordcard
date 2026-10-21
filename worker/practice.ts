@@ -5,6 +5,7 @@ import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import { checkIn, streakStatus } from './streak'
+import type { QuestProgress } from '../shared/quest'
 import {
   LEVEL_RULES,
   TASK_GOALS,
@@ -333,14 +334,29 @@ practice.get('/lessons', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT l.id, l.created_at, l.level, l.title,
             COUNT(DISTINCT CASE WHEN s.passed = 1 THEN s.idx END) AS passed,
-            COUNT(DISTINCT s.idx) AS submitted
-     FROM lessons l LEFT JOIN submissions s ON s.lesson_id = l.id
+            COUNT(DISTINCT s.idx) AS submitted,
+            q.progress AS quest_progress, q.updated_at AS quest_updated
+     FROM lessons l
+     LEFT JOIN submissions s ON s.lesson_id = l.id
+     LEFT JOIN quests q ON q.lesson_id = l.id AND q.user_id = l.user_id
      WHERE l.user_id = ?
      GROUP BY l.id ORDER BY l.created_at DESC LIMIT 100`,
   )
     .bind(c.get('user'))
-    .all<LessonSummary>()
-  return c.json({ lessons: results })
+    .all<Omit<LessonSummary, 'quest'> & { quest_progress: string | null; quest_updated: number | null }>()
+  const lessons: LessonSummary[] = results.map(({ quest_progress, quest_updated, ...l }) => {
+    let quest: LessonSummary['quest'] = null
+    if (quest_progress) {
+      try {
+        const p = JSON.parse(quest_progress) as QuestProgress
+        quest = { progress: { stages: p.stages ?? {}, xp: Number(p.xp) || 0 }, updated_at: quest_updated ?? 0 }
+      } catch {
+        /* 坏数据当没开始 */
+      }
+    }
+    return { ...l, quest }
+  })
+  return c.json({ lessons })
 })
 
 /** 参考版本：这句通过了或已经改过两次，才给前端 */
@@ -552,6 +568,8 @@ practice.post('/lessons/:id/submit', async (c) => {
     gradeSchema,
     'grade',
     0.3,
+    // 批改规则在提示词里写得很具体，不需要多想；minimal 比 low 快一截，学习者等得更少
+    'minimal',
   )
   const result = cleanGrade(raw)
   const attempt = history.length + 1

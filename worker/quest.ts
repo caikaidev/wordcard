@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { AppEnv } from './env'
-import { generateJson } from './gemini'
+import { generateJson, warmTts } from './gemini'
 import { aiEnv } from './settings'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
@@ -121,17 +121,20 @@ quest.post('/:lessonId', async (c) => {
     .first<{ title: string; level: number; content: string; source_text: string | null }>()
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
 
-  const row = await c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?')
-    .bind(id, user)
-    .first<{ content: string; progress: string }>()
+  const [row, written] = await Promise.all([
+    c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ content: string; progress: string }>(),
+    c.env.DB.prepare('SELECT COUNT(DISTINCT idx) AS n FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ n: number }>(),
+  ])
+  const writeDone = (written?.n ?? 0) >= 3
   if (row) {
-    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress) }
+    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress), writeDone }
     return c.json(q)
   }
 
   const content = JSON.parse(lesson.content) as LessonContent
+  const ai = await aiEnv(c.env, user, c.get('admin'))
   const raw = await generateJson<Partial<QuestContent>>(
-    await aiEnv(c.env, user, c.get('admin')),
+    ai,
     questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level),
     questSchema,
     'quest',
@@ -143,7 +146,9 @@ quest.post('/:lessonId', async (c) => {
   await c.env.DB.prepare('INSERT OR REPLACE INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
     .bind(id, user, JSON.stringify(clean), now, now)
     .run()
-  const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 } }
+  // 听力关的句子在后台先把语音生成好，等走到「听」那一关时直接播
+  c.executionCtx.waitUntil(warmTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500))))
+  const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, writeDone }
   return c.json(q)
 })
 

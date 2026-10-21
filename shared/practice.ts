@@ -1,6 +1,7 @@
 /* ---------------------------- 练习：共享类型与档位 ---------------------------- */
 
 import type { StreakStatus } from './streak'
+import type { QuestProgress } from './quest'
 
 export type Level = 1 | 2 | 3
 
@@ -102,6 +103,8 @@ export interface LessonSummary {
   title: string
   passed: number
   submitted: number
+  /** 闯关进度；还没进过闯关就是 null */
+  quest: { progress: QuestProgress; updated_at: number } | null
 }
 
 export interface PracticeStats {
