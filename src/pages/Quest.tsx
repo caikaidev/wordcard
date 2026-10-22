@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { speak, speakFast, stop, prefetch, prefetchCached } from '../audio'
 import { setSfx, sfx, sfxOn } from '../sfx'
@@ -511,7 +511,7 @@ function ChoiceView({ ex, answered, onSubmit, bindCheck }: { ex: Extract<Exercis
       <h2 className="m-0 text-xl font-semibold">{TITLES[ex.prompt]}</h2>
       <div className="mt-4">
         {ex.prompt === 'word' && (
-          <button onClick={() => speakFast(ex.text)} className="flex items-center gap-3 border-0 bg-transparent p-0 py-3 text-left" aria-label={`播放 ${ex.text}`}>
+          <button onClick={() => speak(ex.text)} className="flex items-center gap-3 border-0 bg-transparent p-0 py-3 text-left" aria-label={`播放 ${ex.text}`}>
             <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
               <IconSpeaker size={22} />
             </span>
@@ -663,7 +663,7 @@ function MatchView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: '
   const zhDone = (zh: string) => ex.pairs.some((p) => p.zh === zh && matched.has(p.en))
   const zhFlash = (zh: string) => ex.pairs.some((p) => p.zh === zh && p.en === flash)
   const cls = (sel: boolean, done: boolean, bad: boolean, flashing: boolean) =>
-    `min-h-[52px] rounded-2xl border-2 px-3 py-2 text-[15px] transition-[background-color,border-color,color,opacity] duration-300 active:translate-y-0.5 ${
+    `min-h-[52px] min-w-0 w-full [overflow-wrap:anywhere] rounded-2xl border-2 px-3 py-2 text-[15px] transition-[background-color,border-color,color,opacity] duration-300 active:translate-y-0.5 ${
       flashing
         ? 'animate-pop border-accent bg-accent-soft text-accent'
         : done
@@ -678,38 +678,38 @@ function MatchView({ ex, answered, onSubmit }: { ex: Extract<Exercise, { kind: '
     <div>
       <h2 className="m-0 text-xl font-semibold">配对：英文和意思</h2>
       <div className="mt-5 grid grid-cols-2 gap-2.5">
-        <div className="flex flex-col gap-2.5">
-          {left.map((en) => (
-            <button
-              key={en}
-              disabled={matched.has(en) || answered}
-              onClick={() => {
-                setSelL(en)
-                speakFast(en)
-              }}
-              className={`${cls(selL === en, matched.has(en), wrong?.[0] === en, flash === en)} font-serif`}
-            >
-              {en}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-col gap-2.5">
-          {right.map((zh) => (
-            <button
-              key={zh}
-              disabled={zhDone(zh) || answered}
-              onClick={() => {
-                sfx.tap()
-                setSelR(zh)
-              }}
-              className={cls(selR === zh, zhDone(zh), wrong?.[1] === zh, zhFlash(zh))}
-            >
-              {zh}
-            </button>
-          ))}
-        </div>
+        {left.map((en, i) => {
+          const zh = right[i]
+          return (
+            <Fragment key={en}>
+              <button
+                disabled={matched.has(en) || answered}
+                onClick={() => {
+                  setSelL(en)
+                  // A deliberate tap uses media playback, including on iPhones in silent mode.
+                  // Cached audio plays immediately; otherwise the normal cloud/fallback path applies.
+                  speak(en)
+                }}
+                className={`${cls(selL === en, matched.has(en), wrong?.[0] === en, flash === en)} font-serif`}
+              >
+                {en}
+              </button>
+              <button
+                disabled={zhDone(zh) || answered}
+                onClick={() => {
+                  sfx.tap()
+                  setSelR(zh)
+                }}
+                className={cls(selR === zh, zhDone(zh), wrong?.[1] === zh, zhFlash(zh))}
+              >
+                {zh}
+              </button>
+            </Fragment>
+          )
+        })}
       </div>
     </div>
   )
 }
+
 
