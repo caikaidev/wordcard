@@ -1,21 +1,22 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { clearReadCache } from './readCache'
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Confirmer, Toaster } from './components/ui'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
-import Add from './pages/Add'
-import Library from './pages/Library'
-import Remix from './pages/Remix'
-import Settings from './pages/Settings'
-import Practice from './pages/Practice'
-import LessonPage from './pages/Lesson'
-import Reader from './pages/Reader'
-import Weekly from './pages/Weekly'
-import Discover from './pages/Discover'
-import Level from './pages/Level'
-import QuestPage from './pages/Quest'
+const Add = lazy(() => import('./pages/Add'))
+const Library = lazy(() => import('./pages/Library'))
+const Remix = lazy(() => import('./pages/Remix'))
+const Settings = lazy(() => import('./pages/Settings'))
+const Practice = lazy(() => import('./pages/Practice'))
+const LessonPage = lazy(() => import('./pages/Lesson'))
+const Reader = lazy(() => import('./pages/Reader'))
+const Weekly = lazy(() => import('./pages/Weekly'))
+const Discover = lazy(() => import('./pages/Discover'))
+const Level = lazy(() => import('./pages/Level'))
+const QuestPage = lazy(() => import('./pages/Quest'))
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -33,6 +34,7 @@ export default function App() {
     async () => {
       // 有新部署的版本就整页重新加载，否则只重新拉取当前页数据
       if (await hasNewVersion()) return window.location.reload()
+      clearReadCache()
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
@@ -48,7 +50,10 @@ export default function App() {
     let hiddenAt = 0
     const onVisibility = () => {
       if (document.hidden) hiddenAt = Date.now()
-      else if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) refreshStats()
+      else if (hiddenAt && Date.now() - hiddenAt > 5 * 60_000) {
+        clearReadCache()
+        refreshStats()
+      }
     }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
@@ -67,6 +72,7 @@ export default function App() {
         className={`mx-auto flex w-full max-w-[640px] flex-col ${path === '/' || pathIdOf(path) !== null ? 'h-full' : 'min-h-full'}`}
         style={ptr.pull ? { transform: `translateY(${ptr.pull * 0.6}px)` } : { transition: 'transform 0.2s' }}
       >
+        <Suspense fallback={<div role="status" className="m-4 h-40 animate-shimmer rounded-2xl bg-surface" aria-label="正在加载页面" />}>
         {path === '/' && <Review />}
         {path === '/add' && <Add />}
         {path === '/library' && <Library />}
@@ -80,6 +86,7 @@ export default function App() {
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
         {readerIdOf(path) !== null && <Reader kind="lesson" id={readerIdOf(path)!} />}
         {savedIdOf(path) !== null && <Reader kind="saved" id={savedIdOf(path)!} />}
+        </Suspense>
       </main>
       </div>
       </div>
@@ -181,3 +188,4 @@ function DesktopHeader({ path }: { path: Path }) {
     </header>
   )
 }
+

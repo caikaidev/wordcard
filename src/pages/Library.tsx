@@ -1,3 +1,4 @@
+import { readCached } from '../readCache'
 import { useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react'
 import { api } from '../api'
 import { dueLabel } from '../../shared/srs'
@@ -16,10 +17,10 @@ const ACTION_W = 88
 export default function Library() {
   const [tab, setTab] = useState<ItemStatus>('active')
   const [q, setQ] = useState('')
-  const [items, setItems] = useState<Item[] | null>(null)
+  const [items, setItems] = useState<Item[] | null>(() => readCached<{ items: Item[] }>(`/items?status=active${libraryJump.packageId ? `&package=${libraryJump.packageId}` : ''}`)?.items ?? null)
   const [openId, setOpenId] = useState<number | null>(null)
   const [swipedId, setSwipedId] = useState<number | null>(null)
-  const [packages, setPackages] = useState<PackageInfo[]>([])
+  const [packages, setPackages] = useState<PackageInfo[]>(() => readCached<{ packages: PackageInfo[] }>('/packages')?.packages ?? [])
   // 从复习卡片的「来自《包名》」跳过来时直接筛选该包（严格模式下初始化函数会跑两次，所以到 effect 里再清空）
   const [pkgId, setPkgId] = useState<number | null>(() => libraryJump.packageId)
   useEffect(() => {
@@ -432,3 +433,4 @@ function Row({
     </div>
   )
 }
+
