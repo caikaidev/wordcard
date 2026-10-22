@@ -1,3 +1,4 @@
+import { readCached } from '../readCache'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type SavedArticle } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
@@ -14,10 +15,10 @@ import type { PackageInfo } from '../../shared/types'
 type Source = 'url' | 'text' | 'image'
 
 export default function Practice() {
-  const [stats, setStats] = useState<PracticeStats | null>(null)
-  const [lessons, setLessons] = useState<LessonSummary[] | null>(null)
-  const [saved, setSaved] = useState<SavedArticle[]>([])
-  const [packages, setPackages] = useState<PackageInfo[]>([])
+  const [stats, setStats] = useState<PracticeStats | null>(() => readCached<PracticeStats>('/practice/stats'))
+  const [lessons, setLessons] = useState<LessonSummary[] | null>(() => readCached<{ lessons: LessonSummary[] }>('/practice/lessons')?.lessons ?? null)
+  const [saved, setSaved] = useState<SavedArticle[]>(() => readCached<{ saved: SavedArticle[] }>('/practice/saved')?.saved ?? [])
+  const [packages, setPackages] = useState<PackageInfo[]>(() => readCached<{ packages: PackageInfo[] }>('/packages')?.packages ?? [])
   const loadSaved = () =>
     api
       .saved()
@@ -624,3 +625,4 @@ function Composer({ onSaved }: { onSaved: () => void }) {
     </section>
   )
 }
+

@@ -1,3 +1,4 @@
+import { beginWrite, cachedRead, clearReadCache } from './readCache'
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
 import type { CheckinEvent, StreakStatus } from '../shared/streak'
@@ -25,6 +26,7 @@ const RELOGIN_KEY = 'shiju:relogin'
  * 30 秒内只跳一次，避免配置有误（比如 AUD 对不上）时无限刷新。
  */
 export function relogin(): boolean {
+  clearReadCache()
   try {
     const last = Number(sessionStorage.getItem(RELOGIN_KEY) || 0)
     if (Date.now() - last < 30_000) return false
@@ -36,7 +38,7 @@ export function relogin(): boolean {
   return true
 }
 
-async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
+async function networkReq<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
@@ -65,6 +67,23 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS):
     throw new ApiError(msg, res.status)
   }
   return data as T
+}
+
+/** Cache only cheap, read-only page data; AI generation and credentials stay uncached. */
+const CACHEABLE_READ = /^(\/stats|\/settings|\/packages|\/review|\/streak|\/items(?:\?.*)?|\/practice\/(?:stats|lessons|saved))$/
+
+async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (method === 'GET') {
+    const load = () => networkReq<T>(path, init, timeoutMs)
+    return CACHEABLE_READ.test(path) ? cachedRead(path, load) : load()
+  }
+  const finish = beginWrite()
+  try {
+    return await networkReq<T>(path, init, timeoutMs)
+  } finally {
+    finish()
+  }
 }
 
 const json = (body: unknown) => JSON.stringify(body)
@@ -166,3 +185,4 @@ export type ImportReport = { packageId: number; added: number; skipped: number; 
 export type Me = { email: string; admin: boolean }
 
 export type ApiToken = { id: number; name: string; prefix: string; created_at: number; last_used_at: number | null }
+

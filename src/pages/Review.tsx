@@ -1,3 +1,4 @@
+import { readCached } from '../readCache'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { prefetch, speak, stop } from '../audio'
@@ -37,7 +38,7 @@ const today = () => {
 }
 
 export default function Review() {
-  const [queue, setQueue] = useState<Item[] | null>(null)
+  const [queue, setQueue] = useState<Item[] | null>(() => readCached<{ items: Item[] }>('/review')?.items ?? null)
   const [reviewed, setReviewed] = useState(0)
   const [sharing, setSharing] = useState(false)
   // 本次跳过的卡片：不评分、不改复习时间，只在这一轮里先放一边
@@ -50,7 +51,7 @@ export default function Review() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const stats = useStats()
-  const [streak, setStreak] = useState<StreakStatus | null>(null)
+  const [streak, setStreak] = useState<StreakStatus | null>(() => readCached<StreakStatus>('/streak'))
   const loadStreak = useCallback(() => {
     api
       .streak()
@@ -59,7 +60,7 @@ export default function Review() {
   }, [])
   useEffect(loadStreak, [loadStreak])
   // 复习方式读到之前先不出卡片，免得「只产出」模式下第一张先闪一下英文正面
-  const [modeSetting, setMode] = useState<ReviewMode | null>(null)
+  const [modeSetting, setMode] = useState<ReviewMode | null>(() => readCached<{ current: { reviewMode: ReviewMode } }>('/settings')?.current.reviewMode ?? null)
   const mode = modeSetting ?? 'mixed'
   useEffect(() => {
     api
@@ -832,3 +833,4 @@ function useMoreBelow(ref: React.RefObject<HTMLElement | null>) {
   }, [ref])
   return more
 }
+
