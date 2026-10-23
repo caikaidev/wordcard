@@ -1,3 +1,5 @@
+import type { Difficulty } from '../../shared/difficulty'
+import SpeakingExercise from '../components/SpeakingExercise'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import { speak, speakFast, stop, prefetch, prefetchCached } from '../audio'
@@ -38,7 +40,8 @@ export default function QuestPage({ id }: { id: number }) {
         quest={quest}
         stage={playing}
         onExit={() => setPlaying(null)}
-        onPassed={(progress) => setQuest({ ...quest, progress })}
+        onPassed={(progress) => setQuest((q) => q ? { ...q, progress } : q)}
+        onDifficulty={(stage, difficulty) => setQuest((q) => q ? { ...q, feedback: { ...q.feedback, [stage]: difficulty } } : q)}
       />
     )
 
@@ -94,13 +97,13 @@ function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void })
     <div className="relative mt-8 flex flex-col items-center gap-7 pb-6">
       {STAGES.map((s, i) => {
         const done = s.id === 'write' ? quest.writeDone : !!p.stages[s.id]
-        const open = unlocked(p, s.id)
+        const open = done || unlocked(p, s.id)
         const isCurrent = s.id === current
         const best = p.stages[s.id]?.accuracy
         // 多邻国式的左右错落
         const offset = [0, 56, 0, -56, 0][i]
         const go = () => {
-          if (!open) return toast(s.id === 'speak' ? '「说」还在做，先跳过它，后面的「写」可以玩' : '先过前一关')
+          if (!open) return toast('先过前一关')
           if (s.id === 'write') return navigate(`/practice/${quest.lessonId}`)
           onPlay(s.id)
         }
@@ -126,7 +129,7 @@ function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void })
               )}
             </button>
             <span className="mt-2.5 text-[14px] font-semibold text-ink">{s.name}</span>
-            <span className="text-xs text-muted">{best !== undefined ? `最好 ${Math.round(best * 100)}%` : s.desc}</span>
+            <span className="text-xs text-muted">{best !== undefined ? s.id === 'speak' ? '已完成 · 自评' : `最好 ${Math.round(best * 100)}%` : s.desc}</span>
           </div>
         )
       })}
@@ -143,11 +146,13 @@ function Runner({
   stage,
   onExit,
   onPassed,
+  onDifficulty,
 }: {
   quest: Quest
   stage: StageId
   onExit: () => void
   onPassed: (p: Quest['progress']) => void
+  onDifficulty: (stage: StageId, difficulty: Difficulty) => void
 }) {
   const initial = useMemo(() => buildStage(stage, quest.content), [stage, quest.content])
   // 答错的题排到最后再来一次（每题最多重来一次）
@@ -157,6 +162,7 @@ function Runner({
   const [answer, setAnswer] = useState<Answer | null>(null)
   const [finished, setFinished] = useState<{ accuracy: number; gained: number } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   // 连对几题：3 题起显示「连对 N」
   const [combo, setCombo] = useState(0)
   const [sound, setSound] = useState(sfxOn)
@@ -183,7 +189,7 @@ function Runner({
     if (!item.retry) setFirstTry((f) => ({ ...f, right: f.right + (a.correct ? 1 : 0) }))
     if (a.correct) {
       sfx.correct()
-      setCombo((n) => n + 1)
+      setCombo((n) => stage === 'speak' ? 0 : n + 1)
     } else {
       sfx.wrong()
       navigator.vibrate?.(80)
@@ -192,24 +198,27 @@ function Runner({
     }
   }
 
-  const next = async () => {
-    setAnswer(null)
-    stop()
-    if (pos + 1 < queue.length) return setPos(pos + 1)
-    setPos(pos + 1)
+  const saveCompletion = async () => {
     const accuracy = firstTry.total ? firstTry.right / firstTry.total : 1
     setSaving(true)
+    setSaveError('')
     try {
       const r = await api.passStage(quest.lessonId, stage, accuracy)
       onPassed(r.progress)
       celebrate(r.checkin)
       setFinished({ accuracy, gained: r.gained })
     } catch (e) {
-      toast(errMsg(e), 'error')
-      setFinished({ accuracy, gained: 0 })
+      setSaveError(errMsg(e))
     } finally {
       setSaving(false)
     }
+  }
+  const next = async () => {
+    setAnswer(null)
+    stop()
+    if (pos + 1 < queue.length) return setPos(pos + 1)
+    setPos(pos + 1)
+    await saveCompletion()
   }
 
   const leave = async () => {
@@ -231,6 +240,8 @@ function Runner({
   }, [answer])
 
   const progress = queue.length ? Math.min(pos + (answer ? 1 : 0), queue.length) / queue.length : 1
+
+  if (!initial.length) return <div className="p-6 text-center"><p>这份练习暂时没有可用的本关题目。</p><button className="min-h-11 underline" onClick={onExit}>返回关卡路线</button></div>
 
   return (
     <div className="pt-safe flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -269,7 +280,7 @@ function Runner({
       </div>
 
       {finished || done ? (
-        <Finish stage={stage} result={finished} saving={saving} onBack={onExit} />
+        <Finish stage={stage} result={finished} saving={saving} onBack={onExit} lessonId={quest.lessonId} previous={quest.feedback?.[stage]} onDifficulty={onDifficulty} error={saveError} onRetry={saveCompletion} />
       ) : (
         <>
           {/*
@@ -289,7 +300,7 @@ function Runner({
                   disabled={!canCheck || !!answer}
                   className="h-12 w-full rounded-[14px] border-0 bg-accent text-[15px] font-semibold text-on-accent shadow-[0_4px_0_color-mix(in_srgb,var(--accent)_60%,black)] transition-transform active:translate-y-0.5 active:shadow-none disabled:bg-line disabled:text-muted disabled:shadow-none"
                 >
-                  检查
+                  {item.ex.kind === 'speak' ? '完成这句跟读' : '检查'}
                 </button>
               )}
             </div>
@@ -355,14 +366,31 @@ function CountUp({ to, suffix = '' }: { to: number; suffix?: string }) {
   )
 }
 
-function Finish({ stage, result, saving, onBack }: { stage: StageId; result: { accuracy: number; gained: number } | null; saving: boolean; onBack: () => void }) {
+function Finish({ stage, result, saving, onBack, lessonId, previous, onDifficulty, error, onRetry }: {
+  stage: StageId; result: { accuracy: number; gained: number } | null; saving: boolean; onBack: () => void
+  lessonId: number; previous?: Difficulty; onDifficulty: (stage: StageId, difficulty: Difficulty) => void
+  error: string; onRetry: () => void
+}) {
+  const [selected, setSelected] = useState<Difficulty | undefined>(previous)
+  const [feedbackBusy, setFeedbackBusy] = useState(false)
+  const [feedbackError, setFeedbackError] = useState('')
+  const rate = async (difficulty: Difficulty) => {
+    setFeedbackBusy(true)
+    setFeedbackError('')
+    try {
+      await api.questFeedback(lessonId, stage, difficulty)
+      setSelected(difficulty)
+      onDifficulty(stage, difficulty)
+    } catch (e) { setFeedbackError(errMsg(e)) }
+    finally { setFeedbackBusy(false) }
+  }
   const name = STAGES.find((s) => s.id === stage)?.name
-  const perfect = result?.accuracy === 1
+  const perfect = stage !== 'speak' && result?.accuracy === 1
   useEffect(() => {
     if (result) sfx.finish()
   }, [result])
   return (
-    <div className="relative flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden px-6 text-center">
+    <div className="relative flex min-h-0 flex-1 flex-col items-center gap-3 overflow-y-auto px-6 py-8 text-center">
       {result && <Confetti />}
       <span className="animate-bounce-in text-6xl">{perfect ? '🏆' : '🎉'}</span>
       <div className="animate-rise text-2xl font-semibold" style={{ animationDelay: '0.1s' }}>
@@ -374,7 +402,7 @@ function Finish({ stage, result, saving, onBack }: { stage: StageId; result: { a
         </div>
       )}
       {saving || !result ? (
-        <div className="text-sm text-muted">正在保存…</div>
+        <div className="text-sm text-muted">{error ? <><p role="alert">{error}</p><button className="min-h-11 underline" onClick={onRetry}>重试保存进度</button></> : '正在保存…'}</div>
       ) : (
         <div className="mt-2 grid w-full max-w-[320px] grid-cols-2 gap-2.5">
           <div className="animate-rise rounded-2xl border-2 border-[#f2b84b]/60 bg-surface p-3" style={{ animationDelay: '0.25s' }}>
@@ -384,16 +412,27 @@ function Finish({ stage, result, saving, onBack }: { stage: StageId; result: { a
             </div>
           </div>
           <div className="animate-rise rounded-2xl border-2 border-accent/40 bg-surface p-3" style={{ animationDelay: '0.35s' }}>
-            <div className="text-xs text-muted">🎯 一次答对</div>
+            <div className="text-xs text-muted">{stage === 'speak' ? '🎙️ 跟读练习' : '🎯 一次答对'}</div>
             <div className="tabular text-2xl font-semibold text-ink">
-              <CountUp to={Math.round(result.accuracy * 100)} suffix="%" />
+              {stage === 'speak' ? '已完成' : <CountUp to={Math.round(result.accuracy * 100)} suffix="%" />}
             </div>
           </div>
         </div>
       )}
+      {result && <fieldset disabled={feedbackBusy} className="mt-3 w-full max-w-[360px] rounded-2xl border border-line p-3">
+        <legend className="px-2 text-sm font-semibold">这一关对你来说怎么样？</legend>
+        <div className="grid grid-cols-3 gap-2">
+          {([['easy', '偏简单'], ['right', '刚刚好'], ['hard', '有点难']] as const).map(([value, label]) => (
+            <button key={value} aria-pressed={selected === value} onClick={() => rate(value)}
+              className={`min-h-11 rounded-xl border px-1 text-sm ${selected === value ? 'border-accent bg-accent-soft text-ink' : 'border-line bg-surface text-ink'}`}>{label}</button>
+          ))}
+        </div>
+        <p role="status" className="mb-0 text-xs text-muted">{feedbackBusy ? '正在保存反馈…' : selected ? '反馈已保存，可修改' : '可跳过；用于调整之后新练习的分项难度'}</p>
+        {feedbackError && <p role="alert" className="mb-0 text-xs text-forgot-fg">{feedbackError}，请重新选择重试</p>}
+      </fieldset>}
       <button
         onClick={onBack}
-        disabled={saving}
+        disabled={saving || feedbackBusy}
         className="mt-4 h-12 w-full max-w-[320px] rounded-[14px] border-0 bg-accent text-[15px] font-semibold text-on-accent shadow-[0_4px_0_var(--accent-soft)] active:translate-y-0.5 disabled:opacity-50"
       >
         继续
@@ -423,7 +462,7 @@ function Feedback({ ex, answer, combo, onNext }: { ex: Exercise; answer: Answer;
         >
           {answer.correct ? <IconCheck size={18} /> : <IconClose size={18} />}
         </span>
-        {answer.correct ? praise : ex.kind === 'match' ? '有配错的，最后再来一次' : '正确答案：'}
+        {answer.correct ? ex.kind === 'speak' ? '跟读完成！' : praise : ex.kind === 'match' ? '有配错的，最后再来一次' : '正确答案：'}
       </div>
       {!answer.correct && right && <div className="mt-1 text-[15px] text-ink">{right}</div>}
       {note && <div className="mt-1 text-[13px] leading-relaxed text-muted-2">{note}</div>}
@@ -445,6 +484,7 @@ function Feedback({ ex, answer, combo, onNext }: { ex: Exercise; answer: Answer;
 type BindCheck = (fn: (() => void) | null) => void
 
 function ExerciseView({ ex, answered, onSubmit, bindCheck }: { ex: Exercise; answered: Answer | null; onSubmit: (a: Answer) => void; bindCheck: BindCheck }) {
+  if (ex.kind === 'speak') return <SpeakingExercise en={ex.en} zh={ex.zh} answered={!!answered} bindCheck={bindCheck} onComplete={() => onSubmit({ correct: true })} />
   if (ex.kind === 'match') return <MatchView ex={ex} answered={!!answered} onSubmit={onSubmit} />
   if (ex.kind === 'order') return <OrderView ex={ex} answered={answered} onSubmit={onSubmit} bindCheck={bindCheck} />
   return <ChoiceView ex={ex} answered={answered} onSubmit={onSubmit} bindCheck={bindCheck} />

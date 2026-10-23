@@ -16,6 +16,7 @@ import type { QuestContent } from '../shared/quest'
  */
 
 const count = (q: Partial<QuestContent> | null | undefined) =>
+  (q?.speaking?.length ?? 0) +
   (q?.words?.length ?? 0) +
   (q?.listening?.length ?? 0) +
   (q?.cloze?.length ?? 0) +
