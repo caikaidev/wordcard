@@ -1,12 +1,13 @@
+import { difficultyPrompt, isDifficulty, type Difficulty, type DifficultySample } from '../shared/difficulty'
 import { Hono } from 'hono'
 import type { AppEnv } from './env'
 import { generateJson, warmTts } from './gemini'
 import { aiEnv } from './settings'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
-import { PLAYABLE, XP_PER_STAGE, XP_PERFECT_BONUS, type Quest, type QuestContent, type QuestProgress, type StageId } from '../shared/quest'
+import { PLAYABLE, unlocked, XP_PER_STAGE, XP_PERFECT_BONUS, type Quest, type QuestContent, type QuestProgress, type StageId } from '../shared/quest'
 
-/* 闯关：给一份练习出一套小题库（认词 / 听 / 读），AI 只调用一次；判分全在前端本地完成 */
+/* 闯关：给一份练习出一套小题库（认词 / 听 / 读 / 说），AI 只调用一次；判分全在前端本地完成 */
 
 export const quest = new Hono<AppEnv>()
 
@@ -21,6 +22,10 @@ const questSchema = {
     words: {
       type: 'ARRAY',
       items: { type: 'OBJECT', properties: { en: str, zh: str, distractors: strs }, required: ['en', 'zh', 'distractors'] },
+    },
+    speaking: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { en: str, zh: str }, required: ['en', 'zh'] },
     },
     listening: {
       type: 'ARRAY',
@@ -45,13 +50,15 @@ const questSchema = {
       },
     },
   },
-  required: ['words', 'listening', 'cloze', 'reading'],
+  required: ['words', 'listening', 'cloze', 'reading', 'speaking'],
 }
 
-function questPrompt(c: LessonContent, source: string | null, level: number) {
+function questPrompt(c: LessonContent, source: string | null, level: number, adaptation: string) {
   const words = c.words.map((w) => `- ${w.word}：${w.meaning}（原句：${w.quote}）`).join('\n')
   const exprs = c.expressions.map((e) => `- ${e.pattern}：${e.meaning}（例句：${e.example}）`).join('\n')
   return `你在给英语学习者做一套像多邻国那样的小练习，一题一屏、点选作答。学习者是中文母语，档位 ${level}（1 入门 / 2 进阶 / 3 挑战），档位越低句子越短、干扰项越容易分辨。
+
+${adaptation}
 
 文章标题：${c.title}
 概要：${c.summary}
@@ -69,6 +76,8 @@ ${source ? `原文（可能截断）：\n${source}` : '（没有原文，只能�
 2. listening：4 个短句，优先从原文里摘，每句尽量 6–14 个词，包含上面的生词或句式。每句必须能脱离上下文独立听懂、语义完整；不得为了词数截断主句、条件句、定语从句或固定表达。找不到合适的原句时，可依据原文含义改写成完整短句，不增加事实。zh 是忠实原意、符合中文母语者习惯的简体中文译文；distractors 3 个中文干扰翻译，和原句话题相关但意思明显不同；extra 2 个不在这句里、但看起来能放进句子的英文单词（排单词题的干扰块）。
 3. cloze：3 句原文里的句子，把一个生词或句式里的关键词换成 ____（四个下划线，只出现一次）；answer 是被挖掉的原词（保持句中的形式）；distractors 3 个英文干扰词，词性和形式相同但放进去意思不通或不地道；zh 是整句的中文翻译。
 4. reading：1–2 段原文片段（每段 40–90 个词，原样摘录），每段 1–2 道理解题。question 用中文问；answer 和 distractors 都用中文、长度相近，distractors 3 个；explain 用一句中文解释为什么，引用原文关键词。
+
+5. speaking：3 个独立、完整的英文跟读短句（en）和自然中文译文（zh），来自文章内容或忠实改写，不使用带省略号、方括号的句式模板。按口语分项难度选择句长和表达复杂度，入门优先 5–8 词，进阶 8–12 词，挑战 10–16 词。
 
 中文质量要求（适用于所有中文释义、译文、选项和解析）：
 - 先理解上下文中的意思，再按中文习惯表达；允许调整语序、拆句，把英语定语从句转成自然的中文分句。不要照搬英语语序、堆叠「的」或机械套用「当……时」。
@@ -113,7 +122,11 @@ export function cleanQuest(raw: Partial<QuestContent> | null | undefined): Quest
     }))
     .filter((r) => r.passage && r.questions.length)
     .slice(0, 2)
-  return { words, listening, cloze, reading }
+  const speaking = (raw?.speaking ?? [])
+    .map((q) => ({ en: s(q?.en, 200), zh: s(q?.zh, 120) }))
+    .filter((q) => q.en && q.zh && !/\.{3}|…|\[|____/.test(q.en))
+    .slice(0, 3)
+  return { words, listening, cloze, reading, ...(speaking.length ? { speaking } : {}) }
 }
 
 const parseProgress = (raw: string | null): QuestProgress => {
@@ -134,21 +147,31 @@ quest.post('/:lessonId', async (c) => {
     .first<{ title: string; level: number; content: string; source_text: string | null }>()
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
 
-  const [row, written] = await Promise.all([
+  const [row, written, feedbackRows] = await Promise.all([
     c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ content: string; progress: string }>(),
     c.env.DB.prepare('SELECT COUNT(DISTINCT idx) AS n FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ n: number }>(),
+    c.env.DB.prepare('SELECT stage, difficulty FROM quest_feedback WHERE lesson_id = ? AND user_id = ?').bind(id, user).all<{ stage: StageId; difficulty: Difficulty }>(),
   ])
+  const feedback = Object.fromEntries(feedbackRows.results.map((r) => [r.stage, r.difficulty]))
   const writeDone = (written?.n ?? 0) >= 3
   if (row) {
-    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress), writeDone }
+    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress), feedback, writeDone }
     return c.json(q)
   }
 
   const content = JSON.parse(lesson.content) as LessonContent
   const ai = await aiEnv(c.env, user, c.get('admin'))
+  const samples = await c.env.DB.prepare(`
+    SELECT stage, difficulty, accuracy FROM (
+      SELECT f.stage, f.difficulty, f.accuracy,
+        ROW_NUMBER() OVER (PARTITION BY f.stage ORDER BY f.created_at DESC, f.lesson_id DESC) AS n
+      FROM quest_feedback f JOIN lessons l ON l.id = f.lesson_id AND l.user_id = f.user_id
+      WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
+    ) WHERE n <= 8 ORDER BY stage, n
+  `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
   const raw = await generateJson<Partial<QuestContent>>(
     ai,
-    questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level),
+    questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results)),
     questSchema,
     'quest',
     0.5,
@@ -176,10 +199,11 @@ quest.post('/:lessonId/stages/:stage', async (c) => {
   const row = await c.env.DB.prepare('SELECT progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ progress: string }>()
   if (!row) return c.json({ error: '找不到这套题' }, 404)
   const p = parseProgress(row.progress)
+  if (!unlocked(p, stage)) return c.json({ error: '先完成前一关' }, 409)
   const prev = p.stages[stage]
   // 第一次过关拿全部经验；重玩只有拿到满分才补一次满分奖励
-  const gained = (prev ? 0 : XP_PER_STAGE) + (accuracy === 1 && prev?.accuracy !== 1 ? XP_PERFECT_BONUS : 0)
-  p.stages[stage] = { accuracy: Math.max(accuracy, prev?.accuracy ?? 0), at: Date.now() }
+  const gained = (prev ? 0 : XP_PER_STAGE) + (stage !== 'speak' && accuracy === 1 && prev?.accuracy !== 1 ? XP_PERFECT_BONUS : 0)
+  p.stages[stage] = { accuracy: Math.max(accuracy, prev?.accuracy ?? 0), at: Date.now(), firstAccuracy: prev?.firstAccuracy ?? prev?.accuracy ?? accuracy }
   p.xp += gained
   await c.env.DB.prepare('UPDATE quests SET progress = ?, updated_at = ? WHERE lesson_id = ? AND user_id = ?')
     .bind(JSON.stringify(p), Date.now(), id, user)
@@ -189,4 +213,28 @@ quest.post('/:lessonId/stages/:stage', async (c) => {
     return null
   })
   return c.json({ progress: p, gained, checkin })
+})
+
+/** Difficulty is optional, editable, and never a second completion/XP event. */
+quest.put('/:lessonId/stages/:stage/feedback', async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('lessonId'))
+  const stage = c.req.param('stage') as StageId
+  const body = await c.req.json<{ difficulty?: unknown }>().catch(() => null)
+  if (!Number.isSafeInteger(id) || id <= 0 || !PLAYABLE.includes(stage) || !isDifficulty(body?.difficulty)) {
+    return c.json({ error: '反馈内容不正确' }, 400)
+  }
+  const row = await c.env.DB.prepare('SELECT progress FROM quests WHERE lesson_id = ? AND user_id = ?')
+    .bind(id, user).first<{ progress: string }>()
+  if (!row) return c.json({ error: '找不到这套题' }, 404)
+  const completed = parseProgress(row.progress).stages[stage]
+  if (!completed) return c.json({ error: '完成这一关后再反馈' }, 409)
+  const accuracy = stage === 'speak' ? null : completed.firstAccuracy ?? completed.accuracy
+  const now = Date.now()
+  await c.env.DB.prepare(`
+    INSERT INTO quest_feedback (user_id, lesson_id, stage, difficulty, accuracy, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, lesson_id, stage) DO UPDATE SET difficulty = excluded.difficulty, updated_at = excluded.updated_at
+  `).bind(user, id, stage, body.difficulty, accuracy, now, now).run()
+  return c.json({ difficulty: body.difficulty })
 })

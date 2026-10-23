@@ -1,3 +1,4 @@
+import type { Difficulty } from '../shared/difficulty'
 import { beginWrite, cachedRead, clearReadCache } from './readCache'
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
@@ -153,6 +154,8 @@ export const api = {
   quest: (lessonId: number) => req<Quest>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
   passStage: (lessonId: number, stage: StageId, accuracy: number) =>
     req<{ progress: QuestProgress; gained: number; checkin: CheckinEvent | null }>(`/quest/${lessonId}/stages/${stage}`, { method: 'POST', body: json({ accuracy }) }),
+  questFeedback: (lessonId: number, stage: StageId, difficulty: Difficulty) =>
+    req<{ difficulty: Difficulty }>(`/quest/${lessonId}/stages/${stage}/feedback`, { method: 'PUT', body: json({ difficulty }) }),
   level: () => req<LevelStatus>('/level'),
   startLevelTest: () => req<{ id: number; words: string[] }>('/level/test', { method: 'POST' }, 60_000),
   submitLevelTest: (id: number, known: string[]) => req<TestResult>(`/level/test/${id}`, { method: 'POST', body: json({ known }) }),

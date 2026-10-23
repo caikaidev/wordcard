@@ -59,7 +59,7 @@ curl -X POST https://你的域名/api/ext/lessons \
 
 1. **原文**放进 `text`，保持原样（去掉导航、广告即可），不要改写。
 2. **练习内容** `lesson`：挑最多 5 个生词（`words`，必须是文章里出现过的，`quote` 是包含它的原句）、2–3 个可以直接用的句式（`expressions`）、固定 3 个写作任务（`tasks`：讲清楚 / 有观点 / 连到自己）、1–2 个口语题（`speaking`）。讲解用中文，示例用英文。
-3. **闯关题库** `quest`（可选，但强烈建议）：按下面四种题出题，干扰项要「看起来合理但意思不对」，不能也是对的。
+3. **闯关题库** `quest`（可选，但强烈建议）：按下面字段出题，干扰项要「看起来合理但意思不对」，不能也是对的。
 4. **自查**后只输出一个 JSON，不要注释，不要多余文字。
 
 ### 自查清单
@@ -97,9 +97,9 @@ curl -X POST https://你的域名/api/ext/lessons \
 | `tasks` | 3 个写作任务：`goal`（讲清楚 / 有观点 / 连到自己）、`prompt`（中文要求）、`template`（填空模板或句子开头，挑战档留空） |
 | `speaking` | 最多 2 个：`question`（英文）、`hint`（中文思路） |
 
-## `quest`：四种题
+## `quest`：闯关题库
 
-每种题不完整就会被跳过，并计入返回的 `dropped`。
+每种题不完整就会被跳过，并计入返回的 `dropped`。`speaking` 是可选扩展；旧包不提供时优先复用听力、填空中的完整句子跟读，不触发题库重生成。
 
 | 字段 | 每条 | 用在哪一关 | 要求 |
 |---|---|---|---|
@@ -107,5 +107,6 @@ curl -X POST https://你的域名/api/ext/lessons \
 | `listening` | `en`、`zh`、`distractors`、`extra` | 听：听句子选意思、听句子排单词 | 最多 4 条；`en` 6–14 个词；`distractors` 3 个中文干扰翻译；`extra` 2 个干扰单词 |
 | `cloze` | `sentence`、`answer`、`distractors`、`zh` | 读：选词填空 | 最多 3 条；`sentence` 恰好一个 `____`；`answer` 是被挖掉的原词；`distractors` 3 个同词性英文干扰词 |
 | `reading` | `passage`、`questions[]` | 读：理解题 | 最多 2 段，每段 40–90 词原文；`questions` 每段 1–2 题：`question`、`answer`、`distractors`（中文）、`explain`（一句中文解析） |
+| `speaking`（可选） | `en`、`zh` | 说：听示范、跟读录音、回放自评 | 最多 3 句；完整英文和自然中文，不使用 `...`、方括号或挖空模板；入门优先 5–8 词、进阶 8–12 词、挑战 10–16 词 |
 
 完整例子见 [`examples/lesson-sample.json`](examples/lesson-sample.json)。
