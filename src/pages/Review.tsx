@@ -11,6 +11,7 @@ import { Card, Chip, EnglishDefinition, Highlighted, PageTitle, SpeakButton, err
 import { useExampleZh } from '../exampleZh'
 import { IconAlert, IconCheckCircle, IconChevronRight, IconPlusCircle, IconShare, IconSparkle } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
+import { TappableExample, WordLookupSheet } from '../components/WordLookupSheet'
 import { StreakChip, celebrate } from '../components/Streak'
 import type { StreakStatus } from '../../shared/streak'
 
@@ -241,7 +242,7 @@ export default function Review() {
   // 电脑端快捷键：空格翻转 · 1/2/3 评分 · P 播放 · D 标记 DONE
   const keyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   keyRef.current = (e: KeyboardEvent) => {
-    if (!card || e.metaKey || e.ctrlKey || e.altKey) return
+    if (!card || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('[role="dialog"][aria-modal="true"]')) return
     const t = e.target as HTMLElement
     if (t.closest('input, textarea, [contenteditable], [role="dialog"], [role="alertdialog"]')) return
     const k = e.key.toLowerCase()
@@ -391,7 +392,7 @@ export default function Review() {
                   )}
                 </div>
                 <Link to="/weekly" className="text-[13px] text-accent no-underline">
-                  看看本周回顾 ›
+                  本周回顾与未来 7 天复习预测 ›
                 </Link>
                 {reviewed > 0 && (
                   <button
@@ -677,6 +678,7 @@ function Back({
   onUpdate: (item: Item) => void
 }) {
   const [defining, setDefining] = useState(false)
+  const [lookup, setLookup] = useState<string | null>(null)
   const translating = useExampleZh(item, onUpdate)
   const define = async () => {
     setDefining(true)
@@ -694,6 +696,7 @@ function Back({
   const scrollRef = useRef<HTMLDivElement>(null)
   const more = useMoreBelow(scrollRef)
   return (
+    <>
     <div ref={scrollRef} className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-5 pt-5 pb-3 md:px-12 md:py-10">
       {cloze && (
         <div className="mb-4 flex items-start gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-3 md:mb-6">
@@ -749,8 +752,9 @@ function Back({
             </div>
           </div>
           <div className="font-serif text-lg leading-normal md:text-[23px]">
-            <Highlighted text={m.example} marks={[m.highlight]} />
+            <TappableExample text={m.example} highlight={m.highlight} onLookup={setLookup} />
           </div>
+          <p className="m-0 text-[11px] text-faint">点击例句中的英文单词可查词典</p>
           {m.exampleZh ? (
             <div className="text-sm leading-relaxed text-muted md:text-[15px]">{m.exampleZh}</div>
           ) : (
@@ -804,6 +808,8 @@ function Back({
         style={{ marginTop: '-3rem' }}
       />
     </div>
+    {lookup && <WordLookupSheet key={lookup} text={lookup} context={m.example || lookup} onClose={() => setLookup(null)} />}
+    </>
   )
 }
 
