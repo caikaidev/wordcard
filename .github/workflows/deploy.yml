@@ -22,6 +22,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:quest
+      - run: npm run test:review
       - name: 下载 Merriam-Webster 官方标志（按其品牌规范原样使用，不提交进仓库）
         run: |
           for v in LightBG DarkBG; do
