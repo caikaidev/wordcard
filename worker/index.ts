@@ -4,6 +4,7 @@ import { requireAccess } from './auth'
 import { enrich, remix, tts, ttsKey, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
+import { REVIEW_FORECAST_SQL, buildReviewForecast, reviewForecastWindow } from '../shared/forecast'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
@@ -319,6 +320,16 @@ app.post('/review/:id', async (c) => {
     return null
   })
   return c.json({ item: toItem(row!), checkin })
+})
+
+/** 未来七个北京时间自然日的到期卡片；今天包含所有逾期卡片。仅统计当前用户仍在学习的卡片。 */
+app.get('/review/forecast', async (c) => {
+  const now = Date.now()
+  const { tomorrow, end } = reviewForecastWindow(now)
+  const { results } = await c.env.DB.prepare(REVIEW_FORECAST_SQL)
+    .bind(tomorrow, who(c).user, end)
+    .all<{ bucket: number; n: number }>()
+  return c.json(buildReviewForecast(results, now))
 })
 
 /* ------------------------------ 连续打卡 ------------------------------ */
