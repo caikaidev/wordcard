@@ -1,4 +1,5 @@
 import type { Difficulty } from '../shared/difficulty'
+import type { ReviewForecast } from '../shared/forecast'
 import { beginWrite, cachedRead, clearReadCache } from './readCache'
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
@@ -117,6 +118,7 @@ export const api = {
   remove: (id: number) => req<void>(`/items/${id}`, { method: 'DELETE' }),
   define: (id: number) => req<{ item: Item }>(`/items/${id}/define`, { method: 'POST' }),
   review: () => req<{ items: Item[] }>('/review'),
+  reviewForecast: () => req<ReviewForecast>('/review/forecast'),
   grade: (id: number, grade: Grade) => req<{ item: Item; checkin: CheckinEvent | null }>(`/review/${id}`, { method: 'POST', body: json({ grade }) }),
   enrich: (text: string, type?: ItemType, context?: string) =>
     req<EnrichResult>('/enrich', { method: 'POST', body: json({ text, type, context }) }),
