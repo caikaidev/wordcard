@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { WeeklyReport } from '../../shared/types'
+import type { ReviewForecast } from '../../shared/forecast'
 import { Link } from '../router'
 import { errMsg } from '../components/ui'
 import { IconBack } from '../components/icons'
@@ -75,7 +76,10 @@ export default function Weekly() {
       ) : !data ? (
         <div className="mx-4 mt-5 h-64 animate-shimmer rounded-2xl bg-surface md:mx-6" />
       ) : (
-        <Report d={data} />
+        <>
+          {offset === 0 && <ForecastCard />}
+          <Report d={data} />
+        </>
       )}
     </div>
   )
@@ -163,5 +167,56 @@ function Tile({ label, value, prev, unit = '个' }: { label: string; value: numb
         {diff === 0 ? '与上周持平' : `比上周 ${diff > 0 ? '+' : ''}${diff}`}
       </div>
     </div>
+  )
+}
+
+/** Forecast is separate from past-week activity: no AI calls and no new SRS scheduling. */
+function ForecastCard() {
+  const [forecast, setForecast] = useState<ReviewForecast | null>(null)
+  const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    setError('')
+    api.reviewForecast()
+      .then((data) => { if (!cancelled) setForecast(data) })
+      .catch((e) => { if (!cancelled) setError(errMsg(e)) })
+    return () => { cancelled = true }
+  }, [attempt])
+  const max = Math.max(1, ...(forecast?.days.map((d) => d.count) ?? []))
+  return (
+    <section className="mx-4 mt-4 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6" aria-label="未来七天预计到期">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="m-0 text-[15px] font-semibold">未来 7 天 · 预计到期</h2>
+        {forecast && <span className="tabular text-[13px] text-muted">共 {forecast.total} 张</span>}
+      </div>
+      {error ? (
+        <div className="mt-3 flex items-center justify-between gap-3 text-[13px] text-muted" role="alert">
+          <span>暂时无法读取预测：{error}</span>
+          <button onClick={() => setAttempt((n) => n + 1)} className="shrink-0 underline underline-offset-2">重试</button>
+        </div>
+      ) : !forecast ? (
+        <div className="mt-3 h-28 animate-shimmer rounded-xl bg-line-soft" aria-label="加载复习预测中" />
+      ) : (
+        <>
+          <div className="mt-4 flex h-32 items-end gap-2" role="img" aria-label={forecast.days.map((d) => `${d.date}：${d.count} 张`).join('；')}>
+            {forecast.days.map((d, i) => {
+              const label = d.date.slice(5).replace('-', '/')
+              return (
+                <div key={d.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5">
+                  <span className="tabular text-[11px] text-muted">{d.count}</span>
+                  <div className={`w-full max-w-12 rounded-md ${i === 0 ? 'bg-accent' : 'bg-accent/45'}`}
+                    style={{ height: d.count ? `${Math.max(5, (d.count / max) * 88)}%` : 3, opacity: d.count ? 1 : .35 }} />
+                  <span className={`tabular text-[11px] ${i === 0 ? 'font-semibold text-ink' : 'text-muted'}`}>{i === 0 ? '今天' : label}</span>
+                </div>
+              )
+            })}
+          </div>
+          <p className="mt-3 mb-0 text-[12px] leading-relaxed text-faint">
+            今天包含尚未复习的逾期卡片；后续是当前排程的快照，学习后会变化。只统计进行中的卡片。
+          </p>
+        </>
+      )}
+    </section>
   )
 }
