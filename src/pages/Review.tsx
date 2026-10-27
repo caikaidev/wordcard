@@ -276,7 +276,7 @@ export default function Review() {
     <div className="pt-safe flex min-h-0 flex-1 flex-col px-4 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle
-          eyebrow="今日复习"
+          eyebrow={<Link to="/weekly" className="text-muted no-underline hover:text-ink">今日复习 · 看未来 7 天 ›</Link>}
           title={today()}
           right={
             <div className="flex items-center gap-2">
@@ -299,6 +299,7 @@ export default function Review() {
 
       <div className="mt-3.5 flex items-center gap-3 md:mt-0 md:gap-4">
         <StreakChip s={streak} />
+        <Link to="/weekly" className="hidden shrink-0 text-[13px] text-muted no-underline hover:text-ink md:block" aria-label="查看未来七天预计到期">未来 7 天 ›</Link>
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
