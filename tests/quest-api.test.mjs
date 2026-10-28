@@ -1,3 +1,4 @@
+import { d1Args } from './d1-bind.mjs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
@@ -21,11 +22,11 @@ function setup() {
     let args = []
     const statement = {
       bind(...values) { args = values; return statement },
-      async first() { return sqlite.prepare(sql).get(...args) ?? null },
-      async all() { return { results: sqlite.prepare(sql).all(...args) } },
+      async first() { return sqlite.prepare(sql).get(...d1Args(sql, args)) ?? null },
+      async all() { return { results: sqlite.prepare(sql).all(...d1Args(sql, args)) } },
       async run() {
-        if (/^\s*SELECT/i.test(sql)) return { results: sqlite.prepare(sql).all(...args), meta: { changes: 0 } }
-        const r = sqlite.prepare(sql).run(...args)
+        if (/^\s*SELECT/i.test(sql)) return { results: sqlite.prepare(sql).all(...d1Args(sql, args)), meta: { changes: 0 } }
+        const r = sqlite.prepare(sql).run(...d1Args(sql, args))
         return { meta: { changes: Number(r.changes) } }
       },
     }
@@ -36,7 +37,7 @@ function setup() {
   const context = { waitUntil: p => tasks.push(p), passThroughOnException() {} }
   const request = (path, method = 'POST', body, user = 'alice') => app.request('/quest' + path, { method, headers: { 'content-type': 'application/json', 'x-test-user': user }, ...(body ? { body: JSON.stringify(body) } : {}) }, env, context)
   const content = { title: 'Test', summary: 'test', words: [], expressions: [], tasks: [], speaking: [] }
-  const bank = { words: [{ en: 'habit', zh: '习惯', distractors: ['甲', '乙'] }, { en: 'routine', zh: '惯例', distractors: ['甲', '乙'] }], listening: [{ en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'], extra: [] }], cloze: [], reading: [], speaking: [{ en: 'We learn together.', zh: '我们一起学。' }] }
+  const bank = { words: [{ en: 'habit', zh: '习惯', distractors: ['甲', '乙'] }, { en: 'routine', zh: '惯例', distractors: ['甲', '乙'] }], listening: [{ en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'], extra: [] }, { en: 'We learn every day.', zh: '我们每天学习。', distractors: ['甲', '乙'], extra: [] }], cloze: [], reading: [], speaking: [{ en: 'We learn together.', zh: '我们一起学。' }] }
   const lesson = (id, progress, owner = 'alice', level = 2) => {
     sqlite.prepare('INSERT INTO lessons (id, created_at, level, title, content, user_id) VALUES (?, ?, ?, ?, ?, ?)').run(id, Date.now(), level, 'Test', JSON.stringify(content), owner)
     if (progress) sqlite.prepare('INSERT INTO quests (lesson_id, user_id, content, progress, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, owner, JSON.stringify(bank), JSON.stringify(progress), Date.now(), Date.now())
@@ -107,10 +108,13 @@ test('new generation uses recent same-user, same-level feedback; cached banks ar
     assert.equal(response.status, 200, await response.clone().text())
     assert.match(prompt, /听力：在当前档位内稍降低难度/)
     assert.match(prompt, /阅读：保持当前档位的常规难度/)
-    assert.match(prompt, /speaking：3 个独立/)
+    assert.match(prompt, /只生成首批认词与听力题/)
+    assert.doesNotMatch(prompt, /speaking：3 个独立/)
     assert.equal(calls, 1)
     const cached = await (await s.request('/20')).json()
-    assert.deepEqual(cached.content.speaking, s.bank.speaking)
+    assert.equal(cached.buffer.phase, 'starter')
+    assert.deepEqual(cached.content.listening, s.bank.listening)
+    assert.equal(cached.content.speaking, undefined)
     assert.equal(calls, 1)
     await Promise.all(s.tasks)
   } finally { globalThis.fetch = originalFetch; s.sqlite.close() }

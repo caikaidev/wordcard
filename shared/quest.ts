@@ -1,4 +1,5 @@
 import type { Difficulty } from './difficulty'
+import type { QuestBuffer } from './quest-buffer'
 
 /* ---------------------------- 闯关：一篇文章拆成几个小关卡，一题一屏 ---------------------------- */
 
@@ -26,6 +27,8 @@ export interface QuestProgress {
 }
 
 export interface Quest {
+  /** Missing on legacy clients/imports; existing banks are complete. */
+  buffer?: QuestBuffer
   lessonId: number
   title: string
   content: QuestContent

@@ -1,3 +1,4 @@
+import { d1Args } from './d1-bind.mjs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
@@ -25,7 +26,7 @@ test('SQL groups overdue into today, respects owner/status and excludes the eigh
   insert.run('alice', 'active', end) // day 8: excluded
   insert.run('alice', 'done', start - 5) // completed: excluded
   insert.run('bob', 'active', start - 5) // another user: excluded
-  const rows = db.prepare(REVIEW_FORECAST_SQL).all(tomorrow, 'alice', end)
+  const rows = db.prepare(REVIEW_FORECAST_SQL).all(...d1Args(REVIEW_FORECAST_SQL, [tomorrow, 'alice', end]))
   const r = buildReviewForecast(rows, now)
   assert.deepEqual(r.days.map(d => d.count), [2, 1, 0, 0, 0, 0, 1])
   assert.equal(r.total, 4)

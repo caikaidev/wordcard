@@ -1,8 +1,9 @@
 import { difficultyPrompt, isDifficulty, type Difficulty, type DifficultySample } from '../shared/difficulty'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import type { AppEnv } from './env'
 import { generateJson } from './gemini'
 import { warmMeloTts } from './melo'
+import { appendTail, starterContent, readyCount, stagePrepared, BUFFER_MAX, type QuestPart, type QuestPhase, type QuestBuffer } from '../shared/quest-buffer'
 import { aiEnv } from './settings'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
@@ -96,6 +97,30 @@ ${source ? `原文（可能截断）：\n${source}` : '（没有原文，只能�
 要求：英文必须拼写正确；干扰项不能也是对的；不要出现「以上都对」这类选项。`
 }
 
+/** Two bounded batches, not a request per screen. Full remains available for compatibility. */
+function phasePrompt(prompt: string, part: QuestPart, existing?: QuestContent): string {
+  if (part === 'full') return prompt
+  const begin = prompt.indexOf('请出：')
+  const end = prompt.indexOf('中文质量要求')
+  const requirements = part === 'starter'
+    ? `只生成首批认词与听力题，严格返回 words 和 listening 两个字段：
+1. words：5 个不同的词或完整表达，优先使用上面的生词和句式，不够时从原文补充。en 为英文，zh 为简洁中文意思，distractors 为 3 个中文干扰项。不得为了凑数重复。
+2. listening：4 个独立完整的短句，尽量 6–14 词，来自原文或忠实改写。en 英文，zh 自然中文译文，distractors 为 3 个不同的干扰译文，extra 为 2 个不在原句里的英文单词。
+此批不生成阅读、填空或跟读题。`
+    : `只补充后半套题，严格返回 cloze、reading、speaking 三个字段：
+1. cloze：3 句原文中的完整句子，每句恰好一个 ____；answer 为原词，distractors 为 3 个词性相同、但不正确的词，zh 为整句译文。
+2. reading：1–2 段 40–90 词的原文，每段 1–2 题。passage 为原文；questions 中 question、answer、distractors（3 项）、explain 都用自然中文。
+3. speaking：3 个独立完整的英文跟读短句（en）及中文译文（zh），忠实原文，不使用省略号或占位符。
+不要重出、修改或返回首批题目。已生成的听力句子：${existing?.listening.map((l) => l.en).join(' / ') ?? ''}`
+  return prompt.slice(0, begin) + requirements + '\n\n' + prompt.slice(end)
+}
+
+function phaseSchema(part: QuestPart) {
+  if (part === 'full') return questSchema
+  const keys = part === 'starter' ? ['words', 'listening'] : ['cloze', 'reading', 'speaking']
+  return { type: 'OBJECT', properties: Object.fromEntries(keys.map((key) => [key, questSchema.properties[key as keyof typeof questSchema.properties]])), required: keys }
+}
+
 const s = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '')
 const list = (v: unknown, max: number, n: number) => (Array.isArray(v) ? v.map((x) => s(x, max)).filter(Boolean).slice(0, n) : [])
 
@@ -139,84 +164,160 @@ const parseProgress = (raw: string | null): QuestProgress => {
   }
 }
 
-/** Shared generation routine for interactive requests and the background queue.
- * The INSERT never overwrites an existing bank, preserving saved XP/progress. */
-export async function generateQuestBank(env: AppEnv['Bindings'], user: string, admin: boolean, id: number): Promise<QuestContent> {
+export class QuestBusyError extends Error {
+  constructor() { super('题目正在准备中'); this.name = 'QuestBusyError' }
+}
+
+const GENERATION_LEASE_MS = 5 * 60_000
+
+type BankRow = { content: string; progress: string; ready_phase: QuestPhase }
+const bankRow = (env: AppEnv['Bindings'], user: string, id: number) => env.DB.prepare(
+  'SELECT content, progress, ready_phase FROM quests WHERE lesson_id = ? AND user_id = ?',
+).bind(id, user).first<BankRow>()
+
+/** Both HTTP and Queue use this lease. A stale owner cannot overwrite a newer bank.
+ * A lease bounds crash recovery; it is not an upstream exactly-once billing guarantee. */
+export async function generateQuestBank(
+  env: AppEnv['Bindings'], user: string, admin: boolean, id: number, part: QuestPart = 'full', background = false,
+): Promise<QuestContent> {
   const lesson = await env.DB.prepare('SELECT title, level, content, source_text FROM lessons WHERE id = ? AND user_id = ?')
     .bind(id, user).first<{ title: string; level: number; content: string; source_text: string | null }>()
   if (!lesson) throw new Error('找不到这份练习')
-  const cached = await env.DB.prepare('SELECT content FROM quests WHERE lesson_id = ? AND user_id = ?')
-    .bind(id, user).first<{ content: string }>()
-  if (cached) return JSON.parse(cached.content) as QuestContent
+  const initial = await bankRow(env, user, id)
+  if (initial && (initial.ready_phase === 'complete' || part === 'starter')) return JSON.parse(initial.content)
+  if (!initial && part === 'tail') throw new Error('请先准备首批题目')
 
-  const content = JSON.parse(lesson.content) as LessonContent
-  const ai = await aiEnv(env, user, admin)
-  const samples = await env.DB.prepare(`
-    SELECT stage, difficulty, accuracy FROM (
-      SELECT f.stage, f.difficulty, f.accuracy,
-        ROW_NUMBER() OVER (PARTITION BY f.stage ORDER BY f.created_at DESC, f.lesson_id DESC) AS n
-      FROM quest_feedback f JOIN lessons l ON l.id = f.lesson_id AND l.user_id = f.user_id
-      WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
-    ) WHERE n <= 8 ORDER BY stage, n
-  `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
-  const raw = await generateJson<Partial<QuestContent>>(
-    ai,
-    questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results)),
-    questSchema,
-    'quest',
-    0.5,
-  )
-  const clean = cleanQuest(raw)
-  if (clean.words.length < 2 && clean.listening.length < 2) throw new Error('AI 这次出的题不完整，再试一次')
+  const owner = crypto.randomUUID()
   const now = Date.now()
-  await env.DB.prepare(
-    'INSERT INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(lesson_id) DO NOTHING',
-  ).bind(id, user, JSON.stringify(clean), now, now).run()
-  const saved = await env.DB.prepare('SELECT content FROM quests WHERE lesson_id = ? AND user_id = ?')
-    .bind(id, user).first<{ content: string }>()
-  return saved ? JSON.parse(saved.content) as QuestContent : clean
+  const claimed = await env.DB.prepare(
+    'INSERT INTO quest_generation_locks (lesson_id, owner, expires_at) VALUES (?, ?, ?) ' +
+    'ON CONFLICT(lesson_id) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at ' +
+    'WHERE quest_generation_locks.expires_at <= ? RETURNING owner',
+  ).bind(id, owner, now + GENERATION_LEASE_MS, now).first<{ owner: string }>()
+  if (claimed?.owner !== owner) throw new QuestBusyError()
+
+  try {
+    const cached = await bankRow(env, user, id)
+    if (cached && (cached.ready_phase === 'complete' || part === 'starter')) return JSON.parse(cached.content)
+    // A partial bank must only be appended to, even via an old full-generation caller.
+    const effectivePart = cached ? 'tail' : part
+    const existing = cached ? JSON.parse(cached.content) as QuestContent : undefined
+    const ai = await aiEnv(env, user, admin)
+    if (background && (ai.TEXT_PROVIDER !== 'cloudflare' || env.AI_DISABLED === 'true')) throw new Error('Cloudflare-only background generation is disabled')
+    const content = JSON.parse(lesson.content) as LessonContent
+    const samples = await env.DB.prepare(`
+      SELECT stage, difficulty, accuracy FROM (
+        SELECT f.stage, f.difficulty, f.accuracy,
+          ROW_NUMBER() OVER (PARTITION BY f.stage ORDER BY f.created_at DESC, f.lesson_id DESC) AS n
+        FROM quest_feedback f JOIN lessons l ON l.id = f.lesson_id AND l.user_id = f.user_id
+        WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
+      ) WHERE n <= 8 ORDER BY stage, n
+    `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
+    const prompt = questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results))
+    const raw = await generateJson<Partial<QuestContent>>(
+      ai, phasePrompt(prompt, effectivePart, existing), phaseSchema(effectivePart), 'quest', 0.5,
+    )
+    const clean = cleanQuest(raw)
+    if (effectivePart === 'tail') {
+      if (!existing || !clean.speaking?.length || clean.cloze.length + clean.reading.length < 2)
+        throw new Error('AI 这次补充的题不完整，请重试')
+    } else if (effectivePart === 'starter') {
+      if (clean.words.length < 2 || clean.listening.length < 2) throw new Error('AI 这次出的首批题不完整，请重试')
+    } else if (clean.words.length < 2 && clean.listening.length < 2) {
+      throw new Error('AI 这次出的题不完整，再试一次')
+    }
+    const next = effectivePart === 'tail' ? appendTail(existing!, clean)
+      : effectivePart === 'starter' ? starterContent(clean) : clean
+    const phase: QuestPhase = effectivePart === 'starter' ? 'starter' : 'complete'
+    const savedAt = Date.now()
+    if (cached) {
+      await env.DB.prepare(
+        "UPDATE quests SET content = ?, ready_phase = 'complete', updated_at = ? " +
+        "WHERE lesson_id = ? AND user_id = ? AND ready_phase = 'starter' " +
+        'AND EXISTS (SELECT 1 FROM lessons WHERE id = ? AND user_id = ?) ' +
+        'AND EXISTS (SELECT 1 FROM quest_generation_locks WHERE lesson_id = ? AND owner = ?)',
+      ).bind(JSON.stringify(next), savedAt, id, user, id, user, id, owner).run()
+    } else {
+      await env.DB.prepare(
+        'INSERT INTO quests (lesson_id,user_id,content,ready_phase,created_at,updated_at) ' +
+        'SELECT ?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM lessons WHERE id = ? AND user_id = ?) ' +
+        'AND EXISTS (SELECT 1 FROM quest_generation_locks WHERE lesson_id = ? AND owner = ?) ' +
+        'ON CONFLICT(lesson_id) DO NOTHING',
+      ).bind(id, user, JSON.stringify(next), phase, savedAt, savedAt, id, user, id, owner).run()
+    }
+    const saved = await bankRow(env, user, id)
+    if (!saved) throw new Error('找不到这份练习，生成结果未保存')
+    if (phase === 'complete' && saved.ready_phase !== 'complete') throw new QuestBusyError()
+    return JSON.parse(saved.content) as QuestContent
+  } finally {
+    await env.DB.prepare('DELETE FROM quest_generation_locks WHERE lesson_id = ? AND owner = ?')
+      .bind(id, owner).run().catch((error) => console.error('release quest lease failed', error))
+  }
 }
 
-/** 取题库：没有就现出一套（一次 AI 调用） */
-quest.post('/:lessonId', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('lessonId'))
-  const lesson = await c.env.DB.prepare('SELECT title, level, content, source_text FROM lessons WHERE id = ? AND user_id = ?')
-    .bind(id, user)
-    .first<{ title: string; level: number; content: string; source_text: string | null }>()
-  if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
-
-  const [row, written, feedbackRows] = await Promise.all([
-    c.env.DB.prepare('SELECT content, progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ content: string; progress: string }>(),
+/** Polling is read-only: a failure or budget refusal can never silently start AI. */
+async function snapshot(c: Context<AppEnv>) {
+  const user = c.get('user'), id = Number(c.req.param('lessonId'))
+  if (!Number.isSafeInteger(id) || id <= 0) return null
+  const lesson = await c.env.DB.prepare('SELECT title FROM lessons WHERE id = ? AND user_id = ?')
+    .bind(id, user).first<{ title: string }>()
+  if (!lesson) return null
+  const row = await bankRow(c.env, user, id)
+  const kind = row?.ready_phase === 'starter' ? 'quest_tail' : 'quest'
+  const job = await c.env.DB.prepare('SELECT status, updated_at, lease_until FROM generation_jobs WHERE user_id = ? AND lesson_id = ? AND kind = ?')
+    .bind(user, id, kind).first<{ status: QuestBuffer['status']; updated_at: number; lease_until: number }>()
+  const lock = await c.env.DB.prepare('SELECT expires_at FROM quest_generation_locks WHERE lesson_id = ?')
+    .bind(id).first<{ expires_at: number }>()
+  const now = Date.now()
+  const status: QuestBuffer['status'] = lock && lock.expires_at > now ? 'running'
+    : job?.status === 'queued' && now - job.updated_at < 90_000 ? 'queued'
+    : job?.status === 'running' && job.lease_until > now ? 'running'
+    : job && job.status !== 'done' ? 'failed' : 'idle'
+  if (!row) return { pending: true as const, status }
+  const content = JSON.parse(row.content) as QuestContent
+  const [written, feedback] = await Promise.all([
     c.env.DB.prepare('SELECT COUNT(DISTINCT idx) AS n FROM submissions WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ n: number }>(),
     c.env.DB.prepare('SELECT stage, difficulty FROM quest_feedback WHERE lesson_id = ? AND user_id = ?').bind(id, user).all<{ stage: StageId; difficulty: Difficulty }>(),
   ])
-  const feedback = Object.fromEntries(feedbackRows.results.map((r) => [r.stage, r.difficulty]))
-  const writeDone = (written?.n ?? 0) >= 3
-  if (row) {
-    const q: Quest = { lessonId: id, title: lesson.title, content: JSON.parse(row.content), progress: parseProgress(row.progress), feedback, writeDone }
-    return c.json(q)
+  const q: Quest = {
+    lessonId: id, title: lesson.title, content, progress: parseProgress(row.progress), writeDone: (written?.n ?? 0) >= 3,
+    feedback: Object.fromEntries(feedback.results.map((r) => [r.stage, r.difficulty])),
+    buffer: { phase: row.ready_phase, ready: readyCount(content, row.ready_phase), target: BUFFER_MAX, status: row.ready_phase === 'complete' ? 'done' : status },
   }
+  return q
+}
 
-  const job = await c.env.DB.prepare(
-    "SELECT id, status, updated_at, lease_until FROM generation_jobs WHERE user_id = ? AND lesson_id = ? AND kind = 'quest'",
-  ).bind(user, id).first<{ id: number; status: string; updated_at: number; lease_until: number }>()
-  if (job?.status === 'queued' && Date.now() - job.updated_at < 90_000 ||
-      job?.status === 'running' && job.lease_until > Date.now()) {
-    return c.json({ pending: true, status: job.status }, 202)
-  }
-  if (job && (job.status === 'queued' || job.status === 'running')) {
-    // If Queues failed to run the task, interactive requests must not wait forever.
-    await c.env.DB.prepare("UPDATE generation_jobs SET status = 'failed', updated_at = ?, error = 'stale' WHERE id = ? AND updated_at = ?")
-      .bind(Date.now(), job.id, job.updated_at).run()
-  }
-  const clean = await generateQuestBank(c.env, user, c.get('admin'), id)
-  // Audio is warmed after a direct generation; background generation is
-  // budget-protected and leaves optional TTS to the existing lazy prefetch.
-  c.executionCtx.waitUntil(warmMeloTts(await aiEnv(c.env, user, c.get('admin')), clean.listening.map((l) => l.en.replace(/\\s+/g, ' ').trim().slice(0, 500))))
-  return c.json({ lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, feedback, writeDone })
-
+quest.get('/:lessonId', async (c) => {
+  const q = await snapshot(c)
+  if (!q) return c.json({ error: '找不到这份练习' }, 404)
+  return c.json(q, 'pending' in q ? 202 : 200)
 })
+
+async function startGeneration(c: Context<AppEnv>, part: 'starter' | 'tail') {
+  const q = await snapshot(c)
+  if (!q) return c.json({ error: '找不到这份练习' }, 404)
+  if (!('pending' in q) && (part === 'starter' || q.buffer?.phase === 'complete')) return c.json(q)
+  if ('pending' in q && part === 'tail') return c.json({ error: '请先准备首批题目' }, 409)
+  const status = 'pending' in q ? q.status : q.buffer?.status
+  if (status === 'queued' || status === 'running') return c.json({ pending: true, status }, 202)
+  try {
+    const clean = await generateQuestBank(c.env, c.get('user'), c.get('admin'), Number(c.req.param('lessonId')), part)
+    if (part === 'starter') {
+      c.executionCtx.waitUntil(aiEnv(c.env, c.get('user'), c.get('admin'))
+        .then((ai) => warmMeloTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500)))))
+    }
+    const fresh = await snapshot(c)
+    return fresh ? c.json(fresh) : c.json({ error: '找不到这份练习' }, 404)
+  } catch (error) {
+    if (error instanceof QuestBusyError) return c.json({ pending: true, status: 'running' }, 202)
+    if (error instanceof Error && /不完整/.test(error.message)) return c.json({ error: error.message }, 502)
+    throw error
+  }
+}
+
+quest.post('/:lessonId', (c) => startGeneration(c, 'starter'))
+// Explicit user action only, never used by automatic status polling.
+quest.post('/:lessonId/complete', (c) => startGeneration(c, 'tail'))
 
 /** 过关：记下最好成绩、加经验值；过一关也算今天打卡 */
 quest.post('/:lessonId/stages/:stage', async (c) => {
@@ -226,8 +327,9 @@ quest.post('/:lessonId/stages/:stage', async (c) => {
   if (!PLAYABLE.includes(stage)) return c.json({ error: '没有这一关' }, 400)
   const body = await c.req.json<{ accuracy?: unknown }>().catch(() => null)
   const accuracy = Math.max(0, Math.min(1, Number(body?.accuracy) || 0))
-  const row = await c.env.DB.prepare('SELECT progress FROM quests WHERE lesson_id = ? AND user_id = ?').bind(id, user).first<{ progress: string }>()
+  const row = await bankRow(c.env, user, id)
   if (!row) return c.json({ error: '找不到这套题' }, 404)
+  if (!stagePrepared(row.ready_phase, stage)) return c.json({ error: '这一关的题目还在准备中' }, 409)
   const p = parseProgress(row.progress)
   if (!unlocked(p, stage)) return c.json({ error: '先完成前一关' }, 409)
   const prev = p.stages[stage]

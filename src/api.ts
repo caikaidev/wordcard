@@ -153,8 +153,12 @@ export const api = {
   tokens: () => req<{ tokens: ApiToken[] }>('/tokens'),
   createToken: (name: string) => req<{ id: number; name: string; token: string }>('/tokens', { method: 'POST', body: json({ name }) }),
   deleteToken: (id: number) => req<void>(`/tokens/${id}`, { method: 'DELETE' }),
-  prepareQuest: (lessonId: number) =>
-    req<{ status: string; jobId?: number }>(`/generation/quest/${lessonId}`, { method: 'POST' }),
+  prepareQuest: (lessonId: number, refill = false) =>
+    req<{ status: string; jobId?: number }>(`/generation/quest/${lessonId}`, { method: 'POST', body: json({ refill }) }),
+  questStatus: (lessonId: number) =>
+    req<Quest | { pending: true; status: string }>(`/quest/${lessonId}`, undefined, 20_000),
+  completeQuest: (lessonId: number) =>
+    req<Quest | { pending: true; status: string }>(`/quest/${lessonId}/complete`, { method: 'POST' }, 120_000),
   quest: (lessonId: number) =>
     req<Quest | { pending: true; status: string }>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
   passStage: (lessonId: number, stage: StageId, accuracy: number) =>
