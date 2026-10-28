@@ -273,7 +273,7 @@ export default function Review() {
   }, [])
 
   return (
-    <div className="pt-safe flex min-h-0 flex-1 flex-col px-4 md:px-6 md:pt-10">
+    <div className="compact-review pt-safe flex min-h-0 flex-1 flex-col px-4 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle
           eyebrow={<Link to="/weekly" className="text-muted no-underline hover:text-ink">今日复习 · 看未来 7 天 ›</Link>}
@@ -297,7 +297,7 @@ export default function Review() {
         />
       </div>
 
-      <div className="mt-3.5 flex items-center gap-3 md:mt-0 md:gap-4">
+      <div className="review-progress mt-3.5 flex items-center gap-3 md:mt-0 md:gap-4">
         <StreakChip s={streak} />
         <Link to="/weekly" className="hidden shrink-0 text-[13px] text-muted no-underline hover:text-ink md:block" aria-label="查看未来七天预计到期">未来 7 天 ›</Link>
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
@@ -331,7 +331,7 @@ export default function Review() {
         )}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col pt-3 pb-3 md:flex-none md:pt-5 md:pb-4">
+      <div className="review-card-stage flex min-h-0 flex-1 flex-col pt-3 pb-3 md:flex-none md:pt-5 md:pb-4">
         {error ? (
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue || !modeSetting ? (
@@ -409,7 +409,7 @@ export default function Review() {
           />
         ) : (
           <div
-            className={`flex min-h-0 flex-1 flex-col md:flex-none ${drag ? '' : 'transition-transform duration-200'}`}
+            className={`review-card-motion flex min-h-0 flex-1 flex-col md:flex-none ${drag ? '' : 'transition-transform duration-200'}`}
             style={{ transform: drag ? `translateX(${drag}px) rotate(${drag / 40}deg)` : undefined, opacity: drag ? Math.max(0.4, 1 + drag / 300) : undefined, touchAction: 'pan-y' }}
             onTouchStart={onTouchStart}
             onTouchMove={onTouchMove}
@@ -418,7 +418,7 @@ export default function Review() {
           >
             <Card
               key={`${card.id}-${flipped}-${reviewed}-${skipped.length}`}
-              className="flex min-h-[240px] flex-1 animate-flip flex-col overflow-hidden md:max-h-[min(640px,calc(100dvh-260px))] md:min-h-[440px] md:flex-none"
+              className="review-card flex min-h-[240px] flex-1 animate-flip flex-col overflow-hidden md:max-h-[min(640px,calc(100dvh-260px))] md:min-h-[440px] md:flex-none"
             >
               {flipped ? (
                 <Back
@@ -443,11 +443,11 @@ export default function Review() {
       </div>
 
       {card && (
-        <div className="pb-3 md:pb-0">
+        <div className="review-actions pb-3 md:pb-0">
           {!flipped ? (
             <button
               onClick={() => setFlipped(true)}
-              className="h-[52px] w-full rounded-[14px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg md:h-16"
+              className="review-action-button h-[52px] w-full rounded-[14px] border-0 bg-invert-bg text-base font-medium tracking-wide text-invert-fg md:h-16"
             >
               显示答案
             </button>
@@ -459,7 +459,7 @@ export default function Review() {
               <button
                 onClick={() => grade(1)}
                 disabled={busy}
-                className="h-[52px] w-full rounded-[14px] border-0 bg-accent text-base font-medium text-on-accent disabled:opacity-60 md:h-16"
+                className="review-action-button h-[52px] w-full rounded-[14px] border-0 bg-accent text-base font-medium text-on-accent disabled:opacity-60 md:h-16"
               >
                 完成巩固，继续
               </button>
@@ -477,7 +477,7 @@ export default function Review() {
             </div>
           )}
           <div
-            className={`mt-5 hidden text-center text-xs md:block ${keysHint ? 'rounded-xl bg-accent-soft px-3 py-2.5 text-accent' : 'text-muted'}`}
+            className={`review-keyboard-hint mt-5 hidden text-center text-xs md:block ${keysHint ? 'rounded-xl bg-accent-soft px-3 py-2.5 text-accent' : 'text-muted'}`}
           >
             {keysHint && <span className="font-medium">键盘更快：</span>}
             空格 翻转 · 1 / 2 / 3 评分 · P 播放 · D 已掌握（标记 DONE，不再复习） · S 跳过
@@ -516,23 +516,23 @@ function AgainBadge() {
 function Front({ item, onFlip, again = false }: { item: Item; onFlip: () => void; again?: boolean }) {
   const isWord = item.type === 'word'
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="review-card-face flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <Chip>{isWord ? '单词' : '句子'}</Chip>
           {again && <AgainBadge />}
         </div>
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
+      <div className="review-card-center flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
         <div
-          className={`font-serif font-medium tracking-tight ${
+          className={`review-card-word font-serif font-medium tracking-tight ${
             isWord ? 'text-[40px] leading-[1.1] md:text-[56px]' : 'text-[22px] leading-snug md:text-[30px]'
           }`}
         >
           {item.text}
         </div>
         {item.meta.ipa && <div className="font-serif text-base text-muted italic md:text-lg">{item.meta.ipa}</div>}
-        <div className="mt-3">
+        <div className="review-speaker mt-3">
           <SpeakButton text={item.text} size={48} label={isWord ? '播放发音' : '播放句子'} />
         </div>
       </div>
@@ -550,12 +550,12 @@ function RecallFront({ item, onFlip, onHint, again = false }: { item: Item; onFl
     .map((w) => (w.length <= 1 ? w : `${w[0]}${'_'.repeat(Math.min(w.length - 1, 8))}`))
     .join(' ')
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="review-card-face flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex shrink-0 items-center gap-1.5">
         <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">产出 · 说出英文</span>
         {again && <AgainBadge />}
       </div>
-      <div className="flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
+      <div className="review-card-center flex flex-1 flex-col items-center justify-center-safe gap-3 py-2 text-center">
         {item.meta.pos && <div className="font-serif text-[15px] text-muted italic">{item.meta.pos}</div>}
         <div className={`font-medium ${isWord ? 'text-[26px] leading-snug md:text-[34px]' : 'text-[19px] leading-relaxed md:text-[24px]'}`}>
           {item.meta.meaning}
@@ -591,7 +591,7 @@ function Guide({ due, onClose }: { due: number; onClose: () => void }) {
     ['复习完还想练？', `右上角 ✨「AI 重组」会用今天要复习的词现编几句新例句；「练习」页可以贴一篇文章，写几句英文让 AI 批改。`],
   ]
   return (
-    <Card className="flex flex-1 animate-rise flex-col gap-4 overflow-y-auto p-6 md:min-h-[440px] md:flex-none md:p-10">
+    <Card className="review-guide flex flex-1 animate-rise flex-col gap-4 overflow-y-auto p-6 md:min-h-[440px] md:flex-none md:p-10">
       <div>
         <div className="text-xs tracking-wide text-muted">第一次来？30 秒了解怎么用</div>
         <div className="mt-1 text-xl font-semibold">今天有 {due} 张卡片要复习</div>
@@ -628,7 +628,7 @@ function ProductionFront({ cloze, onFlip, onHint, context = false, source = '', 
     .map((w) => (w.length <= 1 ? w : `${w[0]}…`))
     .join(' ')
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
+    <div className="review-card-face flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pt-4 pb-5 md:px-12 md:py-10" onClick={onFlip}>
       <div className="flex items-center justify-between">
         <div className="flex shrink-0 items-center gap-1.5">
           <span className="rounded-full bg-accent-soft px-2.5 py-1 text-xs font-medium whitespace-nowrap text-accent">
@@ -698,7 +698,7 @@ function Back({
   const more = useMoreBelow(scrollRef)
   return (
     <>
-    <div ref={scrollRef} className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-5 pt-5 pb-3 md:px-12 md:py-10">
+    <div ref={scrollRef} className="review-card-back relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-5 pt-5 pb-3 md:px-12 md:py-10">
       {cloze && (
         <div className="mb-4 flex items-start gap-2 rounded-xl bg-accent-soft/60 px-3.5 py-3 md:mb-6">
           <div className="flex-1">
@@ -819,7 +819,7 @@ function GradeButton(p: { k: string; label: string; hint: string; cls: string; o
     <button
       onClick={p.onClick}
       disabled={p.disabled}
-      className={`flex h-[52px] flex-col items-center justify-center gap-0 rounded-[14px] border-0 transition active:scale-[0.97] disabled:opacity-60 md:h-16 md:flex-row md:gap-2.5 ${p.cls}`}
+      className={`review-grade-button flex h-[52px] flex-col items-center justify-center gap-0 rounded-[14px] border-0 transition active:scale-[0.97] disabled:opacity-60 md:h-16 md:flex-row md:gap-2.5 ${p.cls}`}
     >
       <span className="hidden h-[22px] w-[22px] items-center justify-center rounded-md border border-current/35 text-xs md:flex">
         {p.k}
@@ -844,7 +844,7 @@ function Empty({
   tone?: 'ok' | 'error'
 }) {
   return (
-    <Card className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center md:h-[440px]">
+    <Card className="review-empty flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center md:h-[440px]">
       <div
         className={`mb-2 flex h-14 w-14 items-center justify-center rounded-full ${
           tone === 'error' ? 'bg-forgot-bg text-forgot-fg' : 'bg-accent-soft text-accent'
