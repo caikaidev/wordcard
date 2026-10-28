@@ -248,6 +248,9 @@ export function stop() {
   done(false)
 }
 
+/** Read-only snapshot for Safari diagnostic tests. */
+export function getSpeechStatus() { return state }
+
 export function useSpeaking() {
   return useSyncExternalStore(
     (cb) => { listeners.add(cb); return () => void listeners.delete(cb) },
