@@ -139,7 +139,7 @@ function fallback(text: string, slow: boolean, quiet = false) {
   if (!synth) return done(false)
   if (!notified && !quiet) {
     notified = true
-    import('./components/ui').then((m) => m.toast('云端语音暂时不可用（可能是今日额度用完），已改用系统朗读'))
+    import('./components/ui').then((m) => m.toast('MeloTTS 暂不可用，已用系统朗读。可在「设置 → 测试语音」查看具体原因'))
   }
   synth.cancel()
   const u = new SpeechSynthesisUtterance(text)

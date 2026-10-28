@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 // Bundle the actual Worker logic; no Cloudflare or Gemini credentials needed.
 const bundle = await build({ entryPoints: ['worker/melo.ts'], bundle: true, platform: 'node', format: 'esm', write: false })
 const melo = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'))
-const { MELO_MODEL, decodeMeloResult, meloTtsKey, generateMeloTts, warmMeloTts } = melo
+const { MELO_MODEL, decodeMeloResult, meloTtsKey, generateMeloTts, warmMeloTts, classifyMeloError } = melo
 const mp3 = Uint8Array.from([73, 68, 51, ...Array(48).fill(0)])
 const audio = btoa(String.fromCharCode(...mp3))
 
@@ -92,4 +92,13 @@ test('prewarming only generates once for repeated or cached text', async () => {
   assert.equal(state.calls.length, 1)
   assert.equal(state.recorded.length, 1)
   assert.equal(state.cached.size, 1)
+})
+
+test('Cloudflare quota and capacity errors are distinguished', () => {
+  assert.match(classifyMeloError(new Error('3036: free allocation exceeded')).message, /免费 Neurons 已耗尽/)
+  assert.match(classifyMeloError(new Error('3040 Out of Capacity')).message, /不是免费额度用完/)
+  assert.equal(classifyMeloError(new Error('3040 Out of Capacity')).status, 503)
+  assert.match(classifyMeloError(new Error('429 too many requests')).message, /不能据此认定/)
+  assert.match(classifyMeloError({ code: 5035 }).message, /Workers Paid/)
+  assert.match(classifyMeloError(new Error('some internal exception')).message, /不是已确认的额度不足/)
 })
