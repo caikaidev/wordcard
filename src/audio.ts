@@ -16,7 +16,7 @@ const set = (s: State) => {
 
 let el: HTMLAudioElement | null = null
 let finish: ((ok: boolean) => void) | null = null
-let onPlaying: (() => void) | null = null
+let onPlaying: ((engine: 'melo' | 'system') => void) | null = null
 
 function audio() {
   if (!el) {
@@ -26,7 +26,7 @@ function audio() {
       set({ ...state, loading: false })
       const f = onPlaying
       onPlaying = null
-      f?.()
+      f?.('melo')
     })
     el.addEventListener('ended', () => done(true))
     // 云端语音失败（额度用完、网络问题等）→ 改用系统自带朗读
@@ -151,14 +151,14 @@ function fallback(text: string, slow: boolean, quiet = false) {
     set({ ...state, loading: false })
     const f = onPlaying
     onPlaying = null
-    f?.()
+    f?.('system')
   }
   u.onend = () => done(true)
   u.onerror = () => done(false)
   synth.speak(u)
 }
 
-export function speak(text: string, slow = false, playing?: () => void): Promise<boolean> {
+export function speak(text: string, slow = false, playing?: (engine: 'melo' | 'system') => void): Promise<boolean> {
   const a = audio()
   if (finish) done(false)
   window.speechSynthesis?.cancel()
