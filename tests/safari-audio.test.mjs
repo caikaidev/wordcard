@@ -70,3 +70,58 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
     else delete globalThis.navigator
   }
 })
+
+test('uncached word starts system speech on click and warms cloud audio in parallel', async () => {
+  const old = {
+    Audio: globalThis.Audio, window: globalThis.window, navigator: globalThis.navigator,
+    SpeechSynthesisUtterance: globalThis.SpeechSynthesisUtterance, fetch: globalThis.fetch,
+  }
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  let spoken = 0
+  let utterance
+  let cloudFetches = 0
+  let player
+  class FakeAudio {
+    constructor() { this.listeners = new Map(); this.plays = 0; player = this }
+    addEventListener(name, fn) { this.listeners.set(name, fn) }
+    play() { this.plays++; return Promise.resolve() }
+    pause() {}
+    emit(name) { this.listeners.get(name)?.() }
+  }
+  globalThis.Audio = FakeAudio
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: { onLine: true } })
+  globalThis.SpeechSynthesisUtterance = class { constructor(text) { this.text = text } }
+  globalThis.window = { speechSynthesis: {
+    getVoices() { return [] }, cancel() {},
+    speak(u) { spoken++; utterance = u },
+  } }
+  globalThis.fetch = async () => {
+    cloudFetches++
+    return {
+      ok: true,
+      headers: { get() { return 'audio/mpeg' } },
+      async blob() { return new Blob([Uint8Array.of(73, 68, 51)], { type: 'audio/mpeg' }) },
+    }
+  }
+  try {
+    const bundle = await build({ entryPoints: ['src/audio.ts'], bundle: true, platform: 'node', format: 'esm', write: false })
+    const audio = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'))
+    const first = audio.speakFast('hello')
+    assert.equal(spoken, 1, 'system speech must be invoked within the user click')
+    assert.equal(cloudFetches, 1, 'one background prefetch for the requested word')
+    utterance.onstart()
+    utterance.onend()
+    assert.equal(await first, true)
+    // The click must not wait for a cloud response. Cache playback is separately
+    // covered by the existing speak() tests; the prefetch completion is best-effort.
+    assert.equal(cloudFetches, 1)
+  } finally {
+    for (const [name, value] of Object.entries(old)) {
+      if (name === 'navigator') continue
+      if (value === undefined) delete globalThis[name]
+      else globalThis[name] = value
+    }
+    if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor)
+    else delete globalThis.navigator
+  }
+})

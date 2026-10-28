@@ -130,14 +130,73 @@ export async function generateMeloTts(env: Env, text: string): Promise<MeloAudio
   return audio
 }
 
-/** Prewarm only when the exact Melo MP3 is absent; never invoke Gemini TTS. */
+/** A short D1 lease coordinates in-flight synthesis across Worker isolates and devices. */
+const TTS_LEASE_MS = 120_000
+const TTS_WAIT_STEP_MS = 250
+const TTS_WAIT_STEPS = 8
+
+export type MeloTtsResult = {
+  body: ReadableStream | Uint8Array
+  mimeType: string
+  cacheHit: boolean
+}
+
+async function cachedMeloTts(env: Env, key: string): Promise<MeloTtsResult | null> {
+  const cached = await env.AUDIO.get(key)
+  return cached
+    ? { body: cached.body, mimeType: cached.httpMetadata?.contentType || MELO_MIME, cacheHit: true }
+    : null
+}
+
+/**
+ * Single-flight across devices and concurrent HTTP/prewarm requests.
+ * D1's conditional UPSERT is atomic: only one owner synthesizes any R2 key.
+ * A bounded waiter returns 503 if synthesis is still running; the client can
+ * immediately use device speech instead of initiating a duplicate AI call.
+ */
+export async function getOrGenerateMeloTts(env: Env, text: string): Promise<MeloTtsResult> {
+  const key = await meloTtsKey(text)
+  const hit = await cachedMeloTts(env, key)
+  if (hit) return hit
+
+  const owner = crypto.randomUUID()
+  const now = Date.now()
+  const claimed = await env.DB.prepare(
+    'INSERT INTO tts_generation_locks (key, owner, expires_at) VALUES (?, ?, ?) ' +
+    'ON CONFLICT(key) DO UPDATE SET owner = excluded.owner, expires_at = excluded.expires_at ' +
+    'WHERE tts_generation_locks.expires_at <= ? RETURNING owner',
+  ).bind(key, owner, now + TTS_LEASE_MS, now).first<{ owner: string }>()
+
+  if (claimed?.owner !== owner) {
+    for (let i = 0; i < TTS_WAIT_STEPS; i++) {
+      await new Promise((resolve) => setTimeout(resolve, TTS_WAIT_STEP_MS))
+      const ready = await cachedMeloTts(env, key)
+      if (ready) return ready
+    }
+    throw new MeloTtsError('语音正在后台生成，请稍后再试；可先使用系统朗读', 503)
+  }
+
+  try {
+    // Another Worker might have finished between our first R2 read and lease.
+    const ready = await cachedMeloTts(env, key)
+    if (ready) return ready
+    const audio = await generateMeloTts(env, text)
+    await env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
+    return { body: audio.bytes, mimeType: audio.mimeType, cacheHit: false }
+  } finally {
+    await env.DB.prepare('DELETE FROM tts_generation_locks WHERE key = ? AND owner = ?')
+      .bind(key, owner).run()
+      .catch((error) => console.error('release MeloTTS synthesis lease failed', error))
+  }
+}
+
+/** Warm audio through the same single-flight path as /tts; cached hits cost no AI. */
 export async function warmMeloTts(env: Env, texts: string[]) {
   for (const text of new Set(texts.filter(Boolean))) {
     try {
       const key = await meloTtsKey(text)
       if (await env.AUDIO.head(key)) continue
-      const audio = await generateMeloTts(env, text)
-      await env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
+      await getOrGenerateMeloTts(env, text)
     } catch (error) {
       console.warn('MeloTTS prewarming stopped', error)
       return

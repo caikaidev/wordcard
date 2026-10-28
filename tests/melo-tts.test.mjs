@@ -5,12 +5,12 @@ import { build } from 'esbuild'
 // Bundle the actual Worker logic; no Cloudflare or Gemini credentials needed.
 const bundle = await build({ entryPoints: ['worker/melo.ts'], bundle: true, platform: 'node', format: 'esm', write: false })
 const melo = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'))
-const { MELO_MODEL, decodeMeloResult, meloTtsKey, generateMeloTts, warmMeloTts, classifyMeloError } = melo
+const { MELO_MODEL, decodeMeloResult, meloTtsKey, generateMeloTts, warmMeloTts, getOrGenerateMeloTts, classifyMeloError } = melo
 const mp3 = Uint8Array.from([73, 68, 51, ...Array(48).fill(0)])
 const audio = btoa(String.fromCharCode(...mp3))
 
 function setup(overrides = {}) {
-  const state = { calls: [], recorded: [], cached: new Map(), counts: { text: 0, tts: 0, minute: 0, minuteTts: 0, userText: 0, userTts: 0 } }
+  const state = { calls: [], recorded: [], cached: new Map(), locks: new Map(), counts: { text: 0, tts: 0, minute: 0, minuteTts: 0, userText: 0, userTts: 0 } }
   const env = {
     USER_ID: 'alice',
     IS_ADMIN: false,
@@ -24,17 +24,33 @@ function setup(overrides = {}) {
         return {
           bind(...args) { params = args; return this },
           async first() {
+            if (sql.startsWith('INSERT INTO tts_generation_locks')) {
+              const [key, owner, expiresAt, now] = params
+              const existing = state.locks.get(key)
+              if (existing && existing.expiresAt > now) return null
+              state.locks.set(key, { owner, expiresAt })
+              return { owner }
+            }
             assert.match(sql, /FROM usage/)
             return state.counts
           },
           async run() {
-            state.recorded.push({ sql, params })
+            if (sql.startsWith('DELETE FROM tts_generation_locks')) {
+              const [key, owner] = params
+              if (state.locks.get(key)?.owner === owner) state.locks.delete(key)
+            } else {
+              state.recorded.push({ sql, params })
+            }
             return { meta: { changes: 1 } }
           },
         }
       },
     },
     AUDIO: {
+      async get(key) {
+        const content = state.cached.get(key)
+        return content ? { body: content, httpMetadata: { contentType: 'audio/mpeg' } } : null
+      },
       async head(key) { return state.cached.has(key) ? { size: state.cached.get(key).length } : null },
       async put(key, content) { state.cached.set(key, content) },
     },
@@ -114,4 +130,40 @@ test('MeloTTS WAV base64 is returned as actual WAV instead of rejected as non-MP
 })
 test('invalid unknown audio includes diagnostic header only', () => {
   assert.throws(() => decodeMeloResult({audio: btoa('NOT_AUDIO_CONTENT_1000')}), /文件头/)
+})
+
+test('single-flight: two concurrent requests synthesize once and share R2 result', async () => {
+  const { env, state } = setup()
+  let signalStarted, release
+  const started = new Promise((resolve) => { signalStarted = resolve })
+  const gate = new Promise((resolve) => { release = resolve })
+  env.AI.run = async (model, input) => {
+    state.calls.push({ model, input })
+    signalStarted()
+    await gate
+    return { audio }
+  }
+  const first = getOrGenerateMeloTts(env, 'concurrent word')
+  await started
+  const second = getOrGenerateMeloTts(env, 'concurrent word')
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  release()
+  const [generated, reused] = await Promise.all([first, second])
+  assert.equal(state.calls.length, 1)
+  assert.equal(state.recorded.length, 1)
+  assert.equal(generated.mimeType, 'audio/mpeg')
+  assert.equal(reused.mimeType, 'audio/mpeg')
+  assert.equal(reused.cacheHit, true)
+  assert.equal(state.locks.size, 0)
+})
+
+test('failed synthesis releases the lease and allows retry', async () => {
+  const { env, state } = setup()
+  env.AI.run = async () => { throw new Error('3040 Out of Capacity') }
+  await assert.rejects(getOrGenerateMeloTts(env, 'retry word'), /容量不足/)
+  assert.equal(state.locks.size, 0)
+  env.AI.run = async () => ({ audio })
+  const result = await getOrGenerateMeloTts(env, 'retry word')
+  assert.equal(result.cacheHit, false)
+  assert.equal(state.cached.size, 1)
 })

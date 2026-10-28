@@ -3,7 +3,7 @@ import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
 import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
 import { CloudflareTextError } from './cloudflare-text'
-import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
+import { MELO_MIME, MeloTtsError, getOrGenerateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import { REVIEW_GRADE_UPDATE_SQL } from '../shared/review'
@@ -515,9 +515,10 @@ app.get('/tts', async (c) => {
   // 只查 R2 时没有音频，不调用推理，不产生新费用。
   if (c.req.query('cached') === '1') return c.body(null, 204)
 
-  const audio = await generateMeloTts(await ai(c), text)
-  await c.env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
-  return new Response(audio.bytes, { headers: { ...headers, 'content-type': audio.mimeType, 'x-tts-cache': 'MISS' } })
+  const audio = await getOrGenerateMeloTts(await ai(c), text)
+  return new Response(audio.body, {
+    headers: { ...headers, 'content-type': audio.mimeType, 'x-tts-cache': audio.cacheHit ? 'HIT' : 'MISS' },
+  })
 })
 
 /* ------------------------------ 设置 ------------------------------ */
