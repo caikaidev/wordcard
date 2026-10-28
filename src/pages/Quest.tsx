@@ -1,4 +1,6 @@
 import type { Difficulty } from '../../shared/difficulty'
+import { stagePrepared } from '../../shared/quest-buffer'
+import { createQuestBufferSession, type RefillState } from '../quest-buffer-session'
 import SpeakingExercise from '../components/SpeakingExercise'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
@@ -17,21 +19,40 @@ export default function QuestPage({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<StageId | null>(null)
 
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const load = useCallback(() => {
-    setError(null)
-    api.quest(id).then((result) => {
-      if ('pending' in result) {
-        timer.current = setTimeout(load, 1500)
-      } else {
-        setQuest(result)
-      }
-    }).catch((e) => setError(errMsg(e)))
-  }, [id])
+  const [refill, setRefill] = useState<RefillState>({ busy: false, message: '' })
+  const session = useRef<ReturnType<typeof createQuestBufferSession> | null>(null)
   useEffect(() => {
-    load()
-    return () => { if (timer.current) clearTimeout(timer.current) }
-  }, [load])
+    setQuest(null); setPlaying(null); setError(null); setRefill({ busy: false, message: '' })
+    const loader = createQuestBufferSession({
+      start: () => api.quest(id), read: () => api.questStatus(id),
+      refill: () => api.prepareQuest(id, true), complete: () => api.completeQuest(id),
+      onQuest: (result) => setQuest((q) => q?.lessonId === result.lessonId
+        // Polling can race with passStage. Only append content; keep live progress/feedback.
+        ? { ...q, content: result.content, buffer: result.buffer } : result),
+      onError: (message) => setError(message || null), onRefill: setRefill,
+      visible: () => !document.hidden,
+    })
+    session.current = loader
+    const visibility = () => loader.visibilityChanged()
+    document.addEventListener('visibilitychange', visibility)
+    void loader.load()
+    return () => {
+      loader.close()
+      if (session.current === loader) session.current = null
+      document.removeEventListener('visibilitychange', visibility)
+    }
+  }, [id])
+  const load = () => { void session.current?.load() }
+  const consume = useCallback((stage: StageId, consumed: number) => {
+    if (quest) session.current?.consume(quest, stage, consumed)
+  }, [quest])
+  const play = (stage: StageId) => {
+    if (!stagePrepared(quest?.buffer?.phase, stage)) {
+      toast('后续题目尚未就绪，可先完成已备题目，或点击「准备后续题」')
+      return
+    }
+    setPlaying(stage)
+  }
 
   // 一进路线页就把音频准备好：听力句子要云端语音（出题时服务器已在后台生成，这里基本是直接取缓存），
   // 单词和填空句只取现成缓存，没有的点的时候用系统朗读，不等
@@ -44,8 +65,11 @@ export default function QuestPage({ id }: { id: number }) {
   if (playing && quest)
     return (
       <Runner
+        key={`${quest.lessonId}-${playing}`}
         quest={quest}
         stage={playing}
+        onConsume={consume}
+        bufferNotice={refill.busy ? refill.message : ''}
         onExit={() => setPlaying(null)}
         onPassed={(progress) => setQuest((q) => q ? { ...q, progress } : q)}
         onDifficulty={(stage, difficulty) => setQuest((q) => q ? { ...q, feedback: { ...q.feedback, [stage]: difficulty } } : q)}
@@ -83,13 +107,27 @@ export default function QuestPage({ id }: { id: number }) {
             slowAfter={40}
             stages={[
               [0, '正在为这篇文章出题…'],
-              [8, '认词、听力、阅读题都在准备…'],
-              [20, '快好了，第一次出题要久一点，之后直接用'],
+              [8, '先准备认词和听力，后续题目边学边补…'],
+              [20, '首次生成需要时间，完成后会保存复用'],
             ]}
           />
         </div>
       ) : (
-        <Path quest={quest} onPlay={setPlaying} />
+        <>
+          {quest.buffer?.phase === 'starter' && (
+            <div role="status" className="mx-4 mt-4 rounded-xl bg-accent-soft px-4 py-3 text-sm md:mx-6">
+              <div className="font-medium">首批已备 {quest.buffer.ready} 题 · 本套最多 {quest.buffer.target} 题</div>
+              <p className="mb-0 mt-1 text-xs leading-relaxed text-muted">
+                {refill.message || '先开始认词、听力；剩余 5 题时自动补充阅读和跟读。'}
+              </p>
+              <button className="mt-2 min-h-10 rounded-lg border border-line bg-surface px-3 text-xs disabled:opacity-50"
+                disabled={refill.busy} onClick={() => { void session.current?.complete() }}>
+                {refill.busy ? '后续题目准备中…' : '准备后续题'}
+              </button>
+            </div>
+          )}
+          <Path quest={quest} onPlay={play} />
+        </>
       )}
     </div>
   )
@@ -106,6 +144,7 @@ function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void })
         const done = s.id === 'write' ? quest.writeDone : !!p.stages[s.id]
         const open = done || unlocked(p, s.id)
         const isCurrent = s.id === current
+        const prepared = stagePrepared(quest.buffer?.phase, s.id)
         const best = p.stages[s.id]?.accuracy
         // 多邻国式的左右错落
         const offset = [0, 56, 0, -56, 0][i]
@@ -136,7 +175,7 @@ function Path({ quest, onPlay }: { quest: Quest; onPlay: (s: StageId) => void })
               )}
             </button>
             <span className="mt-2.5 text-[14px] font-semibold text-ink">{s.name}</span>
-            <span className="text-xs text-muted">{best !== undefined ? s.id === 'speak' ? '已完成 · 自评' : `最好 ${Math.round(best * 100)}%` : s.desc}</span>
+            <span className="text-xs text-muted">{!prepared ? '后续批次 · 尚未就绪' : best !== undefined ? s.id === 'speak' ? '已完成 · 自评' : `最好 ${Math.round(best * 100)}%` : s.desc}</span>
           </div>
         )
       })}
@@ -154,14 +193,19 @@ function Runner({
   onExit,
   onPassed,
   onDifficulty,
+  onConsume,
+  bufferNotice,
 }: {
   quest: Quest
   stage: StageId
   onExit: () => void
   onPassed: (p: Quest['progress']) => void
   onDifficulty: (stage: StageId, difficulty: Difficulty) => void
+  onConsume: (stage: StageId, consumed: number) => void
+  bufferNotice: string
 }) {
-  const initial = useMemo(() => buildStage(stage, quest.content), [stage, quest.content])
+  // Snapshot this stage once. Appending future stages must not reshuffle or stop playback.
+  const [initial] = useState(() => buildStage(stage, quest.content))
   // 答错的题排到最后再来一次（每题最多重来一次）
   const [queue, setQueue] = useState<{ ex: Exercise; retry: boolean }[]>(() => initial.map((ex) => ({ ex, retry: false })))
   const [pos, setPos] = useState(0)
@@ -176,6 +220,8 @@ function Runner({
 
   const item = queue[pos]
   const done = pos >= queue.length
+  const consumed = queue.slice(0, pos).filter((item) => !item.retry).length
+  useEffect(() => { onConsume(stage, consumed) }, [stage, consumed, onConsume])
 
   // 当前题的「检查」：题目组件告诉外层能不能点、点了做什么（按钮本身固定在底部，不随题目进出）
   const checkRef = useRef<(() => void) | null>(null)
@@ -286,6 +332,7 @@ function Runner({
         </button>
       </div>
 
+      {bufferNotice && <div role="status" className="px-4 pt-1 text-center text-[11px] text-muted">{bufferNotice}</div>}
       {finished || done ? (
         <Finish stage={stage} result={finished} saving={saving} onBack={onExit} lessonId={quest.lessonId} previous={quest.feedback?.[stage]} onDifficulty={onDifficulty} error={saveError} onRetry={saveCompletion} />
       ) : (

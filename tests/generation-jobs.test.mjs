@@ -1,3 +1,4 @@
+import { d1Args } from './d1-bind.mjs'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
@@ -15,9 +16,9 @@ function setup() {
       let params = []
       const statement = {
         bind(...args) { params = args; return statement },
-        async first() { return sqlite.prepare(sql).get(...params) ?? null },
-        async all() { return { results: sqlite.prepare(sql).all(...params) } },
-        async run() { const r = sqlite.prepare(sql).run(...params); return { meta: { changes: Number(r.changes) } } },
+        async first() { return sqlite.prepare(sql).get(...d1Args(sql, params)) ?? null },
+        async all() { return { results: sqlite.prepare(sql).all(...d1Args(sql, params)) } },
+        async run() { const r = sqlite.prepare(sql).run(...d1Args(sql, params)); return { meta: { changes: Number(r.changes) } } },
       }
       return statement
     },
@@ -27,7 +28,7 @@ function setup() {
   const calls = []
   const bank = {
     words: [{ en: 'habit', zh: '习惯', distractors: ['甲', '乙'] }, { en: 'routine', zh: '惯例', distractors: ['甲', '乙'] }],
-    listening: [{ en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'], extra: [] }],
+    listening: [{ en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'], extra: [] }, { en: 'We learn every day.', zh: '我们每天学习。', distractors: ['甲', '乙'], extra: [] }],
     cloze: [], reading: [], speaking: [{ en: 'We learn together.', zh: '我们一起学习。' }],
   }
   const env = {
@@ -52,7 +53,6 @@ test('prepare is idempotent; one enqueue for duplicate calls and isolated users'
   const s = setup()
   try {
     s.lesson(1)
-    assert.equal((await s.prepareQuest)?.status, undefined)
     const first = await prepareQuest(s.env, 'alice', 1)
     const second = await prepareQuest(s.env, 'alice', 1)
     assert.equal(first.status, 'queued')
