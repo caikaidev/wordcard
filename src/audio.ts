@@ -225,9 +225,13 @@ export function speakSystem(text: string, slow = false, playing?: (engine: Engin
 
 /* ------------------------ Public playback controls ------------------------ */
 
+/** Instant single-word playback: use system speech inside the click gesture while
+ * the cloud version is prepared for the next play. Already prefetched audio wins. */
 export function speakFast(text: string) {
   if (ready.has(text.trim()) || !window.speechSynthesis) return speak(text)
-  return speakSystem(text)
+  const playback = speakSystem(text)
+  prefetch([text])
+  return playback
 }
 
 export function speak(text: string, slow = false, playing?: (engine: Engine) => void): Promise<boolean> {
