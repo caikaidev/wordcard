@@ -126,7 +126,7 @@ export default function Review() {
   const isAgain = !!card && again.has(card.id)
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
-  // Gemini TTS 每天只有 100 次额度，所以只预取最常点的单词发音，例句等你点了再生成
+  // 使用当前 MeloTTS + R2 缓存，优先预取当前词条；例句按需播放
   useEffect(() => {
     if (queue?.length) prefetch([queue[0].text])
   }, [queue])
