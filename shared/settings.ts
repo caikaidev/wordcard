@@ -27,6 +27,8 @@ export const VOICES = [
 ]
 
 export interface Settings {
+  /** Text provider, saved for each signed-in user. */
+  textProvider: 'cloudflare' | 'gemini'
   textModel: string
   ttsModel: string
   voice: string
