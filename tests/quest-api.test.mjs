@@ -15,6 +15,8 @@ app.route('/quest', quest)
 function setup() {
   const sqlite = new DatabaseSync(':memory:')
   for (const file of readdirSync('migrations').filter(f => f.endsWith('.sql')).sort()) sqlite.exec(readFileSync('migrations/' + file, 'utf8'))
+  // Legacy quest fixtures mock Gemini responses; opt the test identities into Gemini explicitly.
+  sqlite.exec("INSERT INTO user_settings (user_id, key, value) VALUES ('alice','textProvider','gemini'), ('bob','textProvider','gemini')")
   const db = { prepare(sql) {
     let args = []
     const statement = {

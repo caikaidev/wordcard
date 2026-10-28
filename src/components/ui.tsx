@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { speak, stop, useSpeaking } from '../audio'
+import { retrySystemSpeech, speak, stop, useSpeaking } from '../audio'
 import { IconSpeaker } from './icons'
 
 /** 圆形发音按钮：加载中呼吸、播放中高亮；再点一次停止 */
@@ -25,10 +25,11 @@ export function SpeakButton({
   return (
     <button
       type="button"
-      aria-label={active ? '停止播放' : label}
+      aria-label={active && s.needsTap ? '使用系统朗读' : active ? '停止播放' : label}
       onClick={(e) => {
         e.stopPropagation()
-        if (active) stop()
+        if (active && s.needsTap) retrySystemSpeech()
+        else if (active) stop()
         else speak(text)
       }}
       className={`flex shrink-0 items-center justify-center rounded-full border-0 transition ${cls} ${active && s.loading ? 'animate-shimmer' : ''}`}

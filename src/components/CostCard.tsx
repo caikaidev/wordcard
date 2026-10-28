@@ -46,13 +46,14 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
   // 每添加一个词 ≈ 1 次补全 + 2 段语音（单词 + 例句）
   const avg = (b?: UsageBucket) => (b && b.calls ? b.cost / b.calls : null)
   const e = avg(data?.month.byKind.enrich)
-  const a = avg(data?.month.byKind.tts)
+  const ttsMonth = data?.month.byKind.tts
+  const a = ttsMonth && ttsMonth.unpriced === 0 ? avg(ttsMonth) : null
   const per100 = e !== null && a !== null ? (e + 2 * a) * 100 : null
   return (
     <section className="mx-4 mt-2.5 rounded-2xl border border-line-soft bg-surface p-5 md:mx-6" aria-labelledby="cost-title">
       <div className="flex items-center justify-between">
         <h2 id="cost-title" className="m-0 text-[15px] font-semibold">
-          本月费用预估
+          本月 Gemini 费用预估
         </h2>
         <button
           onClick={load}
@@ -99,7 +100,7 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
                   <span className="tabular flex-1 text-muted">
                     {b ? `${b.calls} 次 · ${tokens(b.input + b.output)}` : '—'}
                   </span>
-                  <span className="tabular font-medium">{b ? usd(b.cost) : '$0'}</span>
+                  <span className="tabular font-medium">{b ? b.unpriced > 0 ? `${usd(b.cost)} + 未计价` : usd(b.cost) : '$0'}</span>
                 </div>
               )
             })}
@@ -107,7 +108,7 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             <Quota label={data.users ? '全站今日 AI' : '今日 AI 调用'} used={data.today.text} limit={data.today.textLimit} />
-            <Quota label={data.users ? '全站今日语音' : '今日新语音'} used={data.today.tts} limit={data.today.ttsLimit} />
+            <Quota label={data.users ? '全站今日新语音' : '今日新语音'} used={data.today.tts} limit={data.today.ttsLimit} />
           </div>
           {data.today.disabled && (
             <div className="mt-2 rounded-xl bg-forgot-bg px-3.5 py-2.5 text-[13px] text-forgot-fg">
@@ -136,15 +137,19 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
           )}
 
           <p className="mt-3 mb-0 text-xs leading-relaxed text-muted">
-            按 Google 付费层级单价估算
-            {t.unpriced > 0 && `（有 ${t.unpriced} 次调用的模型不在价目表里，未计入）`}
-            。语音命中缓存不产生费用。如果你的 key 没有绑定结算账户（免费层级），实际不收费。
+            Gemini 按公开付费单价估算。Cloudflare Qwen 文本模型与 MeloTTS 按 Workers AI Neurons 计费，不在此金额中
+            {t.unpriced > 0 && `（有 ${t.unpriced} 次调用不在本页价目表里）`}。
+            Cloudflare 每日 10,000 Neurons 免费额度为账号共享；Workers Paid 超额可能收费。命中 R2 缓存不会再次推理。
             <a href={PRICING_URL} target="_blank" rel="noreferrer" className="text-accent">
               官方价格
             </a>
             {' · '}
             <a href="https://aistudio.google.com/usage" target="_blank" rel="noreferrer" className="text-accent">
-              AI Studio 实际用量
+              Gemini 用量
+            </a>
+            {' · '}
+            <a href="https://dash.cloudflare.com/" target="_blank" rel="noreferrer" className="text-accent">
+              Workers AI 实际 Neurons 用量
             </a>
           </p>
         </>

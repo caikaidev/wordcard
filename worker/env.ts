@@ -2,6 +2,8 @@ export interface Env {
   /** 当前请求的用户（登录邮箱）；由 aiEnv() 注入，供记账和限额使用 */
   USER_ID?: string
   IS_ADMIN?: boolean
+  /** User-selected text generation provider, set by aiEnv. */
+  TEXT_PROVIDER?: 'cloudflare' | 'gemini'
   /** 管理员邮箱，逗号分隔（GitHub Secret，不写进代码） */
   ADMIN_EMAILS?: string
   /** 普通用户每天最多几次文本类 AI 调用 */
@@ -12,6 +14,7 @@ export interface Env {
   DEV_USER?: string
   DB: D1Database
   AUDIO: R2Bucket
+  AI: Ai // Cloudflare Workers AI · MeloTTS
   ASSETS: Fetcher
   GEMINI_API_KEY: string
   GEMINI_TEXT_MODEL: string
@@ -41,7 +44,7 @@ export interface Env {
   DAILY_TTS_LIMIT?: string
   /** 每分钟最多几次 Gemini 调用，防止前端 bug 死循环 */
   PER_MINUTE_LIMIT?: string
-  /** 每分钟最多生成几段语音（Gemini TTS 第 1 层级是每分钟 10 次） */
+  /** 每分钟最多生成几段 MeloTTS 语音（应用安全上限） */
   TTS_PER_MINUTE_LIMIT?: string
   /** Web Push（每日提醒）的 VAPID 公钥 / 私钥（base64url），用 scripts/vapid-keys.mjs 生成；不配就没有提醒功能 */
   VAPID_PUBLIC_KEY?: string

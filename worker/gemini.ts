@@ -1,4 +1,5 @@
 import type { Env } from './env'
+import { cloudflareGenerateJson } from './cloudflare-text'
 import type { CardMeta, EnrichResult, ItemType, RemixSentence } from '../shared/types'
 import { pcmToWav } from './wav'
 import { SOURCE_LABEL, type DictResult, type DictSense } from './dictionary'
@@ -179,6 +180,8 @@ export async function generateJson<T>(
   thinkingLevel: 'minimal' | 'low' = 'low',
   timeoutMs?: number,
 ): Promise<T> {
+  // Cloudflare failures never silently trigger a Gemini call.
+  if (env.TEXT_PROVIDER !== 'gemini') return cloudflareGenerateJson<T>(env, prompt, schema, kind, temperature)
   const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
     contents: [{ role: 'user', parts: userParts }],
@@ -216,6 +219,7 @@ const NO_ACCESS = 'NO_ACCESS'
  * 读取到的网页内容按输入 token 计费，记在“生成练习”名下。
  */
 export async function readUrl(env: Env, url: string): Promise<{ title: string; text: string }> {
+  if (env.TEXT_PROVIDER !== 'gemini') throw new GeminiError('此链接无法直接读取；免费模式不会自动调用 Gemini，请粘贴正文或手动切换 Gemini', 400)
   const prompt = `Read the web page at ${url} and output its main article content as plain text.
 Rules:
 - First line: the article title. Then an empty line. Then the article body, keeping paragraph breaks.

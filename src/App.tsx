@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'rea
 import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Confirmer, Toaster } from './components/ui'
+import { SpeechFallback } from './components/SpeechFallback'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
@@ -93,6 +94,7 @@ export default function App() {
       {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
+      <SpeechFallback />
     </div>
   )
 }
@@ -127,8 +129,8 @@ function MobileTabBar({ path }: { path: Path }) {
 function DesktopHeader({ path }: { path: Path }) {
   const stats = useStats()
   return (
-    <header className="z-40 hidden h-[72px] shrink-0 grid-cols-3 items-center border-b border-line bg-bg/95 px-10 backdrop-blur md:grid">
-      <Link to="/" className="font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
+    <header className="z-40 hidden h-[72px] shrink-0 grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-4 border-b border-line bg-bg/95 px-5 backdrop-blur md:grid xl:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)] xl:px-10">
+      <Link to="/" className="shrink-0 whitespace-nowrap font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
         拾句
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
@@ -139,7 +141,7 @@ function DesktopHeader({ path }: { path: Path }) {
               key={t.to}
               to={t.to}
               aria-current={on ? 'page' : undefined}
-              className={`flex h-9 items-center rounded-[10px] px-5 text-sm no-underline ${
+              className={`flex h-9 shrink-0 items-center whitespace-nowrap rounded-[10px] px-3 text-sm no-underline xl:px-5 ${
                 on ? 'bg-surface font-semibold text-ink shadow-sm' : 'text-muted-2'
               }`}
             >
@@ -148,11 +150,11 @@ function DesktopHeader({ path }: { path: Path }) {
           )
         })}
       </nav>
-      <div className="flex items-center gap-2 justify-self-end">
+      <div className="flex shrink-0 items-center gap-2 justify-self-end whitespace-nowrap">
         <Link
           to="/remix"
           title="用今天要复习的词，AI 现编几句新例句帮你巩固"
-          className={`flex h-10 items-center gap-1.5 rounded-full border border-line px-3.5 text-sm no-underline ${
+          className={`flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-3.5 text-sm no-underline ${
             path === '/remix' ? 'bg-invert-bg text-invert-fg' : 'bg-surface text-ink'
           }`}
         >
@@ -162,14 +164,14 @@ function DesktopHeader({ path }: { path: Path }) {
         <Link
           to="/settings"
           aria-label="设置"
-          className={`flex h-10 w-10 items-center justify-center rounded-full border border-line ${
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line ${
             path === '/settings' ? 'bg-invert-bg text-invert-fg' : 'bg-surface text-ink'
           }`}
         >
           <IconGear size={18} />
         </Link>
         <div
-          className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
+          className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
           title={stats?.due ? `今天有 ${stats.due} 张到期，分批复习，每批 20 张，做完一批就可以停` : undefined}
         >
           {stats && stats.due > 0 ? (
