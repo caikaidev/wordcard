@@ -7,7 +7,7 @@ import { DEFAULT_DAILY_GOAL, DEFAULT_REMINDER_HOUR, REMINDER_HOURS, isDailyGoal 
 /** 全站共用、只有管理员能改的设置 */
 const GLOBAL_KEYS = ['textModel', 'ttsModel', 'voice'] as const
 /** 每个人自己的设置 */
-const USER_KEYS = ['practiceLevel', 'coachProfile', 'reviewMode', 'dailyGoal', 'reminderHour', 'discoverSources', 'vocabLevel', 'discoverAuto'] as const
+const USER_KEYS = ['textProvider', 'practiceLevel', 'coachProfile', 'reviewMode', 'dailyGoal', 'reminderHour', 'discoverSources', 'vocabLevel', 'discoverAuto'] as const
 
 const isReminderHour = (v: unknown): v is number => v === -1 || REMINDER_HOURS.includes(v as number)
 
@@ -26,6 +26,7 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
   const hour = um.reminderHour === undefined ? NaN : Number(um.reminderHour)
   const vocab = Number(um.vocabLevel)
   return {
+    textProvider: um.textProvider === 'gemini' ? 'gemini' : 'cloudflare',
     textModel: isSafeId(gm.textModel) ? gm.textModel : env.GEMINI_TEXT_MODEL,
     ttsModel: isSafeId(gm.ttsModel) ? gm.ttsModel : env.GEMINI_TTS_MODEL,
     voice: isSafeId(gm.voice) ? gm.voice : env.GEMINI_VOICE,
@@ -42,6 +43,7 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
 
 export function defaultSettings(env: Env): Settings {
   return {
+    textProvider: 'cloudflare',
     textModel: env.GEMINI_TEXT_MODEL,
     ttsModel: env.GEMINI_TTS_MODEL,
     voice: env.GEMINI_VOICE,
@@ -61,6 +63,7 @@ export async function aiEnv(env: Env, user: string, admin: boolean): Promise<Env
   const s = await loadSettings(env, user)
   return {
     ...env,
+    TEXT_PROVIDER: s.textProvider,
     GEMINI_TEXT_MODEL: s.textModel,
     GEMINI_TTS_MODEL: s.ttsModel,
     GEMINI_VOICE: s.voice,
@@ -88,6 +91,11 @@ export async function saveSettings(env: Env, user: string, admin: boolean, body:
     if (v === null || v === '') stmts.push(resetGlobal(k))
     else if (isSafeId(v)) stmts.push(upsertGlobal(k, v))
     else return `${k} 格式不对：只能包含字母、数字、点、横线`
+  }
+  if (body.textProvider !== undefined) {
+    if (body.textProvider === 'cloudflare' || body.textProvider === null || body.textProvider === '') stmts.push(resetUser('textProvider'))
+    else if (body.textProvider === 'gemini') stmts.push(upsertUser('textProvider', 'gemini'))
+    else return 'textProvider 必须是 cloudflare 或 gemini'
   }
   if (body.practiceLevel !== undefined) {
     const lv = Number(body.practiceLevel)

@@ -2,6 +2,8 @@ export interface Env {
   /** 当前请求的用户（登录邮箱）；由 aiEnv() 注入，供记账和限额使用 */
   USER_ID?: string
   IS_ADMIN?: boolean
+  /** User-selected text generation provider, set by aiEnv. */
+  TEXT_PROVIDER?: 'cloudflare' | 'gemini'
   /** 管理员邮箱，逗号分隔（GitHub Secret，不写进代码） */
   ADMIN_EMAILS?: string
   /** 普通用户每天最多几次文本类 AI 调用 */

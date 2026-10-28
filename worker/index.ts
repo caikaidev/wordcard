@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
 import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { CloudflareTextError } from './cloudflare-text'
 import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
@@ -70,6 +71,7 @@ app.route('/ext', ext)
 app.onError((err, c) => {
   if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
   if (err instanceof MeloTtsError) return c.json({ error: err.message }, err.status as 500)
+  if (err instanceof CloudflareTextError) return c.json({ error: err.message }, err.status as 500)
   console.error(err)
   return c.json({ error: '服务器出错了' }, 500)
 })

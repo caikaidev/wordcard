@@ -59,7 +59,7 @@ export default function Settings() {
     const t0 = performance.now()
     try {
       const r = await api.enrich('serendipity')
-      setResult({ kind: 'text', label: cur.textModel, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
+      setResult({ kind: 'text', label: cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
       setUsageKey((k) => k + 1)
     } catch (e) {
       toast(errMsg(e), 'error')
@@ -254,9 +254,36 @@ export default function Settings() {
             />
           </Section>
 
-          <Section title="模型与语音" desc="文本继续使用 Gemini；所有新发音默认使用 Cloudflare Workers AI MeloTTS。">
+          <Section title="文本 AI 引擎" desc="一键切换，保存后立即作用于下一次生成、批改和闯关。语音继续使用 MeloTTS。">
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="文本 AI 提供商">
+              {([
+                { id: 'cloudflare', name: 'Cloudflare 免费', note: 'Qwen3 30B A3B' },
+                { id: 'gemini', name: 'Gemini', note: cur.textModel },
+              ] as const).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => save('textProvider', p.id, `已切换为 ${p.name}`)}
+                  aria-pressed={cur.textProvider === p.id}
+                  className={`flex min-h-[76px] flex-col items-start justify-center gap-1 rounded-2xl border p-3.5 text-left ${cur.textProvider === p.id ? 'border-accent bg-accent-soft' : 'border-line-soft bg-surface'}`}
+                >
+                  <span className="flex w-full items-center justify-between text-[15px] font-semibold">
+                    {p.name}
+                    {cur.textProvider === p.id && <IconCheck size={16} />}
+                  </span>
+                  <span className="text-xs text-muted">{p.note}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 mb-0 text-[12px] leading-relaxed text-muted">
+              默认使用 Cloudflare Workers AI 的共享免费 Neurons 配额；Paid 计划超额可能计费。截图识别需手动切换 Gemini。
+              Qwen 失败不会自动扣用 Gemini 额度。
+            </p>
+          </Section>
+
+          <Section title="模型与语音" desc="显示当前实际文本引擎；发音统一使用 MeloTTS。">
             <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
-              文本 <span className="font-mono text-ink">{cur.textModel}</span>
+              文本 <span className="font-mono text-ink">{cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`}</span>
               <br />
               语音 <span className="font-mono text-ink">Cloudflare · MeloTTS (en)</span>
               <br />
@@ -267,18 +294,18 @@ export default function Settings() {
           {me?.admin && (
             <details className="group mt-5 px-4 md:mt-6 md:px-6">
               <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[13px] text-muted-2 [&::-webkit-details-marker]:hidden">
-                高级：切换文本模型、测试语音速度
+                高级：Gemini 模型、文本与语音测试
                 <span className="transition-transform group-open:rotate-90">›</span>
               </summary>
               <div className="-mx-4 md:-mx-6">
-          <Section title="文本模型" desc="用于生成练习、批改、AI 补全和 AI 重组">
+          <Section title="Gemini 备用模型" desc="仅当上方切换为 Gemini 时使用；免费模式不走这个模型">
             <Options
               options={TEXT_MODELS}
               value={cur.textModel}
               def={defaults?.textModel}
               onChange={(v) => save('textModel', v)}
             />
-            <Custom value={cur.textModel} known={TEXT_MODELS} onSave={(v) => save('textModel', v)} placeholder="其他模型，如 gemini-3.9-flash" />
+            <Custom value={cur.textModel} known={TEXT_MODELS} onSave={(v) => save('textModel', v)} placeholder="其他 Gemini 模型" />
           </Section>
 
           <Section title="语音模型" desc="当前试用统一使用 MeloTTS；Workers AI 的托管模型不支持切换 Gemini 音色。">
