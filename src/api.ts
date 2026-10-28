@@ -153,7 +153,10 @@ export const api = {
   tokens: () => req<{ tokens: ApiToken[] }>('/tokens'),
   createToken: (name: string) => req<{ id: number; name: string; token: string }>('/tokens', { method: 'POST', body: json({ name }) }),
   deleteToken: (id: number) => req<void>(`/tokens/${id}`, { method: 'DELETE' }),
-  quest: (lessonId: number) => req<Quest>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
+  prepareQuest: (lessonId: number) =>
+    req<{ status: string; jobId?: number }>(`/generation/quest/${lessonId}`, { method: 'POST' }),
+  quest: (lessonId: number) =>
+    req<Quest | { pending: true; status: string }>(`/quest/${lessonId}`, { method: 'POST' }, 120_000),
   passStage: (lessonId: number, stage: StageId, accuracy: number) =>
     req<{ progress: QuestProgress; gained: number; checkin: CheckinEvent | null }>(`/quest/${lessonId}/stages/${stage}`, { method: 'POST', body: json({ accuracy }) }),
   questFeedback: (lessonId: number, stage: StageId, difficulty: Difficulty) =>

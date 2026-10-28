@@ -17,14 +17,21 @@ export default function QuestPage({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<StageId | null>(null)
 
-  const load = () => {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const load = useCallback(() => {
     setError(null)
-    api
-      .quest(id)
-      .then(setQuest)
-      .catch((e) => setError(errMsg(e)))
-  }
-  useEffect(load, [id])
+    api.quest(id).then((result) => {
+      if ('pending' in result) {
+        timer.current = setTimeout(load, 1500)
+      } else {
+        setQuest(result)
+      }
+    }).catch((e) => setError(errMsg(e)))
+  }, [id])
+  useEffect(() => {
+    load()
+    return () => { if (timer.current) clearTimeout(timer.current) }
+  }, [load])
 
   // 一进路线页就把音频准备好：听力句子要云端语音（出题时服务器已在后台生成，这里基本是直接取缓存），
   // 单词和填空句只取现成缓存，没有的点的时候用系统朗读，不等

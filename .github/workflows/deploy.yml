@@ -149,6 +149,17 @@ jobs:
               json.dump(found, f)
           PY
 
+      - name: 确保 Cloudflare Queues 后台生成队列存在
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          queues="$(npx wrangler queues list)"
+          if ! grep -Fq 'wordcard-generation' <<< "$queues"; then
+            npx wrangler queues create wordcard-generation
+          fi
+
       - name: 迁移数据库并部署 Worker
         uses: cloudflare/wrangler-action@v3
         with:
