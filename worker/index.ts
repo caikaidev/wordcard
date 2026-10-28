@@ -7,6 +7,7 @@ import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import { REVIEW_GRADE_UPDATE_SQL } from '../shared/review'
+import { REVIEW_FORECAST_SQL, buildReviewForecast, reviewForecastWindow } from '../shared/forecast'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
@@ -324,6 +325,16 @@ app.post('/review/:id', async (c) => {
     return null
   })
   return c.json({ item: toItem(row!), checkin })
+})
+
+/** 北京时间连续七个自然日的预计到期：今日含逾期，数据只读。 */
+app.get('/review/forecast', async (c) => {
+  const now = Date.now()
+  const { tomorrow, end } = reviewForecastWindow(now)
+  const { results } = await c.env.DB.prepare(REVIEW_FORECAST_SQL)
+    .bind(tomorrow, who(c).user, end)
+    .all<{ bucket: number; n: number }>()
+  return c.json(buildReviewForecast(results, now))
 })
 
 /* ------------------------------ 连续打卡 ------------------------------ */
