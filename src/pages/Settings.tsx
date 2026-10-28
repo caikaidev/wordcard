@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { api, type ApiToken, type Me } from '../api'
-import { speak } from '../audio'
-import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
+import { api, ttsUrl, type ApiToken, type Me } from '../api'
+import { speak, speakSystem } from '../audio'
+import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
 import type { LevelStatus } from '../../shared/level'
@@ -19,6 +19,7 @@ export default function Settings() {
   const [me, setMe] = useState<Me | null>(null)
   const [level, setLevel] = useState<LevelStatus | null>(null)
   const [testing, setTesting] = useState<'text' | 'tts' | null>(null)
+  const [cloudAudioReady, setCloudAudioReady] = useState(false)
   const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
 
@@ -58,7 +59,7 @@ export default function Settings() {
     const t0 = performance.now()
     try {
       const r = await api.enrich('serendipity')
-      setResult({ kind: 'text', label: cur.textModel, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
+      setResult({ kind: 'text', label: cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
       setUsageKey((k) => k + 1)
     } catch (e) {
       toast(errMsg(e), 'error')
@@ -67,22 +68,59 @@ export default function Settings() {
     }
   }
 
-  const testTts = () => {
+  const sampleTts = 'Serendipity means finding something good without looking for it.'
+  const testTts = async () => {
     if (!cur) return
     setTesting('tts')
-    const sample = `Hi, I'm ${cur.voice}. Serendipity means finding something good without looking for it.`
+    setCloudAudioReady(false)
+    setResult(null)
     const t0 = performance.now()
-    let started = false
-    speak(sample, false, () => {
-      started = true
-      setTesting(null)
-      setResult({ kind: 'tts', label: `${cur.ttsModel} · ${cur.voice}`, ms: performance.now() - t0, detail: sample })
-      setUsageKey((k) => k + 1)
-    }).then((ok) => {
-      if (!started) {
-        setTesting(null)
-        if (!ok) toast('语音生成失败，换个模型或音色试试', 'error')
+    try {
+      // This only checks the server and stores the generated audio in R2.
+      // Do NOT play after await: iPhone Safari requires a fresh user gesture.
+      const response = await fetch(ttsUrl(sampleTts), {
+        credentials: 'same-origin',
+        redirect: 'manual',
+        signal: AbortSignal.timeout(45_000),
+      })
+      if (response.type === 'opaqueredirect') throw new Error('登录已失效，请重新打开拾句登录')
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error('HTTP ' + response.status + '：' + (body?.error || 'MeloTTS 请求失败'))
       }
+      const type = response.headers.get('content-type') || ''
+      if (!type.startsWith('audio/')) throw new Error('服务器未返回音频（可能被登录页面重定向）')
+      const buffer = await response.arrayBuffer()
+      if (buffer.byteLength < 16) throw new Error('服务器返回的音频为空')
+      setCloudAudioReady(true)
+      setResult({ kind: 'tts', label: 'Cloudflare MeloTTS 云端检查成功',
+        ms: performance.now() - t0,
+        detail: '已返回 ' + type + '（' + buffer.byteLength + ' 字节）。请点击「播放云端测试音频」确认 Safari 可播放。' })
+      setUsageKey((k) => k + 1)
+    } catch (error) {
+      setResult({ kind: 'tts', label: 'MeloTTS 云端检查失败',
+        ms: performance.now() - t0,
+        detail: error instanceof Error ? error.message : '未知网络错误' })
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  const playCloudTest = () => {
+    const t0 = performance.now()
+    speak(sampleTts, false, (engine) => {
+      setResult({ kind: 'tts',
+        label: engine === 'melo' ? 'Safari 云端音频播放成功' : 'Safari 使用系统朗读',
+        ms: performance.now() - t0,
+        detail: sampleTts })
+    })
+  }
+
+  const testSystemVoice = () => {
+    const t0 = performance.now()
+    setResult({ kind: 'tts', label: '正在测试 Safari 系统朗读', ms: 0, detail: '如未发声，请点击页面下方的系统朗读按钮。' })
+    speakSystem(sampleTts, false, () => {
+      setResult({ kind: 'tts', label: 'Safari 系统朗读成功启动', ms: performance.now() - t0, detail: sampleTts })
     })
   }
 
@@ -216,60 +254,67 @@ export default function Settings() {
             />
           </Section>
 
-          <Section title="模型与音色" desc={me?.admin ? '已选好默认值，一般不用动' : '全站共用，由管理员统一设置'}>
+          <Section title="文本 AI 引擎" desc="一键切换，保存后立即作用于下一次生成、批改和闯关。语音继续使用 MeloTTS。">
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="文本 AI 提供商">
+              {([
+                { id: 'cloudflare', name: 'Cloudflare 免费', note: 'Qwen3 30B A3B' },
+                { id: 'gemini', name: 'Gemini', note: cur.textModel },
+              ] as const).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => save('textProvider', p.id, `已切换为 ${p.name}`)}
+                  aria-pressed={cur.textProvider === p.id}
+                  className={`flex min-h-[76px] flex-col items-start justify-center gap-1 rounded-2xl border p-3.5 text-left ${cur.textProvider === p.id ? 'border-accent bg-accent-soft' : 'border-line-soft bg-surface'}`}
+                >
+                  <span className="flex w-full items-center justify-between text-[15px] font-semibold">
+                    {p.name}
+                    {cur.textProvider === p.id && <IconCheck size={16} />}
+                  </span>
+                  <span className="text-xs text-muted">{p.note}</span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 mb-0 text-[12px] leading-relaxed text-muted">
+              默认使用 Cloudflare Workers AI 的共享免费 Neurons 配额；Paid 计划超额可能计费。截图识别需手动切换 Gemini。
+              Qwen 失败不会自动扣用 Gemini 额度。
+            </p>
+          </Section>
+
+          <Section title="模型与语音" desc="显示当前实际文本引擎；发音统一使用 MeloTTS。">
             <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
-              文本 <span className="font-mono text-ink">{cur.textModel}</span>
+              文本 <span className="font-mono text-ink">{cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`}</span>
               <br />
-              语音 <span className="font-mono text-ink">{cur.ttsModel}</span> · {cur.voice}
+              语音 <span className="font-mono text-ink">Cloudflare · MeloTTS (en)</span>
+              <br />
+              <span className="text-xs">慢速朗读为本地 0.75 倍速，额度不足时使用系统朗读；不会自动调用 Gemini TTS。</span>
             </div>
           </Section>
 
           {me?.admin && (
             <details className="group mt-5 px-4 md:mt-6 md:px-6">
               <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[13px] text-muted-2 [&::-webkit-details-marker]:hidden">
-                高级：更换模型、音色，测试速度
+                高级：Gemini 模型、文本与语音测试
                 <span className="transition-transform group-open:rotate-90">›</span>
               </summary>
               <div className="-mx-4 md:-mx-6">
-          <Section title="文本模型" desc="用于生成练习、批改、AI 补全和 AI 重组">
+          <Section title="Gemini 备用模型" desc="仅当上方切换为 Gemini 时使用；免费模式不走这个模型">
             <Options
               options={TEXT_MODELS}
               value={cur.textModel}
               def={defaults?.textModel}
               onChange={(v) => save('textModel', v)}
             />
-            <Custom value={cur.textModel} known={TEXT_MODELS} onSave={(v) => save('textModel', v)} placeholder="其他模型，如 gemini-3.9-flash" />
+            <Custom value={cur.textModel} known={TEXT_MODELS} onSave={(v) => save('textModel', v)} placeholder="其他 Gemini 模型" />
           </Section>
 
-          <Section title="语音模型" desc="切换后新生成的语音使用新模型，旧缓存保留">
-            <Options options={TTS_MODELS} value={cur.ttsModel} def={defaults?.ttsModel} onChange={(v) => save('ttsModel', v)} />
-            <Custom value={cur.ttsModel} known={TTS_MODELS} onSave={(v) => save('ttsModel', v)} placeholder="其他语音模型" />
-          </Section>
-
-          <Section title="音色">
-            <div className="grid grid-cols-2 gap-2">
-              {VOICES.map((v) => {
-                const on = cur.voice === v.id
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => save('voice', v.id)}
-                    aria-pressed={on}
-                    className={`flex h-14 flex-col items-start justify-center rounded-2xl border px-3.5 text-left ${
-                      on ? 'border-ink bg-surface' : 'border-line-soft bg-surface'
-                    }`}
-                  >
-                    <span className="flex w-full items-center justify-between text-[15px] font-medium text-ink">
-                      {v.id}
-                      {on && <IconCheck size={16} className="text-accent" />}
-                    </span>
-                    <span className="text-xs text-muted">{v.note}</span>
-                  </button>
-                )
-              })}
+          <Section title="语音模型" desc="当前试用统一使用 MeloTTS；Workers AI 的托管模型不支持切换 Gemini 音色。">
+            <div className="rounded-2xl bg-chip p-3.5 text-[13px] text-muted">
+              语音生成走 Cloudflare Workers AI，共享每天 10,000 Neurons 免费配额。
+              本站另设每日新语音段数上限；在 Workers Paid 计划中，超过 Cloudflare 免费配额仍可能计费，请在 Cloudflare 控制台检查实际 Neurons 用量。
             </div>
           </Section>
-          <Section title="测试" desc="用当前设置跑一次，看看速度和效果。同一段语音第二次会命中缓存。">
+          <Section title="测试" desc="先检查 MeloTTS 云端返回的真实音频格式，再手动点击试听（适配 iPhone Safari）；也可单独测试系统朗读。">
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 onClick={testText}
@@ -286,6 +331,21 @@ export default function Settings() {
               >
                 <IconPlay size={16} />
                 {testing === 'tts' ? '生成中…' : '测试语音'}
+              </button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2.5">
+              <button
+                onClick={playCloudTest}
+                disabled={!cloudAudioReady}
+                className="flex h-11 items-center justify-center rounded-xl border border-line bg-surface text-[13px] font-medium text-ink disabled:opacity-40"
+              >
+                播放云端测试音频
+              </button>
+              <button
+                onClick={testSystemVoice}
+                className="flex h-11 items-center justify-center rounded-xl border border-line bg-surface text-[13px] font-medium text-ink"
+              >
+                测试 Safari 系统朗读
               </button>
             </div>
             {result && (

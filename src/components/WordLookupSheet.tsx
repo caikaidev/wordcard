@@ -64,7 +64,7 @@ export function WordLookupSheet({
   const mw = dict?.source.startsWith('Merriam')
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 md:items-center" onClick={onClose} role="presentation">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30 md:items-center" onClick={(e) => { e.stopPropagation(); onClose() }} onTouchStart={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()} onTouchCancel={(e) => e.stopPropagation()} role="presentation">
       <div
         role="dialog"
         aria-modal="true"
@@ -183,7 +183,7 @@ export function TappableExample({ text, highlight, onLookup }: { text: string; h
         title={`查义：${word}`}
         onClick={(e) => { e.stopPropagation(); onLookup(word) }}
         className={`inline cursor-pointer rounded-sm border-0 bg-transparent p-0 underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 ${emphasized ? 'font-semibold text-accent' : ''}`}
-        style={{ font: 'inherit', color: emphasized ? 'var(--accent)' : 'inherit' }}
+        style={{ font: 'inherit' }}
       >{word}</button>,
     )
     last = start + word.length

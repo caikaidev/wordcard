@@ -206,7 +206,7 @@ function ForecastCard() {
                 <div key={d.date} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1.5">
                   <span className="tabular text-[11px] text-muted">{d.count}</span>
                   <div className={`w-full max-w-12 rounded-md ${i === 0 ? 'bg-accent' : 'bg-accent/45'}`}
-                    style={{ height: d.count ? `${Math.max(5, (d.count / max) * 88)}%` : 3, opacity: d.count ? 1 : .35 }} />
+                    style={{ height: d.count ? `${Math.max(5, (d.count / max) * 60)}%` : 3, opacity: d.count ? 1 : .35 }} />
                   <span className={`tabular text-[11px] ${i === 0 ? 'font-semibold text-ink' : 'text-muted'}`}>{i === 0 ? '今天' : label}</span>
                 </div>
               )

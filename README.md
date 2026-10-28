@@ -44,7 +44,7 @@
 - 三种复习方式：认读（看英文想意思）、产出（看中文情境，说出空里的英文）和语境（原文例句挖空，在原来的语境里想起这个词，适合导入的学习包），可混合。
 - 每周回顾：本周新增 / 复习 / 掌握了多少、每天的复习量、最容易忘的词，可翻看往周（复习次数从该功能上线后开始记录）。
 - AI 重组：用到期的词造新句子，连续播放。
-- 每个词句都能听 Gemini 的自然语音，听过的会缓存，断网也能播。
+- 每个词句默认用 Cloudflare Workers AI MeloTTS 合成英文语音（MP3，缓存至 R2）；慢速跟读通过前端变速实现。缓存命中不重复推理，额度不足时改用浏览器系统朗读，不自动调用 Gemini TTS。
 
 **发现新词**：在「添加」页进入。读 Hacker News 和你指定的 subreddit 最近的讨论，统计哪些词反复出现，去掉太常见的词（按词频表和你选的词汇量）、词库里已有的词、你标过「认识」的词，再让 AI 按教练设定挑出最值得学的几个，附上原帖例句和中文释义。每个词可以点「学这个」加入复习（放进「社区热词」学习包，也能用来生成练习），或点「认识」以后不再推荐。也可以打开「每天早上自动找一批」直接加进复习。每批调用一次 AI。
 
@@ -81,7 +81,8 @@
         ├── /api/*  ── 再校验一次 Access JWT
         ├── D1  ── 词条、复习进度、练习与批改
         ├── R2  ── 语音缓存（同一句只生成一次）
-        └── Gemini API（key 只存在 Worker Secret 里，前端拿不到）
+        ├── Workers AI MeloTTS（英文语音，AI binding + R2 MP3 缓存）
+        └── Gemini API（只负责文本类 AI，key 只存在 Worker Secret）
 ```
 
 目录：`src/` 前端，`worker/` 后端，`shared/` 两端共用的类型和复习算法，`migrations/` 数据库结构，`scripts/demo/` 演示数据与 README 截图生成脚本。
@@ -121,6 +122,23 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 **英英释义**：查询顺序是 Merriam-Webster 学习者词典（`MW_LEARNERS_KEY`）→ Merriam-Webster 大学词典（`MW_COLLEGIATE_KEY`）→ [Free Dictionary API](https://dictionaryapi.dev/)（Wiktionary 数据，不需要 key）。Merriam-Webster 是**可选依赖**：免费 key 只限非商业使用、每天 1000 次；不配置时自动使用 Free Dictionary API。按其[品牌规范](https://dictionaryapi.com/info/branding-guidelines)，应用内展示官方标志并使用产品全称；标志在 CI 构建时下载，不随仓库分发。
 
 **执行区域**：`wrangler.jsonc` 的 `placement.region` 是请求路由设置，让 Worker 在美国执行、调用 Gemini 的请求从美国发出，避免 `User location is not supported`。它不是任何地区的合规方案，详见[自部署指南](docs/self-hosting.md#关于执行区域)。
+
+## 文本：Cloudflare 免费模式与 Gemini 一键切换
+
+「设置 → 文本 AI 引擎」提供两档（每个用户分别保存选择）：
+
+- **Cloudflare 免费（默认）**：使用 Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` 处理词卡、练习、闯关题库、批改、翻译等结构化 JSON 文本任务；不需要另外的 API key，与 MeloTTS 共享账号每天 10,000 Neurons 免费分配额度。Workers Paid 超额仍可能计费。
+- **Gemini**：一键切换后恢复原有 Gemini 3.8 Flash（管理员可在「高级」指定 Gemini 备用模型）。Qwen 出错时**不会自动换 Gemini**，避免意外计费。
+
+Cloudflare 文本模型只处理纯文本；截图识别或网页无法直接解析而需要 Gemini URL context 时，请手动切换 Gemini。Qwen 的 JSON 输出经服务端解析、必要字段和类型校验，不合格会明确报错，用户可重试或切回 Gemini。两种模型的用量记入同一 `usage` 日志，但设置页的美元预估只统计 Gemini，Cloudflare 实际 Neurons 请以 Cloudflare Dashboard 为准。
+
+## 语音：Cloudflare Workers AI MeloTTS
+
+默认的单词、例句、AI 重组、闯关听力和跟读语音全部使用 `@cf/myshell-ai/melotts`，语言 `en`。配置文件中需要 `"ai": { "binding": "AI" }`，无需额外的 MeloTTS API key。输出 MP3，R2 缓存键包含 Melo 模型版本，旧 Gemini WAV 缓存不会被当成 MP3；前端请求 URL 带 `v=melo-v1`，避免浏览器继续播放旧缓存。慢速 `slow=1` 在前端以 0.75 倍速播放同一段 MP3，不再重复合成。
+
+**额度与账单**：Cloudflare Workers AI 每个账号每天共享 10,000 Neurons 免费额度，UTC 00:00 重置。Workers Free 用完会返回 429；**Workers Paid 超出免费额度可能继续计费**。拾句默认限制每天新生成 120 段、普通成员每人 60 段、每分钟 8 段（可通过 `DAILY_TTS_LIMIT` / `USER_DAILY_TTS_LIMIT` / `TTS_PER_MINUTE_LIMIT` 调整），这是应用侧请求次数限流，**不等于**准确的 Neurons 用量，也不保证 Paid 计划绝对零收费。应在 Cloudflare Dashboard → Workers AI 监测账号共享的实际 Neurons。若需要零额外费用，保持 Workers Free 或在 Cloudflare 账户级进行约束。
+
+网络故障、推理额度耗尽或模型不可用时，前端只回退浏览器系统朗读，不自动使用 Gemini TTS。语音服务耗尽不会影响 Gemini 文本批改等功能。设置页「测试语音」会标明实际听到的是 MeloTTS 还是系统朗读。费用页面的 Gemini 估算**不包含** MeloTTS 用量，实际 Workers AI Neurons 以 Cloudflare Dashboard 为准。
 
 ## 复习规则
 

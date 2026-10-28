@@ -1,9 +1,12 @@
 import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, tts, ttsKey, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { CloudflareTextError } from './cloudflare-text'
+import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
+import { REVIEW_GRADE_UPDATE_SQL } from '../shared/review'
 import { REVIEW_FORECAST_SQL, buildReviewForecast, reviewForecastWindow } from '../shared/forecast'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
@@ -69,6 +72,8 @@ app.route('/ext', ext)
 
 app.onError((err, c) => {
   if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
+  if (err instanceof MeloTtsError) return c.json({ error: err.message }, err.status as 500)
+  if (err instanceof CloudflareTextError) return c.json({ error: err.message }, err.status as 500)
   console.error(err)
   return c.json({ error: '服务器出错了' }, 500)
 })
@@ -303,12 +308,12 @@ app.post('/review/:id', async (c) => {
   if (!cur) return c.json({ error: '找不到这一条' }, 404)
   const now = Date.now()
   const next = schedule(cur.interval, grade as Grade, now)
-  const row = await c.env.DB.prepare(
-    `UPDATE items SET interval = ?, due_at = ?, reps = reps + 1, lapses = lapses + ?, updated_at = ?
-     WHERE id = ? RETURNING *`,
-  )
-    .bind(next.interval, next.dueAt, grade === 0 ? 1 : 0, now, id)
+  const row = await c.env.DB.prepare(REVIEW_GRADE_UPDATE_SQL)
+    .bind(next.interval, next.dueAt, grade === 0 ? 1 : 0, now, id, who(c).user, now)
     .first<Row>()
+  // 防止快速双击、旧标签页或同轮错题巩固重复修改 SRS。
+  // 并发请求即使都读取到原间隔，也只有第一次到期卡片更新成功。
+  if (!row) return c.json({ error: '这张卡片已经安排过复习，请刷新后查看最新进度', stale: true }, 409)
   // 评分流水：每周回顾用；记录失败不影响复习
   await c.env.DB.prepare('INSERT INTO reviews (user_id, item_id, grade, ts) VALUES (?, ?, ?, ?)')
     .bind(who(c).user, id, grade, now)
@@ -322,7 +327,7 @@ app.post('/review/:id', async (c) => {
   return c.json({ item: toItem(row!), checkin })
 })
 
-/** 未来七个北京时间自然日的到期卡片；今天包含所有逾期卡片。仅统计当前用户仍在学习的卡片。 */
+/** 北京时间连续七个自然日的预计到期：今日含逾期，数据只读。 */
 app.get('/review/forecast', async (c) => {
   const now = Date.now()
   const { tomorrow, end } = reviewForecastWindow(now)
@@ -498,25 +503,21 @@ app.post('/remix', async (c) => {
 app.get('/tts', async (c) => {
   const text = cleanText(c.req.query('text'))
   if (!text) return c.json({ error: 'text 不能为空' }, 400)
-  const slow = c.req.query('slow') === '1'
 
-  const env = await ai(c)
-  const key = await ttsKey(env, text, slow)
-
+  // slow=1 使用完全相同的 MP3；客户端通过 playbackRate 0.75 实现慢速。
+  const key = await meloTtsKey(text)
   const headers = {
-    'content-type': 'audio/wav',
-    // 同一个 URL 永远对应同一段音频，浏览器可以放心长期缓存
     'cache-control': 'private, max-age=31536000, immutable',
+    'x-tts-engine': 'melotts',
   }
-
   const cached = await c.env.AUDIO.get(key)
-  if (cached) return new Response(cached.body, { headers })
-  // cached=1：只要缓存里现成的，没有就算了（不生成、不占额度），前端改用系统朗读
+  if (cached) return new Response(cached.body, { headers: { ...headers, 'content-type': cached.httpMetadata?.contentType || MELO_MIME, 'x-tts-cache': 'HIT' } })
+  // 只查 R2 时没有音频，不调用推理，不产生新费用。
   if (c.req.query('cached') === '1') return c.body(null, 204)
 
-  const wav = await tts(env, text, slow)
-  await c.env.AUDIO.put(key, wav, { httpMetadata: { contentType: 'audio/wav' }, customMetadata: { text: text.slice(0, 200) } })
-  return new Response(wav, { headers })
+  const audio = await generateMeloTts(await ai(c), text)
+  await c.env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
+  return new Response(audio.bytes, { headers: { ...headers, 'content-type': audio.mimeType, 'x-tts-cache': 'MISS' } })
 })
 
 /* ------------------------------ 设置 ------------------------------ */
@@ -647,7 +648,7 @@ async function usedKeys(env: Env) {
     const m = safeMeta(r.meta)
     for (const t of [r.text, m.example]) {
       const text = cleanText(t)
-      if (text) keys.add(await ttsKey(env, text, false))
+      if (text) keys.add(await meloTtsKey(text))
     }
   }
   return keys

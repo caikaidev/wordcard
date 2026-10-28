@@ -1,7 +1,8 @@
 import { difficultyPrompt, isDifficulty, type Difficulty, type DifficultySample } from '../shared/difficulty'
 import { Hono } from 'hono'
 import type { AppEnv } from './env'
-import { generateJson, warmTts } from './gemini'
+import { generateJson } from './gemini'
+import { warmMeloTts } from './melo'
 import { aiEnv } from './settings'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
@@ -183,7 +184,7 @@ quest.post('/:lessonId', async (c) => {
     .bind(id, user, JSON.stringify(clean), now, now)
     .run()
   // 听力关的句子在后台先把语音生成好，等走到「听」那一关时直接播
-  c.executionCtx.waitUntil(warmTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500))))
+  c.executionCtx.waitUntil(warmMeloTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500))))
   const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, writeDone }
   return c.json(q)
 })
