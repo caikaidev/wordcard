@@ -129,7 +129,7 @@ function MobileTabBar({ path }: { path: Path }) {
 function DesktopHeader({ path }: { path: Path }) {
   const stats = useStats()
   return (
-    <header className="z-40 hidden h-[72px] shrink-0 grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-4 border-b border-line bg-bg/95 px-5 backdrop-blur md:grid xl:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)] xl:px-10">
+    <header className="desktop-header z-40 hidden h-[72px] shrink-0 grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-4 border-b border-line bg-bg/95 px-5 backdrop-blur md:grid xl:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)] xl:px-10">
       <Link to="/" className="shrink-0 whitespace-nowrap font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
         拾句
       </Link>
