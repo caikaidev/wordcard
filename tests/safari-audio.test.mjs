@@ -5,7 +5,7 @@ import { build } from 'esbuild'
 test('Safari: async cloud failure offers a manual user-tap speech fallback', async () => {
   const original = {
     Audio: globalThis.Audio, window: globalThis.window, navigator: globalThis.navigator,
-    SpeechSynthesisUtterance: globalThis.SpeechSynthesisUtterance,
+    SpeechSynthesisUtterance: globalThis.SpeechSynthesisUtterance, MediaMetadata: globalThis.MediaMetadata,
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
   }
   const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
@@ -21,8 +21,9 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
   let lastUtterance
   let speechDeadline
   globalThis.Audio = FakeAudio
-  Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: { onLine: true } })
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: { onLine: true, mediaSession: { metadata: null } } })
   globalThis.SpeechSynthesisUtterance = class { constructor(text) { this.text = text } }
+  globalThis.MediaMetadata = class { constructor(data) { Object.assign(this, data) } }
   globalThis.window = { speechSynthesis: {
     getVoices() { return [] },
     cancel() {},
@@ -43,7 +44,10 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
     const bundle = await build({ entryPoints: ['src/audio.ts'], bundle: true, platform: 'node', format: 'esm', write: false })
     const audio = await import('data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text).toString('base64'))
     const completed = audio.speak('hello', false)
+    assert.equal(navigator.mediaSession.metadata?.title, '拾句')
+    assert.equal(navigator.mediaSession.metadata?.artwork[0].src, '/media-artwork.png?v=3')
     player.emit('error') // cloud failed after .play()
+    assert.equal(navigator.mediaSession.metadata, null) // system TTS has no media artwork
     assert.equal(spoken, 1)
     assert.equal(audio.getSpeechStatus().needsTap, false)
     assert.equal(typeof speechDeadline, 'function')

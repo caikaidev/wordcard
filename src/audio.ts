@@ -22,6 +22,24 @@ let speechAttempt = 0
 let speechStarting = false
 let notified = false
 
+// Use a solid square PNG for iOS lock-screen artwork. PWA/app icons are
+// separately cropped by each platform, and transparent corners show white here.
+function setMediaArtwork() {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: '拾句',
+      artist: '英语朗读',
+      artwork: [{ src: '/media-artwork.png?v=3', sizes: '512x512', type: 'image/png' }],
+    })
+  } catch { /* Media Session is optional; playback must still work. */ }
+}
+
+function clearMediaArtwork() {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  try { navigator.mediaSession.metadata = null } catch { /* ignore unsupported browsers */ }
+}
+
 function clearSpeechTimer() {
   if (speechTimer !== null) clearTimeout(speechTimer)
   speechTimer = null
@@ -37,6 +55,7 @@ function done(ok: boolean) {
   const f = finish
   finish = null
   onPlaying = null
+  clearMediaArtwork()
   f?.(ok)
 }
 
@@ -146,6 +165,7 @@ function startSystemSpeech(manual: boolean, quiet = false) {
   clearSpeechTimer()
   mode = 'system'
   el?.pause()
+  clearMediaArtwork()
   if (!notified && !quiet) {
     notified = true
     import('./components/ui').then((m) => m.toast('云端语音不可用，正在尝试系统朗读；如无声音请点击下方按钮'))
@@ -227,6 +247,7 @@ export function speak(text: string, slow = false, playing?: (engine: Engine) => 
   player.src = local || ttsUrl(text, slow)
   player.playbackRate = slow ? 0.75 : 1
   player.preservesPitch = true
+  setMediaArtwork()
   player.play().catch((err: DOMException) => {
     if (mode !== 'audio' || !current) return
     // Autoplay restrictions are not proof that the cloud has failed.
