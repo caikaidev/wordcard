@@ -8,6 +8,7 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
     SpeechSynthesisUtterance: globalThis.SpeechSynthesisUtterance,
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
   }
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
   let player
   class FakeAudio {
     constructor() { this.listeners = new Map(); player = this }
@@ -20,7 +21,7 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
   let lastUtterance
   let speechDeadline
   globalThis.Audio = FakeAudio
-  globalThis.navigator = { onLine: true }
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: { onLine: true } })
   globalThis.SpeechSynthesisUtterance = class { constructor(text) { this.text = text } }
   globalThis.window = { speechSynthesis: {
     getVoices() { return [] },
@@ -57,8 +58,11 @@ test('Safari: async cloud failure offers a manual user-tap speech fallback', asy
     assert.equal(audio.getSpeechStatus().text, null)
   } finally {
     for (const [name, value] of Object.entries(original)) {
+      if (name === 'navigator') continue
       if (value === undefined) delete globalThis[name]
       else globalThis[name] = value
     }
+    if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor)
+    else delete globalThis.navigator
   }
 })
