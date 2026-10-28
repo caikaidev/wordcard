@@ -697,7 +697,7 @@ app.all('*', (c) => c.json({ error: 'Not found' }, 404))
 
 export default {
   fetch: app.fetch,
-  queue: processGenerationBatch,
+  queue: (batch, env) => processGenerationBatch(batch as MessageBatch<{ jobId: number }>, env),
   // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送；
   // 北京时间早上 6 点给开了自动的人找一批新词，赶在早上的提醒之前
   scheduled: (event, env, ctx) => {
