@@ -1,7 +1,7 @@
 import { readCached } from '../readCache'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
-import { prefetch, speak, stop } from '../audio'
+import { prefetch, prefetchCached, speak, speakFast, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
 import { reviewGradeDecision } from '../../shared/review'
 import { BLANK, clozeOf, contextClozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
@@ -126,10 +126,13 @@ export default function Review() {
   const retrying = queue ? queue.filter((x) => again.has(x.id)).length : 0
   const isAgain = !!card && again.has(card.id)
 
-  // 提前准备当前卡片的发音，点播放时基本秒出。
-  // 使用当前 MeloTTS + R2 缓存，优先预取当前词条；例句按需播放
+  // 滑动预取窗口：前 8 张仅检查 R2（不消耗 AI），近期最多 3 张单词
+  // 才允许缺失时新合成；例句和长句不自动生成，防止浪费免费额度。
   useEffect(() => {
-    if (queue?.length) prefetch([queue[0].text])
+    if (!queue?.length) return
+    const upcoming = queue.slice(0, 8)
+    prefetchCached(upcoming.map((item) => item.text))
+    prefetch(upcoming.slice(0, 3).filter((item) => item.type === 'word').map((item) => item.text))
   }, [queue])
 
   const advance = (requeue?: Item) => {
@@ -259,7 +262,8 @@ export default function Review() {
     } else if (flipped && !isAgain && (k === '1' || k === '2' || k === '3')) {
       grade((Number(k) - 1) as Grade)
     } else if (k === 'p') {
-      speak(card.text)
+      if (card.type === 'word') speakFast(card.text)
+      else speak(card.text)
     } else if (k === 'd' && flipped) {
       markDone()
     } else if (k === 's' || k === 'arrowright') {
