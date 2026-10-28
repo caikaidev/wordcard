@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { retrySystemSpeech, speak, stop, useSpeaking } from '../audio'
+import { retrySystemSpeech, speak, speakFast, stop, useSpeaking } from '../audio'
 import { IconSpeaker } from './icons'
 
 /** 圆形发音按钮：加载中呼吸、播放中高亮；再点一次停止 */
@@ -30,6 +30,7 @@ export function SpeakButton({
         e.stopPropagation()
         if (active && s.needsTap) retrySystemSpeech()
         else if (active) stop()
+        else if (text.trim().length <= 80 && !/\s/.test(text.trim())) speakFast(text)
         else speak(text)
       }}
       className={`flex shrink-0 items-center justify-center rounded-full border-0 transition ${cls} ${active && s.loading ? 'animate-shimmer' : ''}`}
