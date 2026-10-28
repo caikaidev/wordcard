@@ -32,6 +32,11 @@
   ],
 
   "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "wordcard-audio" }],
+  // Background quest generation (Workers Free supports Queues; provision in deploy CI).
+  "queues": {
+    "producers": [{ "binding": "GENERATION_QUEUE", "queue": "wordcard-generation" }],
+    "consumers": [{ "queue": "wordcard-generation", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 1 }]
+  },
   "ai": { "binding": "AI" }, // MeloTTS 直接调用 Workers AI，不需要另一把 API key
 
   // Browser Run（原 Browser Rendering）：读链接时，直接抓取读不到正文的页面用真实浏览器渲染。
