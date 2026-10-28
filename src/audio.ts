@@ -84,6 +84,10 @@ function audio() {
 
 const ready = new Map<string, string>()
 const pending = new Set<string>()
+// Cache-only lookups and full syntheses share pending; remember an explicit
+// generation request instead of losing it behind an in-flight R2 probe.
+const checkingCache = new Set<string>()
+const generateAfterCheck = new Set<string>()
 const queue: string[] = []
 let running = 0
 const MAX_READY = 80
@@ -118,7 +122,13 @@ function pump() {
 export function prefetch(texts: (string | undefined | null)[]) {
   for (const t of texts) {
     const text = t?.trim()
-    if (!text || ready.has(text) || pending.has(text)) continue
+    if (!text || ready.has(text)) continue
+    if (checkingCache.has(text)) {
+      // Upgrade this cache-only request to a full prewarm only on cache miss.
+      generateAfterCheck.add(text)
+      continue
+    }
+    if (pending.has(text)) continue
     pending.add(text)
     queue.push(text)
   }
@@ -130,11 +140,19 @@ export function prefetchCached(texts: (string | undefined | null)[]) {
     const text = t?.trim()
     if (!text || ready.has(text) || pending.has(text)) continue
     pending.add(text)
+    checkingCache.add(text)
     fetch(ttsUrl(text) + '&cached=1')
       .then((r) => r.status === 200 && r.headers.get('content-type')?.startsWith('audio/') ? r.blob() : null)
       .then((blob) => { if (blob) remember(text, blob) })
       .catch(() => {})
-      .finally(() => pending.delete(text))
+      .finally(() => {
+        const shouldGenerate = generateAfterCheck.delete(text)
+        checkingCache.delete(text)
+        pending.delete(text)
+        // A failed or missing cache check must not swallow an explicitly
+        // requested prewarm. The normal prefetch queue still limits concurrency.
+        if (shouldGenerate && !ready.has(text)) prefetch([text])
+      })
   }
 }
 
