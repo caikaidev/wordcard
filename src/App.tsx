@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'rea
 import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { Confirmer, Toaster } from './components/ui'
+import { SpeechFallback } from './components/SpeechFallback'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
 import Review from './pages/Review'
@@ -93,6 +94,7 @@ export default function App() {
       {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
+      <SpeechFallback />
     </div>
   )
 }
