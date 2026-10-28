@@ -18,6 +18,7 @@ import { push, sendReminders } from './push'
 import { autoDiscover, discover } from './discover'
 import { level } from './level'
 import { quest } from './quest'
+import { prepareQuest, processGenerationBatch } from './generation-jobs'
 import { ext, importLesson, tokens } from './lesson-import'
 
 type Row = Omit<Item, 'meta'> & { meta: string }
@@ -539,6 +540,14 @@ app.route('/practice', practice)
 app.route('/push', push)
 app.route('/discover', discover)
 app.route('/level', level)
+app.post('/generation/quest/:lessonId', async (c) => {
+  const id = Number(c.req.param('lessonId'))
+  if (!Number.isSafeInteger(id) || id <= 0) return c.json({ error: '无效练习 ID' }, 400)
+  const owned = await c.env.DB.prepare('SELECT id FROM lessons WHERE id = ? AND user_id = ?')
+    .bind(id, c.get('user')).first<{ id: number }>()
+  if (!owned) return c.json({ error: '找不到这份练习' }, 404)
+  return c.json(await prepareQuest(c.env, c.get('user'), id), 202)
+})
 app.route('/quest', quest)
 app.route('/tokens', tokens)
 
@@ -688,6 +697,7 @@ app.all('*', (c) => c.json({ error: 'Not found' }, 404))
 
 export default {
   fetch: app.fetch,
+  queue: processGenerationBatch,
   // 每小时一次（见 wrangler.jsonc 的 triggers）：给到了提醒钟点、今天还没打卡的人发推送；
   // 北京时间早上 6 点给开了自动的人找一批新词，赶在早上的提醒之前
   scheduled: (event, env, ctx) => {
