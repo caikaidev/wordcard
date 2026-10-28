@@ -56,15 +56,40 @@ async function checkQuota(env: Env) {
     throw new MeloTtsError('今日个人新语音数量已达上限，缓存语音仍可播放', 429)
 }
 
-function toMeloError(error: unknown): MeloTtsError {
+/**
+ * Use Cloudflare's *specific* error codes instead of telling every 429 user
+ * they exhausted the free allocation. Never forward raw upstream exceptions,
+ * which may contain request/account metadata.
+ */
+export function classifyMeloError(error: unknown): MeloTtsError {
   if (error instanceof MeloTtsError) return error
-  const detail = error instanceof Error ? error.message : String(error)
-  const limited = /429|quota|neuron|rate.limit|capacity|exceeded|3036/i.test(detail)
+  const object = error && typeof error === 'object' ? error as Record<string, unknown> : {}
+  const nested = object.cause && typeof object.cause === 'object' ? object.cause as Record<string, unknown> : {}
+  const detail = [error instanceof Error ? error.message : typeof error === 'string' ? error : '',
+    object.code, object.errorCode, object.status, nested.code, nested.errorCode, nested.message]
+    .filter((v) => v !== undefined && v !== null)
+    .join(' ')
+  // 3036: truly out of daily free Neurons, 3040: capacity only.
+  if (/\b3036\b|daily free allocation|free allocation.*exceed/i.test(detail))
+    return new MeloTtsError('Cloudflare 账号今天的 Workers AI 免费 Neurons 已耗尽（错误 3036）', 429)
+  if (/\b3040\b|out of capacity|capacity temporarily exceeded/i.test(detail))
+    return new MeloTtsError('MeloTTS 当前容量不足（错误 3040），不是免费额度用完', 503)
+  if (/\b5035\b|requires Workers Paid plan/i.test(detail))
+    return new MeloTtsError('当前模型需要 Workers Paid 计划（错误 5035）', 403)
+  if (/\b5007\b|\b3042\b|no such model|invalid model id/i.test(detail))
+    return new MeloTtsError('Cloudflare 找不到 MeloTTS 模型（5007/3042）', 502)
+  if (/\b429\b|rate.?limit|too many requests/i.test(detail))
+    return new MeloTtsError('Cloudflare 请求被限流（429），不能据此认定免费额度已耗尽', 429)
+  if (/\b403\b|\b401\b|not allowed|not authorized|permission/i.test(detail))
+    return new MeloTtsError('Cloudflare 账户暂无此模型的访问权限（401/403）', 403)
+  if (/\b3007\b|timeout|timed out/i.test(detail))
+    return new MeloTtsError('MeloTTS 推理超时，请重试', 504)
+  return new MeloTtsError('MeloTTS 推理失败（不是已确认的额度不足），请检查 Workers Logs', 503)
+}
+
+function toMeloError(error: unknown): MeloTtsError {
   console.error('MeloTTS inference failed', error)
-  return new MeloTtsError(
-    limited ? 'Cloudflare Workers AI 免费额度或速率限制已触发，改用系统朗读' : 'MeloTTS 暂时不可用，改用系统朗读',
-    limited ? 429 : 503,
-  )
+  return classifyMeloError(error)
 }
 
 /** Only count actual new generations, not cache hits. Failed logging must not break audio. */
