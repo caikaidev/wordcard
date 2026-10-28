@@ -14,29 +14,45 @@ export class MeloTtsError extends Error {
 
 /** Separate provider/version/format namespace: never reinterpret old Gemini WAV as MP3. */
 export async function meloTtsKey(text: string) {
-  const data = new TextEncoder().encode(`melo-v1|${MELO_MODEL}|en|${text}`)
+  const data = new TextEncoder().encode(`melo-v2|${MELO_MODEL}|en|${text}`)
   const digest = await crypto.subtle.digest('SHA-256', data)
   const hash = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-  return `tts/melo-v1/${hash}.mp3`
+  return `tts/melo-v2/${hash}.audio`
 }
 
-/** Cloudflare's Workers binding returns a JSON object containing base64 MP3 audio. */
-export function decodeMeloResult(result: unknown): Uint8Array {
-  const raw = result && typeof result === 'object' ? (result as { audio?: unknown }).audio : undefined
-  if (typeof raw !== 'string' || !raw) throw new MeloTtsError('MeloTTS 没有返回音频')
-  const payload = raw.replace(/^data:audio\/mpeg;base64,/, '')
-  let binary: string
-  try {
-    binary = atob(payload)
-  } catch {
-    throw new MeloTtsError('MeloTTS 返回的音频格式不正确')
+/** Inspect decoded bytes rather than assuming Cloudflare's base64 is MP3.
+ * Some model responses may contain WAV: preserve the actual format. */
+export type MeloAudio = { bytes: Uint8Array; mimeType: 'audio/mpeg' | 'audio/wav' }
+
+export function decodeMeloResult(result: unknown): MeloAudio {
+  const raw = result && typeof result === 'object' && !(result instanceof ArrayBuffer) && !(result instanceof Uint8Array)
+    ? (result as { audio?: unknown }).audio : result
+  let bytes: Uint8Array
+  if (typeof raw === 'string') {
+    const base64 = raw.replace(/^data:audio\/[\w.+-]+;base64,/, '').replace(/\s+/g, '')
+    if (!base64) throw new MeloTtsError('MeloTTS 没有返回音频')
+    let binary: string
+    try { binary = atob(base64) }
+    catch { throw new MeloTtsError('MeloTTS 返回的音频编码无效') }
+    bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0))
+  } else if (raw instanceof ArrayBuffer) {
+    bytes = new Uint8Array(raw)
+  } else if (raw instanceof Uint8Array) {
+    bytes = raw
+  } else {
+    throw new MeloTtsError('MeloTTS 没有返回音频')
   }
-  if (binary.length < 16 || binary.length > MAX_AUDIO_BYTES) throw new MeloTtsError('MeloTTS 返回的音频大小不正确')
-  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0))
-  // MP3 may start with an ID3 tag or with a MPEG frame sync.
-  const mp3 = (bytes[0] === 73 && bytes[1] === 68 && bytes[2] === 51) || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
-  if (!mp3) throw new MeloTtsError('MeloTTS 返回的不是 MP3 音频')
-  return bytes
+  if (bytes.length < 16 || bytes.length > MAX_AUDIO_BYTES) throw new MeloTtsError('MeloTTS 返回的音频大小不正确')
+  const mp3 = (bytes[0] === 73 && bytes[1] === 68 && bytes[2] === 51)
+    || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)
+  if (mp3) return { bytes, mimeType: 'audio/mpeg' }
+  const wav = bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70
+    && bytes[8] === 87 && bytes[9] === 65 && bytes[10] === 86 && bytes[11] === 69
+  if (wav) return { bytes, mimeType: 'audio/wav' }
+  // Log only twelve header bytes, never the full audio content.
+  const sig = [...bytes.slice(0, 12)].map((b) => b.toString(16).padStart(2, '0')).join(' ')
+  console.warn('MeloTTS unknown audio signature', { sig, size: bytes.length })
+  throw new MeloTtsError('MeloTTS 返回未知音频格式（文件头：' + sig + '），请反馈此错误信息')
 }
 
 /**
@@ -100,18 +116,18 @@ async function recordGeneration(env: Env) {
     .catch((error) => console.error('record MeloTTS usage failed', error))
 }
 
-export async function generateMeloTts(env: Env, text: string): Promise<Uint8Array> {
+export async function generateMeloTts(env: Env, text: string): Promise<MeloAudio> {
   if (!env.AI) throw new MeloTtsError('未配置 Workers AI 绑定，请检查 wrangler.jsonc')
   await checkQuota(env)
-  let bytes: Uint8Array
+  let audio: MeloAudio
   try {
     const result = await env.AI.run(MELO_MODEL, { prompt: text, lang: 'en' })
-    bytes = decodeMeloResult(result)
+    audio = decodeMeloResult(result)
   } catch (error) {
     throw toMeloError(error)
   }
   await recordGeneration(env)
-  return bytes
+  return audio
 }
 
 /** Prewarm only when the exact Melo MP3 is absent; never invoke Gemini TTS. */
@@ -120,8 +136,8 @@ export async function warmMeloTts(env: Env, texts: string[]) {
     try {
       const key = await meloTtsKey(text)
       if (await env.AUDIO.head(key)) continue
-      const mp3 = await generateMeloTts(env, text)
-      await env.AUDIO.put(key, mp3, { httpMetadata: { contentType: MELO_MIME } })
+      const audio = await generateMeloTts(env, text)
+      await env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
     } catch (error) {
       console.warn('MeloTTS prewarming stopped', error)
       return

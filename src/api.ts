@@ -171,7 +171,7 @@ export const api = {
 }
 
 export const ttsUrl = (text: string, slow = false) =>
-  `/api/tts?text=${encodeURIComponent(text)}&v=melo-v1${slow ? '&slow=1' : ''}`
+  `/api/tts?text=${encodeURIComponent(text)}&v=melo-v2${slow ? '&slow=1' : ''}`
 
 export type UsageBucket = { calls: number; input: number; output: number; cost: number; unpriced: number }
 export type UsageReport = {

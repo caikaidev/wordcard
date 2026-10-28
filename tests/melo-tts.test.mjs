@@ -47,8 +47,8 @@ function setup(overrides = {}) {
 }
 
 test('decoder accepts MP3 bytes and rejects unexpected payload', () => {
-  assert.deepEqual(decodeMeloResult({ audio }), mp3)
-  assert.throws(() => decodeMeloResult({ audio: btoa('not mp3') }), /音频|MP3/)
+  assert.deepEqual(decodeMeloResult({ audio }), { bytes: mp3, mimeType: 'audio/mpeg' })
+  assert.throws(() => decodeMeloResult({ audio: btoa('not mp3') }), /音频/)
   assert.throws(() => decodeMeloResult({ message: 'no audio' }), /没有返回音频/)
 })
 
@@ -56,13 +56,13 @@ test('cache key is deterministic and distinct from historical Gemini WAV', async
   const a = await meloTtsKey('I need more practice.')
   assert.equal(a, await meloTtsKey('I need more practice.'))
   assert.notEqual(a, await meloTtsKey('I need less practice.'))
-  assert.match(a, /^tts\/melo-v1\/[a-f0-9]{64}\.mp3$/)
+  assert.match(a, /^tts\/melo-v2\/[a-f0-9]{64}\.audio$/)
 })
 
 test('MeloTTS is the only invoked provider, in English, and logs a new synthesis', async () => {
   const { env, state } = setup()
   const result = await generateMeloTts(env, 'hello')
-  assert.deepEqual(result, mp3)
+  assert.deepEqual(result, { bytes: mp3, mimeType: 'audio/mpeg' })
   assert.deepEqual(state.calls, [{ model: MELO_MODEL, input: { prompt: 'hello', lang: 'en' } }])
   assert.equal(state.recorded.length, 1)
   assert.equal(state.recorded[0].params[1], 'tts')
@@ -101,4 +101,17 @@ test('Cloudflare quota and capacity errors are distinguished', () => {
   assert.match(classifyMeloError(new Error('429 too many requests')).message, /不能据此认定/)
   assert.match(classifyMeloError({ code: 5035 }).message, /Workers Paid/)
   assert.match(classifyMeloError(new Error('some internal exception')).message, /不是已确认的额度不足/)
+})
+
+const wav = Uint8Array.from([
+  82,73,70,70, 40,0,0,0, 87,65,86,69, 102,109,116,32,
+  16,0,0,0,1,0,1,0,128,187,0,0,0,119,1,0,
+  2,0,16,0,100,97,116,97,4,0,0,0,0,0,0,0,
+])
+test('MeloTTS WAV base64 is returned as actual WAV instead of rejected as non-MP3', () => {
+  assert.deepEqual(decodeMeloResult({ audio: btoa(String.fromCharCode(...wav)) }), { bytes: wav, mimeType: 'audio/wav' })
+  assert.deepEqual(decodeMeloResult(wav), { bytes: wav, mimeType: 'audio/wav' })
+})
+test('invalid unknown audio includes diagnostic header only', () => {
+  assert.throws(() => decodeMeloResult({audio: btoa('NOT_AUDIO_CONTENT_1000')}), /文件头/)
 })

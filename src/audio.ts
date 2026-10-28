@@ -2,85 +2,100 @@ import { useSyncExternalStore } from 'react'
 import { ttsUrl } from './api'
 
 /**
- * 全局只用一个 <audio>：同一时间只播一段，iOS 上连续播放也更稳定。
- * 状态：当前正在加载 / 播放的文本，供按钮显示动画。
+ * One audio session for the whole app: iOS Safari needs explicit user activation
+ * for speechSynthesis after an asynchronous cloud/media failure.
  */
-type State = { text: string | null; loading: boolean }
-
-let state: State = { text: null, loading: false }
+type State = { text: string | null; loading: boolean; needsTap: boolean }
+type Engine = 'melo' | 'system'
+type Session = { text: string; slow: boolean; id: number }
+let state: State = { text: null, loading: false, needsTap: false }
 const listeners = new Set<() => void>()
-const set = (s: State) => {
-  state = s
-  listeners.forEach((l) => l())
+const set = (s: State) => { state = s; listeners.forEach((l) => l()) }
+let el: HTMLAudioElement | null = null
+let current: Session | null = null
+let nextId = 0
+let mode: 'audio' | 'system' | null = null
+let finish: ((ok: boolean) => void) | null = null
+let onPlaying: ((engine: Engine) => void) | null = null
+let speechTimer: ReturnType<typeof setTimeout> | null = null
+let speechAttempt = 0
+let speechStarting = false
+let notified = false
+
+function clearSpeechTimer() {
+  if (speechTimer !== null) clearTimeout(speechTimer)
+  speechTimer = null
 }
 
-let el: HTMLAudioElement | null = null
-let finish: ((ok: boolean) => void) | null = null
-let onPlaying: ((engine: 'melo' | 'system') => void) | null = null
+function done(ok: boolean) {
+  speechAttempt++
+  speechStarting = false
+  clearSpeechTimer()
+  current = null
+  mode = null
+  set({ text: null, loading: false, needsTap: false })
+  const f = finish
+  finish = null
+  onPlaying = null
+  f?.(ok)
+}
 
 function audio() {
   if (!el) {
     el = new Audio()
     el.preload = 'auto'
     el.addEventListener('playing', () => {
-      set({ ...state, loading: false })
-      const f = onPlaying
+      if (mode !== 'audio' || !current) return
+      set({ text: current.text, loading: false, needsTap: false })
+      const cb = onPlaying
       onPlaying = null
-      f?.('melo')
+      cb?.('melo')
     })
-    el.addEventListener('ended', () => done(true))
-    // 云端语音失败（额度用完、网络问题等）→ 改用系统自带朗读
+    el.addEventListener('ended', () => {
+      if (mode === 'audio' && current) done(true)
+    })
     el.addEventListener('error', () => {
-      if (current) fallback(current.text, current.slow)
+      if (mode === 'audio' && current) startSystemSpeech(false)
     })
   }
   return el
 }
 
-function done(ok: boolean) {
-  current = null
-  set({ text: null, loading: false })
-  const f = finish
-  finish = null
-  f?.(ok)
-}
+/* ---------------------- R2 / browser audio prefetch ---------------------- */
 
-/* ---------------------------- 预取 ---------------------------- */
-// MeloTTS 首次生成可能需要几秒；卡片出现时预取 R2 / MP3 到本地 blob
-
-const ready = new Map<string, string>() // text -> blob URL
+const ready = new Map<string, string>()
 const pending = new Set<string>()
 const queue: string[] = []
 let running = 0
 const MAX_READY = 80
+
+function remember(text: string, blob: Blob) {
+  if (!blob.type.startsWith('audio/')) return
+  const old = ready.get(text)
+  if (old) URL.revokeObjectURL(old)
+  ready.delete(text)
+  ready.set(text, URL.createObjectURL(blob))
+  if (ready.size > MAX_READY) {
+    const oldest = ready.entries().next().value as [string, string] | undefined
+    if (oldest && oldest[0] !== current?.text) {
+      URL.revokeObjectURL(oldest[1])
+      ready.delete(oldest[0])
+    }
+  }
+}
 
 function pump() {
   while (running < 2 && queue.length) {
     const text = queue.shift()!
     running++
     fetch(ttsUrl(text))
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => {
-        if (!b) return
-        ready.set(text, URL.createObjectURL(b))
-        if (ready.size > MAX_READY) {
-          const [oldest, url] = ready.entries().next().value!
-          if (oldest !== state.text) {
-            URL.revokeObjectURL(url)
-            ready.delete(oldest)
-          }
-        }
-      })
+      .then((r) => r.ok && r.headers.get('content-type')?.startsWith('audio/') ? r.blob() : null)
+      .then((blob) => { if (blob) remember(text, blob) })
       .catch(() => {})
-      .finally(() => {
-        pending.delete(text)
-        running--
-        pump()
-      })
+      .finally(() => { pending.delete(text); running--; pump() })
   }
 }
 
-/** 在后台准备这些文本的语音（已准备或正在准备的会跳过） */
 export function prefetch(texts: (string | undefined | null)[]) {
   for (const t of texts) {
     const text = t?.trim()
@@ -91,111 +106,154 @@ export function prefetch(texts: (string | undefined | null)[]) {
   pump()
 }
 
-/** 只取缓存里现成的语音（不生成、不占额度）；没有的就算了 */
 export function prefetchCached(texts: (string | undefined | null)[]) {
   for (const t of texts) {
     const text = t?.trim()
     if (!text || ready.has(text) || pending.has(text)) continue
     pending.add(text)
-    fetch(`${ttsUrl(text)}&cached=1`)
-      .then((r) => (r.status === 200 ? r.blob() : null))
-      .then((b) => {
-        if (b) ready.set(text, URL.createObjectURL(b))
-      })
+    fetch(ttsUrl(text) + '&cached=1')
+      .then((r) => r.status === 200 && r.headers.get('content-type')?.startsWith('audio/') ? r.blob() : null)
+      .then((blob) => { if (blob) remember(text, blob) })
       .catch(() => {})
       .finally(() => pending.delete(text))
   }
 }
 
-/**
- * 要马上出声的场合（闯关里点单词）：本地已经有云端语音就放它，没有就立刻用系统朗读，不等生成
- */
-export function speakFast(text: string) {
-  if (ready.has(text.trim()) || !window.speechSynthesis) return speak(text)
-  if (finish) done(false)
-  el?.pause()
-  current = { text, slow: false }
-  set({ text, loading: true })
-  return new Promise<boolean>((resolve) => {
-    finish = resolve
-    fallback(text, false, true)
-  })
-}
-
-/** 播放一段文本；返回的 Promise 在播放结束（或被打断）时 resolve */
-/* ---------------------------- 系统朗读兜底 ---------------------------- */
-
-let current: { text: string; slow: boolean } | null = null
-let notified = false
+/* ------------------------ System speech fallback ------------------------ */
 
 function pickVoice() {
-  const voices = window.speechSynthesis?.getVoices() ?? []
+  const synth = window.speechSynthesis
+  const voices = synth?.getVoices() ?? []
   return voices.find((v) => v.lang === 'en-US') ?? voices.find((v) => v.lang.startsWith('en')) ?? null
 }
 
-function fallback(text: string, slow: boolean, quiet = false) {
-  current = null
+/**
+ * On an async Cloudflare error, attempt system speech once. If Safari doesn't
+ * start it, show a tap-to-speak prompt instead of claiming that it worked.
+ * Manual retries call this directly from an actual user click.
+ */
+function startSystemSpeech(manual: boolean, quiet = false) {
+  const session = current
+  if (!session || (speechStarting && !manual)) return
   const synth = window.speechSynthesis
-  if (!synth) return done(false)
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+    if (!manual) set({ text: session.text, loading: false, needsTap: true })
+    else done(false)
+    return
+  }
+  const attempt = ++speechAttempt
+  speechStarting = true
+  clearSpeechTimer()
+  mode = 'system'
+  el?.pause()
   if (!notified && !quiet) {
     notified = true
-    import('./components/ui').then((m) => m.toast('MeloTTS 暂不可用，已用系统朗读。可在「设置 → 测试语音」查看具体原因'))
+    import('./components/ui').then((m) => m.toast('云端语音不可用，正在尝试系统朗读；如无声音请点击下方按钮'))
   }
-  synth.cancel()
-  const u = new SpeechSynthesisUtterance(text)
+  try { synth.cancel() } catch { /* browser may reject cancel() */ }
+  const u = new SpeechSynthesisUtterance(session.text)
   u.lang = 'en-US'
-  u.rate = slow ? 0.75 : 0.95
-  const v = pickVoice()
-  if (v) u.voice = v
-  u.onstart = () => {
-    set({ ...state, loading: false })
-    const f = onPlaying
-    onPlaying = null
-    f?.('system')
+  u.rate = session.slow ? 0.75 : 0.95
+  const voice = pickVoice()
+  if (voice) u.voice = voice
+  let started = false
+  const isCurrent = () => current === session && attempt === speechAttempt
+  const failedToStart = () => {
+    if (!isCurrent() || started) return
+    clearSpeechTimer()
+    speechStarting = false
+    set({ text: session.text, loading: false, needsTap: true })
+    if (manual) import('./components/ui').then((m) => m.toast('Safari 未启动系统朗读，可再次点击或检查设备语音设置', 'error'))
   }
-  u.onend = () => done(true)
-  u.onerror = () => done(false)
-  synth.speak(u)
+  u.onstart = () => {
+    if (!isCurrent()) return
+    started = true
+    speechStarting = false
+    clearSpeechTimer()
+    set({ text: session.text, loading: false, needsTap: false })
+    const cb = onPlaying
+    onPlaying = null
+    cb?.('system')
+  }
+  u.onend = () => { if (isCurrent()) done(true) }
+  u.onerror = () => {
+    if (!isCurrent()) return
+    if (started) done(false)
+    else failedToStart()
+  }
+  set({ text: session.text, loading: true, needsTap: false })
+  // Safari may silently suppress a speech request without firing onerror.
+  speechTimer = setTimeout(failedToStart, 4500)
+  try { synth.speak(u) } catch { failedToStart() }
 }
 
-export function speak(text: string, slow = false, playing?: (engine: 'melo' | 'system') => void): Promise<boolean> {
-  const a = audio()
-  if (finish) done(false)
-  window.speechSynthesis?.cancel()
-  current = { text, slow }
+export function retrySystemSpeech() {
+  if (!current) return
+  startSystemSpeech(true, true)
+}
+
+/** Explicit test: runs directly from the user's click (not a delayed fetch). */
+export function speakSystem(text: string, slow = false, playing?: (engine: Engine) => void): Promise<boolean> {
+  stop()
+  current = { text, slow, id: ++nextId }
   onPlaying = playing ?? null
-  set({ text, loading: true })
+  set({ text, loading: true, needsTap: false })
+  const promise = new Promise<boolean>((resolve) => { finish = resolve })
+  startSystemSpeech(true, true)
+  return promise
+}
+
+/* ------------------------ Public playback controls ------------------------ */
+
+export function speakFast(text: string) {
+  if (ready.has(text.trim()) || !window.speechSynthesis) return speak(text)
+  return speakSystem(text)
+}
+
+export function speak(text: string, slow = false, playing?: (engine: Engine) => void): Promise<boolean> {
+  stop()
+  current = { text, slow, id: ++nextId }
+  mode = 'audio'
+  onPlaying = playing ?? null
+  set({ text, loading: true, needsTap: false })
+  const promise = new Promise<boolean>((resolve) => { finish = resolve })
+  // When offline, invoke speechSynthesis synchronously within the click.
+  if (!navigator.onLine && !ready.has(text.trim())) {
+    startSystemSpeech(true, true)
+    return promise
+  }
+  const player = audio()
   const local = !slow && ready.get(text.trim())
-  a.src = local || ttsUrl(text, slow)
-  // Cloudflare MeloTTS 没有语速控制参数，同一段 MP3 慢速播放不重复生成。
-  a.playbackRate = slow ? 0.75 : 1
-  a.preservesPitch = true
-  const p = new Promise<boolean>((resolve) => {
-    finish = resolve
-    a.play().catch((e: DOMException) => {
-      // 被浏览器拦截自动播放时不兜底；其它失败（加载不了音频）改用系统朗读
-      if (e?.name === 'NotAllowedError') done(false)
-      else if (current) fallback(current.text, current.slow)
-    })
+  player.src = local || ttsUrl(text, slow)
+  player.playbackRate = slow ? 0.75 : 1
+  player.preservesPitch = true
+  player.play().catch((err: DOMException) => {
+    if (mode !== 'audio' || !current) return
+    // Autoplay restrictions are not proof that the cloud has failed.
+    if (err?.name === 'NotAllowedError') {
+      set({ text: current.text, loading: false, needsTap: true })
+    } else {
+      startSystemSpeech(false)
+    }
   })
-  // 直接从网络播的，播完顺手存进本地缓存，下次（包括重新打开 App 后）秒播
-  if (!local && !slow) p.then((ok) => ok && prefetch([text]))
-  return p
+  return promise
 }
 
 export function stop() {
-  current = null
+  if (!current && !finish && !state.text) return
+  speechAttempt++
+  clearSpeechTimer()
   el?.pause()
-  window.speechSynthesis?.cancel()
-  if (finish || state.text) done(false)
+  try { window.speechSynthesis?.cancel() } catch { /* ignore */ }
+  done(false)
 }
+
+/** Read-only snapshot for Safari diagnostic tests. */
+export function getSpeechStatus() { return state }
 
 export function useSpeaking() {
   return useSyncExternalStore(
-    (cb) => {
-      listeners.add(cb)
-      return () => listeners.delete(cb)
-    },
+    (cb) => { listeners.add(cb); return () => void listeners.delete(cb) },
     () => state,
   )
 }

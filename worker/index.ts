@@ -493,18 +493,17 @@ app.get('/tts', async (c) => {
   // slow=1 使用完全相同的 MP3；客户端通过 playbackRate 0.75 实现慢速。
   const key = await meloTtsKey(text)
   const headers = {
-    'content-type': MELO_MIME,
     'cache-control': 'private, max-age=31536000, immutable',
     'x-tts-engine': 'melotts',
   }
   const cached = await c.env.AUDIO.get(key)
-  if (cached) return new Response(cached.body, { headers: { ...headers, 'x-tts-cache': 'HIT' } })
+  if (cached) return new Response(cached.body, { headers: { ...headers, 'content-type': cached.httpMetadata?.contentType || MELO_MIME, 'x-tts-cache': 'HIT' } })
   // 只查 R2 时没有音频，不调用推理，不产生新费用。
   if (c.req.query('cached') === '1') return c.body(null, 204)
 
-  const mp3 = await generateMeloTts(await ai(c), text)
-  await c.env.AUDIO.put(key, mp3, { httpMetadata: { contentType: MELO_MIME } })
-  return new Response(mp3, { headers: { ...headers, 'x-tts-cache': 'MISS' } })
+  const audio = await generateMeloTts(await ai(c), text)
+  await c.env.AUDIO.put(key, audio.bytes, { httpMetadata: { contentType: audio.mimeType } })
+  return new Response(audio.bytes, { headers: { ...headers, 'content-type': audio.mimeType, 'x-tts-cache': 'MISS' } })
 })
 
 /* ------------------------------ 设置 ------------------------------ */
