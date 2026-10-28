@@ -14,7 +14,8 @@
     "cf-typegen": "wrangler types worker/worker-configuration.d.ts",
     "test:quest": "node --experimental-strip-types tests/quest-difficulty.test.mjs && node tests/quest-api.test.mjs",
     "test:tts": "node tests/melo-tts.test.mjs && node tests/safari-audio.test.mjs",
-    "test:ai": "node tests/text-provider.test.mjs"
+    "test:ai": "node tests/text-provider.test.mjs",
+    "test:review": "node --experimental-strip-types tests/review-grade.test.mjs"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.4.0",

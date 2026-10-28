@@ -6,6 +6,7 @@ import { CloudflareTextError } from './cloudflare-text'
 import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
+import { REVIEW_GRADE_UPDATE_SQL } from '../shared/review'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
 import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
 import { practice } from './practice'
@@ -306,12 +307,12 @@ app.post('/review/:id', async (c) => {
   if (!cur) return c.json({ error: '找不到这一条' }, 404)
   const now = Date.now()
   const next = schedule(cur.interval, grade as Grade, now)
-  const row = await c.env.DB.prepare(
-    `UPDATE items SET interval = ?, due_at = ?, reps = reps + 1, lapses = lapses + ?, updated_at = ?
-     WHERE id = ? RETURNING *`,
-  )
-    .bind(next.interval, next.dueAt, grade === 0 ? 1 : 0, now, id)
+  const row = await c.env.DB.prepare(REVIEW_GRADE_UPDATE_SQL)
+    .bind(next.interval, next.dueAt, grade === 0 ? 1 : 0, now, id, who(c).user, now)
     .first<Row>()
+  // 防止快速双击、旧标签页或同轮错题巩固重复修改 SRS。
+  // 并发请求即使都读取到原间隔，也只有第一次到期卡片更新成功。
+  if (!row) return c.json({ error: '这张卡片已经安排过复习，请刷新后查看最新进度', stale: true }, 409)
   // 评分流水：每周回顾用；记录失败不影响复习
   await c.env.DB.prepare('INSERT INTO reviews (user_id, item_id, grade, ts) VALUES (?, ?, ?, ?)')
     .bind(who(c).user, id, grade, now)

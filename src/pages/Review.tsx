@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { prefetch, speak, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
+import { reviewGradeDecision } from '../../shared/review'
 import { BLANK, clozeOf, contextClozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
 import { Link } from '../router'
 import { libraryJump, refreshStats, useStats } from '../store'
@@ -48,6 +49,8 @@ export default function Review() {
   const [drag, setDrag] = useState(0)
   const touch = useRef<{ x: number; y: number; horizontal?: boolean } | null>(null)
   const [flipped, setFlipped] = useState(false)
+  // 首字母提示意味着未独立回忆成功，本次不能评为「记得」
+  const [hintUsed, setHintUsed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const stats = useStats()
@@ -93,6 +96,7 @@ export default function Review() {
       setSkipped([])
       setAgain(new Set())
       setFlipped(false)
+      setHintUsed(false)
     } catch (e) {
       setError(errMsg(e))
     }
@@ -122,7 +126,7 @@ export default function Review() {
   const isAgain = !!card && again.has(card.id)
 
   // 提前准备当前卡片的发音，点播放时基本秒出。
-  // Gemini TTS 每天只有 100 次额度，所以只预取最常点的单词发音，例句等你点了再生成
+  // 使用当前 MeloTTS + R2 缓存，优先预取当前词条；例句按需播放
   useEffect(() => {
     if (queue?.length) prefetch([queue[0].text])
   }, [queue])
@@ -144,6 +148,7 @@ export default function Review() {
     })
     setReviewed((n) => n + (requeue ? 0 : 1))
     setFlipped(false)
+    setHintUsed(false)
   }
 
   const skip = () => {
@@ -152,6 +157,7 @@ export default function Review() {
     setSkipped((l) => [...l, card])
     setQueue((q) => (q ? q.slice(1) : q))
     setFlipped(false)
+    setHintUsed(false)
     setDrag(0)
   }
 
@@ -159,6 +165,7 @@ export default function Review() {
     setQueue((q) => [...(q ?? []), ...skipped])
     setSkipped([])
     setFlipped(false)
+    setHintUsed(false)
   }
 
   // 手机上把卡片往左滑 = 跳过
@@ -185,6 +192,16 @@ export default function Review() {
 
   const grade = async (g: Grade) => {
     if (!card || busy) return
+    const decision = reviewGradeDecision(g, isAgain, hintUsed)
+    if (decision === 'hint-blocked') {
+      toast('用过首字母提示后，请选「忘了」或「模糊」')
+      return
+    }
+    if (decision === 'practice') {
+      // 忘记的卡片已在第一次作答时安排了 10 分钟后的复习；这里仅巩固，不再写服务端评分。
+      advance()
+      return
+    }
     setBusy(true)
     try {
       const { item, checkin } = await api.grade(card.id, g)
@@ -237,7 +254,8 @@ export default function Review() {
       if (t.closest('button') || (t.closest('a') && k === 'enter')) return
       e.preventDefault()
       if (!flipped) setFlipped(true)
-    } else if (flipped && (k === '1' || k === '2' || k === '3')) {
+      else if (isAgain) grade(1)
+    } else if (flipped && !isAgain && (k === '1' || k === '2' || k === '3')) {
       grade((Number(k) - 1) as Grade)
     } else if (k === 'p') {
       speak(card.text)
@@ -410,9 +428,9 @@ export default function Review() {
                 />
               ) : (
                 recall ? (
-                  <RecallFront item={card} onFlip={() => setFlipped(true)} again={isAgain} />
+                  <RecallFront item={card} onFlip={() => setFlipped(true)} onHint={() => setHintUsed(true)} again={isAgain} />
                 ) : production && cloze ? (
-                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} again={isAgain} />
+                  <ProductionFront cloze={cloze} onFlip={() => setFlipped(true)} onHint={() => setHintUsed(true)} context={context} source={card.package_title ? `出自《${card.package_title}》${card.source_ref ? ` · ${card.source_ref}` : ''}` : ''} again={isAgain} />
                 ) : (
                   <Front item={card} onFlip={() => setFlipped(true)} again={isAgain} />
                 )
@@ -431,11 +449,29 @@ export default function Review() {
             >
               显示答案
             </button>
+          ) : isAgain ? (
+            <div className="flex flex-col gap-2">
+              <p role="status" className="m-0 text-center text-xs text-muted">
+                错题巩固不再计分，已安排稍后正式复习。
+              </p>
+              <button
+                onClick={() => grade(1)}
+                disabled={busy}
+                className="h-[52px] w-full rounded-[14px] border-0 bg-accent text-base font-medium text-on-accent disabled:opacity-60 md:h-16"
+              >
+                完成巩固，继续
+              </button>
+            </div>
           ) : (
             <div className="grid grid-cols-3 gap-2.5 md:gap-3">
               <GradeButton k="1" label="忘了" hint={previewLabel(card.interval, 0)} cls="bg-forgot-bg text-forgot-fg" onClick={() => grade(0)} disabled={busy} />
               <GradeButton k="2" label="模糊" hint={previewLabel(card.interval, 1)} cls="bg-hazy-bg text-ink" onClick={() => grade(1)} disabled={busy} />
-              <GradeButton k="3" label="记得" hint={previewLabel(card.interval, 2)} cls="bg-accent text-on-accent" onClick={() => grade(2)} disabled={busy} />
+              <GradeButton k="3" label="记得" hint={hintUsed ? '提示后不可选' : previewLabel(card.interval, 2)} cls="bg-accent text-on-accent" onClick={() => grade(2)} disabled={busy || hintUsed} />
+              {hintUsed && (
+                <p role="status" className="col-span-3 m-0 text-center text-xs text-muted">
+                  已看过首字母提示，请按实际记忆选「忘了」或「模糊」。
+                </p>
+              )}
             </div>
           )}
           <div
@@ -504,7 +540,7 @@ function Front({ item, onFlip, again = false }: { item: Item; onFlip: () => void
 }
 
 /** 产出正面（没有例句可挖空时）：看中文释义，说出英文 */
-function RecallFront({ item, onFlip, again = false }: { item: Item; onFlip: () => void; again?: boolean }) {
+function RecallFront({ item, onFlip, onHint, again = false }: { item: Item; onFlip: () => void; onHint: () => void; again?: boolean }) {
   const [hint, setHint] = useState(false)
   const isWord = item.type === 'word'
   const hintText = item.text
@@ -529,6 +565,7 @@ function RecallFront({ item, onFlip, again = false }: { item: Item; onFlip: () =
             onClick={(e) => {
               e.stopPropagation()
               setHint(true)
+              onHint()
             }}
             className="border-0 bg-transparent p-0 text-[13px] text-muted underline decoration-line underline-offset-4"
           >
@@ -548,7 +585,7 @@ const minutesOf = (n: number) => Math.max(1, Math.round((n * 10) / 60))
 function Guide({ due, onClose }: { due: number; onClose: () => void }) {
   const steps: [string, string][] = [
     ['看卡片，先在心里回想', '正面是单词或句子，想想它的意思；有时是中文情境填空，要你说出英文。想好了点「显示答案」（电脑上按空格）。'],
-    ['按记忆程度打分', '「忘了」10 分钟后再来一次；「模糊」「记得」会隔几天再出现，按钮上写着下次出现的时间。彻底掌握的点「已掌握」（DONE），以后不再复习。'],
+    ['按记忆程度打分', '「忘了」会安排 10 分钟后正式复习，本轮末尾还会有一次不计分的巩固。看过首字母提示后最多选「模糊」；只有独立记住才能选「记得」。彻底掌握的可以点「已掌握」（DONE）。'],
     ['复习完还想练？', `右上角 ✨「AI 重组」会用今天要复习的词现编几句新例句；「练习」页可以贴一篇文章，写几句英文让 AI 批改。`],
   ]
   return (
@@ -580,7 +617,7 @@ function Guide({ due, onClose }: { due: number; onClose: () => void }) {
 }
 
 /** 产出正面：中文情境 + 挖空句子，先说出空里的表达 */
-function ProductionFront({ cloze, onFlip, context = false, source = '', again = false }: { cloze: Cloze; onFlip: () => void; context?: boolean; source?: string; again?: boolean }) {
+function ProductionFront({ cloze, onFlip, onHint, context = false, source = '', again = false }: { cloze: Cloze; onFlip: () => void; onHint: () => void; context?: boolean; source?: string; again?: boolean }) {
   const [hint, setHint] = useState(false)
   const [before, after] = cloze.sentence.split(BLANK)
   // 提示：每个词只露首字母，如 "pose a risk to" → "p… a r… t…"
@@ -613,6 +650,7 @@ function ProductionFront({ cloze, onFlip, context = false, source = '', again = 
             onClick={(e) => {
               e.stopPropagation()
               setHint(true)
+              onHint()
             }}
             className="self-start border-0 bg-transparent p-0 text-[13px] text-muted underline decoration-line underline-offset-4"
           >
