@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, tts, ttsKey, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { MELO_MIME, MeloTtsError, generateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
@@ -68,6 +69,7 @@ app.route('/ext', ext)
 
 app.onError((err, c) => {
   if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
+  if (err instanceof MeloTtsError) return c.json({ error: err.message }, err.status as 500)
   console.error(err)
   return c.json({ error: '服务器出错了' }, 500)
 })
@@ -487,25 +489,22 @@ app.post('/remix', async (c) => {
 app.get('/tts', async (c) => {
   const text = cleanText(c.req.query('text'))
   if (!text) return c.json({ error: 'text 不能为空' }, 400)
-  const slow = c.req.query('slow') === '1'
 
-  const env = await ai(c)
-  const key = await ttsKey(env, text, slow)
-
+  // slow=1 使用完全相同的 MP3；客户端通过 playbackRate 0.75 实现慢速。
+  const key = await meloTtsKey(text)
   const headers = {
-    'content-type': 'audio/wav',
-    // 同一个 URL 永远对应同一段音频，浏览器可以放心长期缓存
+    'content-type': MELO_MIME,
     'cache-control': 'private, max-age=31536000, immutable',
+    'x-tts-engine': 'melotts',
   }
-
   const cached = await c.env.AUDIO.get(key)
-  if (cached) return new Response(cached.body, { headers })
-  // cached=1：只要缓存里现成的，没有就算了（不生成、不占额度），前端改用系统朗读
+  if (cached) return new Response(cached.body, { headers: { ...headers, 'x-tts-cache': 'HIT' } })
+  // 只查 R2 时没有音频，不调用推理，不产生新费用。
   if (c.req.query('cached') === '1') return c.body(null, 204)
 
-  const wav = await tts(env, text, slow)
-  await c.env.AUDIO.put(key, wav, { httpMetadata: { contentType: 'audio/wav' }, customMetadata: { text: text.slice(0, 200) } })
-  return new Response(wav, { headers })
+  const mp3 = await generateMeloTts(await ai(c), text)
+  await c.env.AUDIO.put(key, mp3, { httpMetadata: { contentType: MELO_MIME } })
+  return new Response(mp3, { headers: { ...headers, 'x-tts-cache': 'MISS' } })
 })
 
 /* ------------------------------ 设置 ------------------------------ */
@@ -636,7 +635,7 @@ async function usedKeys(env: Env) {
     const m = safeMeta(r.meta)
     for (const t of [r.text, m.example]) {
       const text = cleanText(t)
-      if (text) keys.add(await ttsKey(env, text, false))
+      if (text) keys.add(await meloTtsKey(text))
     }
   }
   return keys
