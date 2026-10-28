@@ -139,6 +139,44 @@ const parseProgress = (raw: string | null): QuestProgress => {
   }
 }
 
+/** Shared generation routine for interactive requests and the background queue.
+ * The INSERT never overwrites an existing bank, preserving saved XP/progress. */
+export async function generateQuestBank(env: AppEnv['Bindings'], user: string, admin: boolean, id: number): Promise<QuestContent> {
+  const lesson = await env.DB.prepare('SELECT title, level, content, source_text FROM lessons WHERE id = ? AND user_id = ?')
+    .bind(id, user).first<{ title: string; level: number; content: string; source_text: string | null }>()
+  if (!lesson) throw new Error('找不到这份练习')
+  const cached = await env.DB.prepare('SELECT content FROM quests WHERE lesson_id = ? AND user_id = ?')
+    .bind(id, user).first<{ content: string }>()
+  if (cached) return JSON.parse(cached.content) as QuestContent
+
+  const content = JSON.parse(lesson.content) as LessonContent
+  const ai = await aiEnv(env, user, admin)
+  const samples = await env.DB.prepare(`
+    SELECT stage, difficulty, accuracy FROM (
+      SELECT f.stage, f.difficulty, f.accuracy,
+        ROW_NUMBER() OVER (PARTITION BY f.stage ORDER BY f.created_at DESC, f.lesson_id DESC) AS n
+      FROM quest_feedback f JOIN lessons l ON l.id = f.lesson_id AND l.user_id = f.user_id
+      WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
+    ) WHERE n <= 8 ORDER BY stage, n
+  `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
+  const raw = await generateJson<Partial<QuestContent>>(
+    ai,
+    questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results)),
+    questSchema,
+    'quest',
+    0.5,
+  )
+  const clean = cleanQuest(raw)
+  if (clean.words.length < 2 && clean.listening.length < 2) throw new Error('AI 这次出的题不完整，再试一次')
+  const now = Date.now()
+  await env.DB.prepare(
+    'INSERT INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(lesson_id) DO NOTHING',
+  ).bind(id, user, JSON.stringify(clean), now, now).run()
+  const saved = await env.DB.prepare('SELECT content FROM quests WHERE lesson_id = ? AND user_id = ?')
+    .bind(id, user).first<{ content: string }>()
+  return saved ? JSON.parse(saved.content) as QuestContent : clean
+}
+
 /** 取题库：没有就现出一套（一次 AI 调用） */
 quest.post('/:lessonId', async (c) => {
   const user = c.get('user')
@@ -160,33 +198,24 @@ quest.post('/:lessonId', async (c) => {
     return c.json(q)
   }
 
-  const content = JSON.parse(lesson.content) as LessonContent
-  const ai = await aiEnv(c.env, user, c.get('admin'))
-  const samples = await c.env.DB.prepare(`
-    SELECT stage, difficulty, accuracy FROM (
-      SELECT f.stage, f.difficulty, f.accuracy,
-        ROW_NUMBER() OVER (PARTITION BY f.stage ORDER BY f.created_at DESC, f.lesson_id DESC) AS n
-      FROM quest_feedback f JOIN lessons l ON l.id = f.lesson_id AND l.user_id = f.user_id
-      WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
-    ) WHERE n <= 8 ORDER BY stage, n
-  `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
-  const raw = await generateJson<Partial<QuestContent>>(
-    ai,
-    questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results)),
-    questSchema,
-    'quest',
-    0.5,
-  )
-  const clean = cleanQuest(raw)
-  if (clean.words.length < 2 && clean.listening.length < 2) return c.json({ error: 'AI 这次出的题不完整，再试一次' }, 502)
-  const now = Date.now()
-  await c.env.DB.prepare('INSERT OR REPLACE INTO quests (lesson_id, user_id, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, user, JSON.stringify(clean), now, now)
-    .run()
-  // 听力关的句子在后台先把语音生成好，等走到「听」那一关时直接播
-  c.executionCtx.waitUntil(warmMeloTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500))))
-  const q: Quest = { lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, writeDone }
-  return c.json(q)
+  const job = await c.env.DB.prepare(
+    "SELECT id, status, updated_at, lease_until FROM generation_jobs WHERE user_id = ? AND lesson_id = ? AND kind = 'quest'",
+  ).bind(user, id).first<{ id: number; status: string; updated_at: number; lease_until: number }>()
+  if (job?.status === 'queued' && Date.now() - job.updated_at < 90_000 ||
+      job?.status === 'running' && job.lease_until > Date.now()) {
+    return c.json({ pending: true, status: job.status }, 202)
+  }
+  if (job && (job.status === 'queued' || job.status === 'running')) {
+    // If Queues failed to run the task, interactive requests must not wait forever.
+    await c.env.DB.prepare("UPDATE generation_jobs SET status = 'failed', updated_at = ?, error = 'stale' WHERE id = ? AND updated_at = ?")
+      .bind(Date.now(), job.id, job.updated_at).run()
+  }
+  const clean = await generateQuestBank(c.env, user, c.get('admin'), id)
+  // Audio is warmed after a direct generation; background generation is
+  // budget-protected and leaves optional TTS to the existing lazy prefetch.
+  c.executionCtx.waitUntil(warmMeloTts(await aiEnv(c.env, user, c.get('admin')), clean.listening.map((l) => l.en.replace(/\\s+/g, ' ').trim().slice(0, 500))))
+  return c.json({ lessonId: id, title: lesson.title, content: clean, progress: { stages: {}, xp: 0 }, feedback, writeDone })
+
 })
 
 /** 过关：记下最好成绩、加经验值；过一关也算今天打卡 */
