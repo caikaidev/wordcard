@@ -136,7 +136,7 @@ self.addEventListener('push', (event) => {
       }
       await self.registration.showNotification(msg.title || '拾句', {
         body: msg.body || '',
-        icon: '/icon-192.png?v=2',
+        icon: '/icon-192.png?v=3',
         tag: msg.tag || 'daily',
         renotify: true,
         data: { url: msg.url || '/' },
