@@ -38,6 +38,14 @@ export default function LessonPage({ id }: { id: number }) {
       .catch((e) => setError(errMsg(e)))
   }, [id])
 
+  // Warm the quest only after the learner spends time on this lesson.
+  // Best effort: budget or queue outages must not block reading/writing.
+  useEffect(() => {
+    if (!lesson || lesson.id !== id) return
+    const timer = setTimeout(() => { api.prepareQuest(id).catch(() => {}) }, 2500)
+    return () => clearTimeout(timer)
+  }, [id, !!lesson])
+
   /** 加入复习卡片；已在词库里（409）也算成功 */
   const addCard = async (key: string, type: 'word' | 'sentence', text: string, meta: Partial<CardMeta>) => {
     try {
