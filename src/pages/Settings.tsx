@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, type ApiToken, type Me } from '../api'
 import { speak } from '../audio'
-import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, TTS_MODELS, VOICES, isSafeId, type Settings as S } from '../../shared/settings'
+import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
 import type { LevelStatus } from '../../shared/level'
@@ -70,18 +70,18 @@ export default function Settings() {
   const testTts = () => {
     if (!cur) return
     setTesting('tts')
-    const sample = `Hi, I'm ${cur.voice}. Serendipity means finding something good without looking for it.`
+    const sample = 'Serendipity means finding something good without looking for it.'
     const t0 = performance.now()
     let started = false
-    speak(sample, false, () => {
+    speak(sample, false, (engine) => {
       started = true
       setTesting(null)
-      setResult({ kind: 'tts', label: `${cur.ttsModel} · ${cur.voice}`, ms: performance.now() - t0, detail: sample })
+      setResult({ kind: 'tts', label: engine === 'system' ? '系统朗读（MeloTTS 兜底）' : 'Cloudflare MeloTTS', ms: performance.now() - t0, detail: sample })
       setUsageKey((k) => k + 1)
     }).then((ok) => {
       if (!started) {
         setTesting(null)
-        if (!ok) toast('语音生成失败，换个模型或音色试试', 'error')
+        if (!ok) toast('MeloTTS 和系统朗读都无法播放，请检查网络及 Workers AI 绑定', 'error')
       }
     })
   }
@@ -216,18 +216,20 @@ export default function Settings() {
             />
           </Section>
 
-          <Section title="模型与音色" desc={me?.admin ? '已选好默认值，一般不用动' : '全站共用，由管理员统一设置'}>
+          <Section title="模型与语音" desc="文本继续使用 Gemini；所有新发音默认使用 Cloudflare Workers AI MeloTTS。">
             <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
               文本 <span className="font-mono text-ink">{cur.textModel}</span>
               <br />
-              语音 <span className="font-mono text-ink">{cur.ttsModel}</span> · {cur.voice}
+              语音 <span className="font-mono text-ink">Cloudflare · MeloTTS (en)</span>
+              <br />
+              <span className="text-xs">慢速朗读为本地 0.75 倍速，额度不足时使用系统朗读；不会自动调用 Gemini TTS。</span>
             </div>
           </Section>
 
           {me?.admin && (
             <details className="group mt-5 px-4 md:mt-6 md:px-6">
               <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-2xl border border-line-soft bg-surface px-4 text-[13px] text-muted-2 [&::-webkit-details-marker]:hidden">
-                高级：更换模型、音色，测试速度
+                高级：切换文本模型、测试语音速度
                 <span className="transition-transform group-open:rotate-90">›</span>
               </summary>
               <div className="-mx-4 md:-mx-6">
@@ -241,32 +243,10 @@ export default function Settings() {
             <Custom value={cur.textModel} known={TEXT_MODELS} onSave={(v) => save('textModel', v)} placeholder="其他模型，如 gemini-3.9-flash" />
           </Section>
 
-          <Section title="语音模型" desc="切换后新生成的语音使用新模型，旧缓存保留">
-            <Options options={TTS_MODELS} value={cur.ttsModel} def={defaults?.ttsModel} onChange={(v) => save('ttsModel', v)} />
-            <Custom value={cur.ttsModel} known={TTS_MODELS} onSave={(v) => save('ttsModel', v)} placeholder="其他语音模型" />
-          </Section>
-
-          <Section title="音色">
-            <div className="grid grid-cols-2 gap-2">
-              {VOICES.map((v) => {
-                const on = cur.voice === v.id
-                return (
-                  <button
-                    key={v.id}
-                    onClick={() => save('voice', v.id)}
-                    aria-pressed={on}
-                    className={`flex h-14 flex-col items-start justify-center rounded-2xl border px-3.5 text-left ${
-                      on ? 'border-ink bg-surface' : 'border-line-soft bg-surface'
-                    }`}
-                  >
-                    <span className="flex w-full items-center justify-between text-[15px] font-medium text-ink">
-                      {v.id}
-                      {on && <IconCheck size={16} className="text-accent" />}
-                    </span>
-                    <span className="text-xs text-muted">{v.note}</span>
-                  </button>
-                )
-              })}
+          <Section title="语音模型" desc="当前试用统一使用 MeloTTS；Workers AI 的托管模型不支持切换 Gemini 音色。">
+            <div className="rounded-2xl bg-chip p-3.5 text-[13px] text-muted">
+              语音生成走 Cloudflare Workers AI，共享每天 10,000 Neurons 免费配额。
+              本站另设每日新语音段数上限；在 Workers Paid 计划中，超过 Cloudflare 免费配额仍可能计费，请在 Cloudflare 控制台检查实际 Neurons 用量。
             </div>
           </Section>
           <Section title="测试" desc="用当前设置跑一次，看看速度和效果。同一段语音第二次会命中缓存。">

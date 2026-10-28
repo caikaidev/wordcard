@@ -16,7 +16,7 @@ const set = (s: State) => {
 
 let el: HTMLAudioElement | null = null
 let finish: ((ok: boolean) => void) | null = null
-let onPlaying: (() => void) | null = null
+let onPlaying: ((engine: 'melo' | 'system') => void) | null = null
 
 function audio() {
   if (!el) {
@@ -26,7 +26,7 @@ function audio() {
       set({ ...state, loading: false })
       const f = onPlaying
       onPlaying = null
-      f?.()
+      f?.('melo')
     })
     el.addEventListener('ended', () => done(true))
     // 云端语音失败（额度用完、网络问题等）→ 改用系统自带朗读
@@ -46,7 +46,7 @@ function done(ok: boolean) {
 }
 
 /* ---------------------------- 预取 ---------------------------- */
-// Gemini 生成一段语音要几秒；卡片一出现就在后台把音频下好，点播放时直接用本地 blob
+// MeloTTS 首次生成可能需要几秒；卡片出现时预取 R2 / MP3 到本地 blob
 
 const ready = new Map<string, string>() // text -> blob URL
 const pending = new Set<string>()
@@ -151,14 +151,14 @@ function fallback(text: string, slow: boolean, quiet = false) {
     set({ ...state, loading: false })
     const f = onPlaying
     onPlaying = null
-    f?.()
+    f?.('system')
   }
   u.onend = () => done(true)
   u.onerror = () => done(false)
   synth.speak(u)
 }
 
-export function speak(text: string, slow = false, playing?: () => void): Promise<boolean> {
+export function speak(text: string, slow = false, playing?: (engine: 'melo' | 'system') => void): Promise<boolean> {
   const a = audio()
   if (finish) done(false)
   window.speechSynthesis?.cancel()
@@ -167,6 +167,9 @@ export function speak(text: string, slow = false, playing?: () => void): Promise
   set({ text, loading: true })
   const local = !slow && ready.get(text.trim())
   a.src = local || ttsUrl(text, slow)
+  // Cloudflare MeloTTS 没有语速控制参数，同一段 MP3 慢速播放不重复生成。
+  a.playbackRate = slow ? 0.75 : 1
+  a.preservesPitch = true
   const p = new Promise<boolean>((resolve) => {
     finish = resolve
     a.play().catch((e: DOMException) => {

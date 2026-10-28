@@ -32,6 +32,7 @@
   ],
 
   "r2_buckets": [{ "binding": "AUDIO", "bucket_name": "wordcard-audio" }],
+  "ai": { "binding": "AI" }, // MeloTTS 直接调用 Workers AI，不需要另一把 API key
 
   // Browser Run（原 Browser Rendering）：读链接时，直接抓取读不到正文的页面用真实浏览器渲染。
   // 免费版每天 10 分钟浏览器时间；不想用可以删掉这一段，读取会跳过这一步。
@@ -39,17 +40,18 @@
 
   "vars": {
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
+    // 历史设置兼容保留：TTS 语音生成已默认切换到 Cloudflare MeloTTS，不再调用以下 Gemini 配置。
     "GEMINI_TTS_MODEL": "gemini-3.8-flash-tts",
     "GEMINI_VOICE": "Kore",
     // 费用闸门：每天最多多少次 AI 调用（失败也计数），超出返回 429；AI_DISABLED 设为 "true" 可一键停用
     "DAILY_TEXT_LIMIT": "300",
-    // 语音上限对齐 Gemini TTS 第 1 层级（每天 100 次、每分钟 10 次），留一点余量
-    "DAILY_TTS_LIMIT": "90",
+    // MeloTTS 免费额度试用：限制每天新合成段数（不是 Cloudflare Neuron 用量的硬上限）
+    "DAILY_TTS_LIMIT": "120",
     "PER_MINUTE_LIMIT": "40",
     "TTS_PER_MINUTE_LIMIT": "8",
     // 多用户：普通成员每人每天的额度（管理员只受上面的全站上限约束）；管理员邮箱用 GitHub Secret ADMIN_EMAILS 配置
     "USER_DAILY_TEXT_LIMIT": "60",
-    "USER_DAILY_TTS_LIMIT": "15",
+    "USER_DAILY_TTS_LIMIT": "60",
     "AI_DISABLED": "false",
     // 外部接口（/api/ext/lessons）限流：每人两次导入至少间隔多少秒、每天最多几次。换令牌也绕不过
     "EXT_IMPORT_INTERVAL": "180",
