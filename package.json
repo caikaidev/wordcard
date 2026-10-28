@@ -12,7 +12,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "deploy": "npm run build && wrangler d1 migrations apply DB --remote && wrangler deploy",
     "cf-typegen": "wrangler types worker/worker-configuration.d.ts",
-    "test:quest": "node --experimental-strip-types tests/quest-difficulty.test.mjs && node tests/quest-api.test.mjs",
+    "test:quest": "node --experimental-strip-types tests/quest-difficulty.test.mjs && node tests/quest-api.test.mjs && node tests/generation-jobs.test.mjs",
     "test:tts": "node tests/melo-tts.test.mjs && node tests/safari-audio.test.mjs && node tests/audio-prefetch.test.mjs",
     "test:assets": "node tests/icon-assets.test.mjs",
     "test:ai": "node tests/text-provider.test.mjs",
