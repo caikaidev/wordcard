@@ -1,0 +1,30 @@
+name: Buffer development snapshot
+on:
+  push:
+    branches: [feat/quest-ready-buffer]
+    paths: [.github/workflows/buffer-dev.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Package source and test dependencies (no credentials)
+        run: |
+          git archive HEAD -o /tmp/source.tar
+          tar -cf /tmp/dependencies.tar node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: buffer-dev-source
+          path: |
+            /tmp/source.tar
+            /tmp/dependencies.tar
+          retention-days: 1
