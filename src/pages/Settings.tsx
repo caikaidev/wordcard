@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { api, ttsUrl, type ApiToken, type Me } from '../api'
-import { speak } from '../audio'
+import { speak, speakSystem } from '../audio'
 import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, isSafeId, type Settings as S } from '../../shared/settings'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
@@ -19,6 +19,7 @@ export default function Settings() {
   const [me, setMe] = useState<Me | null>(null)
   const [level, setLevel] = useState<LevelStatus | null>(null)
   const [testing, setTesting] = useState<'text' | 'tts' | null>(null)
+  const [cloudAudioReady, setCloudAudioReady] = useState(false)
   const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
 
@@ -67,16 +68,17 @@ export default function Settings() {
     }
   }
 
+  const sampleTts = 'Serendipity means finding something good without looking for it.'
   const testTts = async () => {
     if (!cur) return
     setTesting('tts')
+    setCloudAudioReady(false)
     setResult(null)
-    const sample = 'Serendipity means finding something good without looking for it.'
     const t0 = performance.now()
     try {
-      // Diagnose the server directly. <audio> only raises a generic media error
-      // and previously disguised quota/model/format failures as "system voice".
-      const response = await fetch(ttsUrl(sample), {
+      // This only checks the server and stores the generated audio in R2.
+      // Do NOT play after await: iPhone Safari requires a fresh user gesture.
+      const response = await fetch(ttsUrl(sampleTts), {
         credentials: 'same-origin',
         redirect: 'manual',
         signal: AbortSignal.timeout(45_000),
@@ -84,35 +86,42 @@ export default function Settings() {
       if (response.type === 'opaqueredirect') throw new Error('登录已失效，请重新打开拾句登录')
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: string } | null
-        throw new Error(`HTTP ${response.status}：${body?.error || 'MeloTTS 请求失败'}`)
+        throw new Error('HTTP ' + response.status + '：' + (body?.error || 'MeloTTS 请求失败'))
       }
-      if (!response.headers.get('content-type')?.includes('audio/'))
-        throw new Error('服务器未返回音频（可能被 Access 登录页面重定向）')
-      const audio = await response.arrayBuffer()
-      if (audio.byteLength < 16) throw new Error('服务器返回的音频为空')
-      // The first request has filled R2; this play is a cached retrieval, not
-      // another inference. Keep the measured latency for cloud generation.
-      const firstLatency = performance.now() - t0
-      let started = false
-      speak(sample, false, (engine) => {
-        started = true
-        setTesting(null)
-        setResult({ kind: 'tts',
-          label: engine === 'system' ? '系统朗读（音频播放失败）' : 'Cloudflare MeloTTS（云端成功）',
-          ms: firstLatency, detail: sample })
-        setUsageKey((k) => k + 1)
-      }).then((ok) => {
-        if (!started) {
-          setTesting(null)
-          if (!ok) setResult({ kind: 'tts', label: '音频播放失败', ms: firstLatency, detail: '服务器已返回 MP3，但浏览器没有成功播放。请检查设备静音与 Safari 播放限制。' })
-        }
-      })
+      const type = response.headers.get('content-type') || ''
+      if (!type.startsWith('audio/')) throw new Error('服务器未返回音频（可能被登录页面重定向）')
+      const buffer = await response.arrayBuffer()
+      if (buffer.byteLength < 16) throw new Error('服务器返回的音频为空')
+      setCloudAudioReady(true)
+      setResult({ kind: 'tts', label: 'Cloudflare MeloTTS 云端检查成功',
+        ms: performance.now() - t0,
+        detail: '已返回 ' + type + '（' + buffer.byteLength + ' 字节）。请点击「播放云端测试音频」确认 Safari 可播放。' })
+      setUsageKey((k) => k + 1)
     } catch (error) {
-      setTesting(null)
       setResult({ kind: 'tts', label: 'MeloTTS 云端检查失败',
         ms: performance.now() - t0,
         detail: error instanceof Error ? error.message : '未知网络错误' })
+    } finally {
+      setTesting(null)
     }
+  }
+
+  const playCloudTest = () => {
+    const t0 = performance.now()
+    speak(sampleTts, false, (engine) => {
+      setResult({ kind: 'tts',
+        label: engine === 'melo' ? 'Safari 云端音频播放成功' : 'Safari 使用系统朗读',
+        ms: performance.now() - t0,
+        detail: sampleTts })
+    })
+  }
+
+  const testSystemVoice = () => {
+    const t0 = performance.now()
+    setResult({ kind: 'tts', label: '正在测试 Safari 系统朗读', ms: 0, detail: '如未发声，请点击页面下方的系统朗读按钮。' })
+    speakSystem(sampleTts, false, () => {
+      setResult({ kind: 'tts', label: 'Safari 系统朗读成功启动', ms: performance.now() - t0, detail: sampleTts })
+    })
   }
 
   return (
@@ -278,7 +287,7 @@ export default function Settings() {
               本站另设每日新语音段数上限；在 Workers Paid 计划中，超过 Cloudflare 免费配额仍可能计费，请在 Cloudflare 控制台检查实际 Neurons 用量。
             </div>
           </Section>
-          <Section title="测试" desc="检查真实的 MeloTTS 云端响应并播放；失败时显示 HTTP 错误，不再用系统朗读掩盖原因。第二次调用会命中缓存。">
+          <Section title="测试" desc="先检查 MeloTTS 云端返回的真实音频格式，再手动点击试听（适配 iPhone Safari）；也可单独测试系统朗读。">
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 onClick={testText}
@@ -295,6 +304,21 @@ export default function Settings() {
               >
                 <IconPlay size={16} />
                 {testing === 'tts' ? '生成中…' : '测试语音'}
+              </button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2.5">
+              <button
+                onClick={playCloudTest}
+                disabled={!cloudAudioReady}
+                className="flex h-11 items-center justify-center rounded-xl border border-line bg-surface text-[13px] font-medium text-ink disabled:opacity-40"
+              >
+                播放云端测试音频
+              </button>
+              <button
+                onClick={testSystemVoice}
+                className="flex h-11 items-center justify-center rounded-xl border border-line bg-surface text-[13px] font-medium text-ink"
+              >
+                测试 Safari 系统朗读
               </button>
             </div>
             {result && (
