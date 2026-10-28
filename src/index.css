@@ -222,6 +222,66 @@ textarea {
 }
 }
 
+
+/*
+ * Wide + short viewports (landscape foldables, split-screen tablets, short
+ * desktop windows). Width-only md: sizes otherwise force a 440px card plus
+ * 72px navigation and 64px rating buttons, pushing controls below the fold.
+ * Keep the card internally scrollable and the rating actions visible.
+ */
+@media (min-width: 768px) and (max-height: 850px) {
+  .desktop-header {
+    height: 52px;
+    column-gap: 12px;
+    padding-inline: 16px;
+  }
+  .desktop-header nav a { height: 32px; }
+  .desktop-header a[href="/remix"],
+  .desktop-header a[href="/settings"],
+  .desktop-header > div > div { height: 34px; }
+
+  .compact-review {
+    padding-top: max(env(safe-area-inset-top), 6px);
+    padding-bottom: max(env(safe-area-inset-bottom), 6px);
+  }
+  .compact-review .review-progress { margin-top: 4px; gap: 10px; }
+  .compact-review .review-card-stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-block: 8px;
+  }
+  .compact-review .review-card-motion { flex: 1 1 auto; min-height: 0; }
+  .compact-review .review-card {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .compact-review .review-card-face { padding: 12px 24px; }
+  .compact-review .review-card-center { gap: 8px; padding-block: 0; }
+  .compact-review .review-card-word { font-size: clamp(30px, 6vh, 44px); }
+  .compact-review .review-speaker { margin-top: 4px; }
+  .compact-review .review-card-back { padding: 14px 24px; }
+  .compact-review .review-card-back .bg-divider { margin-block: 12px; }
+  .compact-review .review-actions { flex-shrink: 0; padding-bottom: 0; }
+  .compact-review .review-action-button,
+  .compact-review .review-grade-button { height: 44px; }
+  .compact-review .review-keyboard-hint { display: none; }
+  .compact-review .review-guide,
+  .compact-review .review-empty {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    padding: 16px;
+  }
+}
+
+@media (min-width: 768px) and (max-height: 480px) {
+  .compact-review .review-card-stage { padding-block: 4px; }
+  .compact-review .review-card-face,
+  .compact-review .review-card-back { padding: 8px 16px; }
+  .compact-review .review-card-word { font-size: 30px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
