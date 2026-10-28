@@ -12,6 +12,8 @@ export interface Env {
   USER_DAILY_TTS_LIMIT?: string
   /** 仅本地开发：AUTH_DISABLED 时模拟的登录邮箱 */
   DEV_USER?: string
+  /** Optional reliable background generation queue (created by deploy CI). */
+  GENERATION_QUEUE?: Queue<{ jobId: number }>
   DB: D1Database
   AUDIO: R2Bucket
   AI: Ai // Cloudflare Workers AI · MeloTTS
