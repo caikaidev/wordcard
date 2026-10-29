@@ -5,6 +5,7 @@ import { aiEnv, loadSettings } from './settings'
 import { cleanLesson, generateLesson } from './practice'
 import { cleanQuest } from './quest'
 import { parseLessonImport, type LessonImportReport } from '../shared/lesson-import'
+import { parseImport } from '../shared/import'
 import { blocked, hit } from './ratelimit'
 import type { Level } from '../shared/practice'
 import type { QuestContent } from '../shared/quest'
@@ -150,6 +151,33 @@ const requireToken: MiddlewareHandler<AppEnv> = async (c, next) => {
   await next()
 }
 
+/** 与 worker/index.ts 的 safeMeta 同逻辑：入库前清洗卡片 meta（本文件不能反向 import index.ts，会循环依赖） */
+function cleanCardMeta(m: Record<string, unknown>) {
+    const s = (v: unknown, max = 1000) => (typeof v === 'string' ? v.slice(0, max) : '')
+    return {
+          ipa: s(m.ipa, 100),
+          pos: s(m.pos, 30),
+          meaning: s(m.meaning),
+          example: s(m.example),
+          exampleZh: s(m.exampleZh),
+          highlight: s(m.highlight, 200),
+          phrases: Array.isArray(m.phrases)
+                  ? m.phrases.slice(0, 5).map((p) => ({ text: s((p as { text?: unknown })?.text, 200), meaning: s((p as { meaning?: unknown })?.meaning, 300) }))
+                  : [],
+          definitionEn: s(m.definitionEn, 600),
+          definitionSrc: s(m.definitionSrc, 60),
+          memoryTip: s(m.memoryTip, 500) || undefined,
+          cloze:
+                  m.cloze && typeof m.cloze === 'object' && s((m.cloze as { answer?: unknown }).answer, 200) && s((m.cloze as { sentence?: unknown }).sentence, 400).includes('____')
+                    ? {
+                                  scene: s((m.cloze as { scene?: unknown }).scene, 300),
+                                  sentence: s((m.cloze as { sentence?: unknown }).sentence, 400),
+                                  answer: s((m.cloze as { answer?: unknown }).answer, 200),
+                    }
+                    : undefined,
+    }
+}
+
 export const ext = new Hono<AppEnv>()
 
 ext.use('*', requireToken)
@@ -189,4 +217,72 @@ ext.post('/lessons', async (c) => {
   const r = await importLesson(c.env, user, c.get('admin'), body, new URL(c.req.url).origin)
   if ('error' in r) return c.json(r, 400)
   return c.json(r, 201)
+})
+
+  /** 词卡包导入（shiju-import-v1）：入库逻辑与页面端 POST /import 一致，鉴权走个人令牌 */
+ext.post('/cards', async (c) => {
+  if (Number(c.req.header('content-length') ?? 0) > MAX_BODY) return c.json({ error: '请求体太大，最多 1 MB' }, 413)
+  const text = await c.req.text()
+  if (text.length > MAX_BODY) return c.json({ error: '请求体太大，最多 1 MB' }, 413)
+  let body: unknown = null
+  try {
+    body = JSON.parse(text)
+  } catch {
+    return c.json({ error: '请求体不是合法的 JSON' }, 400)
+  }
+  // 先验格式再计限流，和 /lessons 一致
+  const parsed = parseImport(body)
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400)
+
+  const user = c.get('user')
+  const lim = extLimits(c.env)
+  if (lim.interval) {
+    const gap = await hit(c.env.DB, `import:${user}`, 1, lim.interval * 1000)
+    if (!gap.ok) return tooMany(c, gap.retryAfter, `导入太频繁：每 ${lim.interval < 60 ? `${lim.interval} 秒` : `${Math.round(lim.interval / 60)} 分钟`}最多一次`)
+  }
+  const day = await hit(c.env.DB, `import-day:${user}`, lim.daily, DAY)
+  if (!day.ok) return tooMany(c, day.retryAfter, `24 小时内已经导入 ${lim.daily} 次了`)
+
+  const { pkg, cards, invalid } = parsed
+  const now = Date.now()
+  const db = c.env.DB
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO packages (user_id, title, source_url, source_type, difficulty_order, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(user, pkg.title, pkg.source_url ?? null, pkg.source_type ?? null, pkg.difficulty_order ? JSON.stringify(pkg.difficulty_order) : null, now)
+    .run()
+  const row = await db
+    .prepare('SELECT id FROM packages WHERE user_id = ? AND title = ? COLLATE NOCASE')
+    .bind(user, pkg.title)
+    .first<{ id: number }>()
+  const packageId = row!.id
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO items (type, text, meta, due_at, created_at, updated_at, user_id, package_id, source_ref, difficulty)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+  let added = 0
+  for (let i = 0; i < cards.length; i += 50) {
+    const chunk = cards.slice(i, i + 50)
+    const res = await db.batch(
+      chunk.map((card, j) =>
+        insert.bind(
+          card.type,
+          card.text,
+          JSON.stringify(cleanCardMeta(card.meta as unknown as Record<string, unknown>)),
+          now - (cards.length - i - j) * 1000,
+          now,
+          now,
+          user,
+          packageId,
+          card.sourceRef || null,
+          card.difficulty,
+        ),
+      ),
+    )
+    added += res.reduce((n, r) => n + (r.meta.changes ?? 0), 0)
+  }
+  return c.json({ packageId, added, skipped: cards.length - added, invalid }, 201)
 })
