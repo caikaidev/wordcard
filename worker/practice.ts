@@ -5,7 +5,10 @@ import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import { vocabEstimate } from './level'
-import { ladderView, nextReadableId, passageById } from '../shared/passages'
+import { ladderView, nextPassagePreview, passageById } from '../shared/passages'
+import { glossFor } from '../shared/passage-gloss'
+import { passageReadingAids } from '../shared/retention'
+import { rankOf } from './wordfreq'
 import { checkIn, streakStatus } from './streak'
 import type { QuestProgress } from '../shared/quest'
 import { parseReadingScore } from '../shared/reading'
@@ -814,16 +817,7 @@ practice.get('/passages/:id', async (c) => {
   const item = ladder.items.find((i) => i.id === id)
   if (!item) return c.json({ error: '这篇不在当前档位里' }, 404)
   if (item.state === 'locked') return c.json({ error: '先读完上一篇，这篇才会解锁' }, 403)
-  return c.json({
-    id: passage.id,
-    title: passage.title,
-    text: passage.text,
-    words: passage.words,
-    band: passage.band,
-    bandName: ladder.bandName,
-    state: item.state,
-    nextId: nextReadableId(ladder.items, id),
-  })
+  return c.json(passagePayload(passage, ladder, item.state))
 })
 
 practice.post('/passages/:id/complete', async (c) => {
@@ -837,5 +831,28 @@ practice.post('/passages/:id/complete', async (c) => {
   if (item.state === 'locked') return c.json({ error: '先读完上一篇，这篇才会解锁' }, 403)
   await c.env.DB.prepare('INSERT OR IGNORE INTO passage_reads (user_id, passage_id, completed_at) VALUES (?, ?, ?)').bind(user, id, Date.now()).run()
   const updated = await passageLadder(c.env, user)
-  return c.json({ ok: true as const, nextId: nextReadableId(updated.items, id) })
+  const preview = nextPassagePreview(updated.items, id)
+  return c.json({ ok: true as const, nextId: preview?.id ?? null, nextTitle: preview?.title ?? null })
 })
+
+function passagePayload(
+  passage: NonNullable<ReturnType<typeof passageById>>,
+  ladder: Awaited<ReturnType<typeof passageLadder>>,
+  state: 'done' | 'current' | 'locked',
+) {
+  const preview = nextPassagePreview(ladder.items, passage.id)
+  const aids = passageReadingAids(passage.text, ladder.band, rankOf, glossFor)
+  return {
+    id: passage.id,
+    title: passage.title,
+    text: passage.text,
+    words: passage.words,
+    band: passage.band,
+    bandName: ladder.bandName,
+    state,
+    nextId: preview?.id ?? null,
+    nextTitle: preview?.title ?? null,
+    marks: aids.marks,
+    gloss: aids.gloss,
+  }
+}

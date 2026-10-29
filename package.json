@@ -18,7 +18,7 @@
     "test:ai": "node tests/text-provider.test.mjs",
     "test:review": "node --experimental-strip-types tests/review-grade.test.mjs && node --experimental-strip-types tests/review-forecast.test.mjs && node --experimental-strip-types tests/review-batch.test.mjs && node --experimental-strip-types tests/practice-compose.test.mjs",
     "test:reading": "node --experimental-strip-types tests/reading-loop.test.mjs",
-    "test:ladder": "node --experimental-strip-types tests/content-ladder.test.mjs"
+    "test:ladder": "node --experimental-strip-types tests/content-ladder.test.mjs && node --experimental-strip-types tests/interest-retention.test.mjs"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.4.0",

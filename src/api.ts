@@ -185,7 +185,7 @@ export const api = {
   passages: () => req<PassageLadder>('/practice/passages'),
   passage: (id: string) => req<PassageDetail>(`/practice/passages/${encodeURIComponent(id)}`),
   completePassage: (id: string) =>
-    req<{ ok: true; nextId: string | null }>(`/practice/passages/${encodeURIComponent(id)}/complete`, { method: 'POST' }),
+    req<{ ok: true; nextId: string | null; nextTitle: string | null }>(`/practice/passages/${encodeURIComponent(id)}/complete`, { method: 'POST' }),
 }
 
 export interface PassageDetail {
@@ -197,6 +197,10 @@ export interface PassageDetail {
   bandName: string
   state: 'done' | 'current' | 'locked'
   nextId: string | null
+  nextTitle: string | null
+  /** 超当前词汇档、默认该划线的词 */
+  marks: string[]
+  gloss: Record<string, { zh: string; hint: string }>
 }
 
 export const ttsUrl = (text: string, slow = false) =>

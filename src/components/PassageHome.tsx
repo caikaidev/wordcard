@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, type PassageLadder } from '../api'
+import { readingMinutes } from '../../shared/retention'
 import { VOCAB_LEVELS } from '../../shared/discover'
 import type { Settings } from '../../shared/settings'
 import { Link, passagePath } from '../router'
+import { useStats } from '../store'
 import { errMsg } from './ui'
-import { IconChevronRight } from './icons'
+import { IconChevronRight, IconFlame } from './icons'
 
 /** 练习页主入口：按词汇档给一篇今日短文，读完才解锁下一篇。 */
 export function PassageHome() {
@@ -12,6 +14,8 @@ export function PassageHome() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [streak, setStreak] = useState<number | null>(null)
+  const due = useStats()?.due
 
   const load = useCallback(() => {
     setError(null)
@@ -26,6 +30,10 @@ export function PassageHome() {
     api
       .settings()
       .then((r) => setSettings(r.current))
+      .catch(() => {})
+    api
+      .streak()
+      .then((s) => setStreak(s.streak))
       .catch(() => {})
   }, [load])
 
@@ -43,24 +51,24 @@ export function PassageHome() {
     }
   }
 
+  const reviewLabel = due == null ? '复习' : `复习 ${due}`
   return (
-    <section className="mt-3 rounded-2xl border border-line-soft bg-surface p-4" aria-labelledby="today-passage">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 id="today-passage" className="m-0 text-[15px] font-semibold">
-          今日短文
-        </h2>
-        {ladder && <span className="text-xs text-muted">{ladder.bandName}档 · 约 {ladder.vocab.toLocaleString('zh-CN')} 词</span>}
+    <section className="mt-3 rounded-2xl border border-line-soft bg-surface p-4" aria-labelledby="today-next">
+      <div className="flex items-start justify-between gap-3">
+        <p id="today-next" className="m-0 text-xs font-semibold tracking-wide text-accent">
+          今天的下一步
+        </p>
+        <Link
+          to="/"
+          aria-label={due == null ? '去复习' : `复习 ${due} 张`}
+          className="flex h-8 shrink-0 items-center rounded-full border border-line bg-bg px-3 text-xs text-muted-2 no-underline"
+        >
+          {reviewLabel}
+        </Link>
       </div>
-      <p className="mt-1 mb-0 text-xs leading-relaxed text-muted">
-        {ladder?.source === 'setting'
-          ? '按你选的词汇量推荐。读完一篇，下一篇才打开。'
-          : ladder?.source === 'estimate'
-            ? '自动档跟词汇评级走。想固定一档，点下面的数字。'
-            : '还没做过词汇评级，先按 5 千档。测过之后会跟着估算走。'}
-      </p>
 
       {!ladder && !error ? (
-        <div className="mt-3 h-28 animate-shimmer rounded-xl bg-line-soft" />
+        <div className="mt-3 h-28 animate-shimmer rounded-xl bg-line-soft" aria-hidden />
       ) : error && !ladder ? (
         <div className="mt-3">
           <p className="m-0 text-sm text-muted">{error}</p>
@@ -70,20 +78,33 @@ export function PassageHome() {
         </div>
       ) : ladder ? (
         <>
+          <h1 className="m-0 mt-1 font-serif text-[26px] leading-tight font-medium">
+            {ladder.today ? ladder.today.title : '这一档读完了'}
+          </h1>
+          <p className="mt-1.5 mb-0 flex items-center gap-1 text-[13px] text-muted">
+            {ladder.today ? <span>约 {readingMinutes(ladder.today.words)} 分钟 · </span> : null}
+            <IconFlame size={14} className={streak ? 'text-forgot-fg' : 'text-faint'} />
+            连续 {streak ?? '–'} 天
+          </p>
           {ladder.today ? (
-            <Link to={passagePath(ladder.today.id)} className="mt-3 flex flex-col gap-1 rounded-xl bg-bg px-3.5 py-3 text-ink no-underline">
-              <span className="font-serif text-[18px] leading-snug">{ladder.today.title}</span>
-              <span className="text-xs text-muted">约 {ladder.today.words} 词 · 先读，点词再查</span>
-              <span className="line-clamp-3 font-serif text-[14px] leading-relaxed text-muted-2">{ladder.today.excerpt}</span>
-              <span className="mt-1 flex items-center gap-1 text-[14px] font-medium text-accent">
-                开始阅读 <IconChevronRight size={16} />
-              </span>
+            <Link
+              to={passagePath(ladder.today.id)}
+              className="mt-3 flex h-12 items-center justify-center gap-1 rounded-[14px] bg-invert-bg text-[15px] font-medium text-invert-fg no-underline"
+            >
+              开始阅读 <IconChevronRight size={16} />
             </Link>
           ) : (
-            <p className="mt-3 mb-0 rounded-xl bg-bg px-3.5 py-3 text-sm leading-relaxed text-muted">
+            <p className="mt-3 mb-0 text-sm leading-relaxed text-muted">
               这一档的短文都读完了。可以把词汇量调高一档，解锁下一组。不会自动跳到更难的文章。
             </p>
           )}
+          <p className="mt-3 mb-0 text-xs leading-relaxed text-muted">
+            {ladder.source === 'setting'
+              ? `${ladder.bandName}档。读完一篇，下一篇才打开。`
+              : ladder.source === 'estimate'
+                ? '自动档跟词汇评级走。想固定一档，点下面的数字。'
+                : '还没做过词汇评级，先按 5 千档。测过之后会跟着估算走。'}
+          </p>
           <ol className="mt-3 flex flex-col gap-1.5 p-0">
             {ladder.items.map((item, i) => {
               const body = (

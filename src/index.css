@@ -312,10 +312,35 @@ textarea {
   animation: confetti 1.3s cubic-bezier(0.15, 0.6, 0.35, 1) forwards;
 }
 
+/* 触屏没有这套键盘快捷键。细指针的桌面才继续用上面的 md 显示规则。 */
+@media (hover: none), (pointer: coarse) {
+  .review-keyboard-hint {
+    display: none;
+  }
+}
+
+@keyframes passage-fill {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.passage-fill-bar {
+  width: 0%;
+  animation: passage-fill 0.7s ease-out forwards;
+}
+
 /* 系统设置了「减少动态效果」就不放动画 */
 @media (prefers-reduced-motion: reduce) {
   .confetti-piece {
     display: none;
+  }
+  .passage-fill-bar {
+    width: 100%;
+    animation: none;
   }
   .animate-pop,
   .animate-shake,
