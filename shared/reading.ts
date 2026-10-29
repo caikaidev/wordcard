@@ -137,6 +137,15 @@ export function canRevealAnswer(state: GuessProgress): boolean {
   return state.revealed
 }
 
+/**
+ * 练习详情生词表上要显示的词义。
+ * 能读原文时返回 null，避免先看详情再进「读原文」时已经知道答案。
+ * 读原文揭晓、以及加入复习后的词库，仍使用完整词义，不经过这里。
+ */
+export function lessonListMeaning(meaning: string, readable: boolean): string | null {
+  return readable ? null : meaning
+}
+
 export function gradeGuess(input: string, item: Pick<GuessItem, 'word' | 'meaning'>): boolean {
   const typed = input.trim()
   if (!typed) return false
