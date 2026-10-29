@@ -3,7 +3,7 @@ export interface Env {
   USER_ID?: string
   IS_ADMIN?: boolean
   /** User-selected text generation provider, set by aiEnv. */
-  TEXT_PROVIDER?: 'cloudflare' | 'gemini'
+  TEXT_PROVIDER?: 'cloudflare' | 'gemini' | 'openai'
   /** 管理员邮箱，逗号分隔（GitHub Secret，不写进代码） */
   ADMIN_EMAILS?: string
   /** 普通用户每天最多几次文本类 AI 调用 */
@@ -19,6 +19,12 @@ export interface Env {
   AI: Ai // Cloudflare Workers AI · MeloTTS
   ASSETS: Fetcher
   GEMINI_API_KEY: string
+  /** 可选。个人设置里的 key 优先；都没有时，OpenAI 调用会提示去设置页填写。 */
+  OPENAI_API_KEY?: string
+  /** 默认 gpt-6-astra，可被个人设置覆盖。 */
+  OPENAI_TEXT_MODEL?: string
+  /** 默认 https://api.openai.com/v1，可被个人设置覆盖。 */
+  OPENAI_BASE_URL?: string
   GEMINI_TEXT_MODEL: string
   GEMINI_TTS_MODEL: string
   GEMINI_VOICE: string

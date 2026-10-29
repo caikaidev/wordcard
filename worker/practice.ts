@@ -3,7 +3,7 @@ import type { AppEnv, Env } from './env'
 import { generateJson, type GeminiPart } from './gemini'
 import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { translateParagraphs } from './gemini'
-import { aiEnv, loadSettings } from './settings'
+import { aiFrom, loadSettings } from './settings'
 import { vocabEstimate } from './level'
 import { ladderView, nextPassagePreview, passageById } from '../shared/passages'
 import { glossFor } from '../shared/passage-gloss'
@@ -149,7 +149,7 @@ practice.post('/lessons', async (c) => {
   const savedId = Number(body.savedId) || 0
   const pasted = typeof body.text === 'string' ? body.text.trim().slice(0, MAX_SOURCE_CHARS) : ''
 
-  const ai = await aiEnv(c.env, user, c.get('admin'))
+  const ai = await aiFrom(c)
   let source = ''
   let sourceUrl: string | null = null
   let fetchedTitle = ''
@@ -252,7 +252,7 @@ practice.post('/packages/:id/lessons', async (c) => {
   const settings = await loadSettings(c.env, user)
   const level: Level = isLevel(Number(body.level)) ? (Number(body.level) as Level) : settings.practiceLevel
   const raw = await generateJson<Partial<LessonContent>>(
-    await aiEnv(c.env, user, c.get('admin')),
+    await aiFrom(c),
     packageLessonPrompt(settings.coachProfile, level, pkg.title, ref, chosen),
     packageLessonSchema,
     'lesson',
@@ -395,7 +395,7 @@ practice.get('/lessons/:id/source', async (c) => {
   if (!l) return c.json({ error: '找不到这份练习' }, 404)
   if (l.source_text) return c.json({ title: l.title, text: l.source_text })
   if (!l.source_url) return c.json({ error: '这份练习是用截图生成的，没有保存原文' }, 404)
-  const a = await fetchArticle(await aiEnv(c.env, user, c.get('admin')), l.source_url)
+  const a = await fetchArticle(await aiFrom(c), l.source_url)
   await c.env.DB.prepare('UPDATE lessons SET source_text = ? WHERE id = ? AND user_id = ?').bind(a.text, id, user).run()
   return c.json({ title: l.title, text: a.text })
 })
@@ -543,7 +543,7 @@ practice.post('/lessons/:id/submit', async (c) => {
 
   const settings = await loadSettings(c.env, user)
   const raw = await generateJson<Partial<GradeResult>>(
-    await aiEnv(c.env, user, c.get('admin')),
+    await aiFrom(c),
     gradePrompt(settings.coachProfile, lesson, idx, text, history),
     gradeSchema,
     'grade',
@@ -633,7 +633,7 @@ practice.post('/saved', async (c) => {
 
 practice.get('/saved/:id/source', async (c) => {
   const user = c.get('user')
-  const s = await loadSaved(c.env, await aiEnv(c.env, user, c.get('admin')), Number(c.req.param('id')), user)
+  const s = await loadSaved(c.env, await aiFrom(c), Number(c.req.param('id')), user)
   if (!s) return c.json({ error: '找不到这篇文章' }, 404)
   return c.json({ title: s.title, text: s.text, url: s.url })
 })
@@ -675,7 +675,7 @@ practice.post('/translate', async (c) => {
 
   const missing = paras.map((p, i) => ({ p, h: hashes[i] })).filter((x, i, a) => !found.has(x.h) && a.findIndex((y) => y.h === x.h) === i)
   if (missing.length) {
-    const zh = await translateParagraphs(await aiEnv(c.env, user, c.get('admin')), missing.map((m) => m.p))
+    const zh = await translateParagraphs(await aiFrom(c), missing.map((m) => m.p))
     const now = Date.now()
     const stmts = missing
       .map((m, i) => ({ ...m, zh: zh[i] }))

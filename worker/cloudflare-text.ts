@@ -6,9 +6,11 @@ export const CF_TEXT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'
 
 export class CloudflareTextError extends Error {
   readonly partial?: unknown
-  constructor(message: string, readonly status = 502, partial?: unknown) {
+  readonly switchable: boolean
+  constructor(message: string, readonly status = 502, partial?: unknown, switchable = true) {
     super(message)
     this.partial = partial
+    this.switchable = switchable
   }
 }
 type JsonSchema = {
@@ -558,12 +560,12 @@ function classifyError(error: unknown): CloudflareTextError {
 }
 
 async function guard(env: Env) {
-  if (!env.AI || env.AI_DISABLED === 'true') throw new CloudflareTextError('Cloudflare AI 暂不可用', 503)
+  if (!env.AI || env.AI_DISABLED === 'true') throw new CloudflareTextError('Cloudflare AI 暂不可用', 503, undefined, false)
   const limits = aiLimits(env)
   const counts = await aiCallCounts(env)
-  if (counts.minute >= limits.perMinute) throw new CloudflareTextError('请求过于频繁，请稍后重试', 429)
-  if (counts.text >= limits.text) throw new CloudflareTextError('今日文本 AI 调用达到应用上限', 429)
-  if (!env.IS_ADMIN && counts.userText >= limits.userText) throw new CloudflareTextError('今日个人文本 AI 调用达到应用上限', 429)
+  if (counts.minute >= limits.perMinute) throw new CloudflareTextError('请求过于频繁，请稍后重试', 429, undefined, false)
+  if (counts.text >= limits.text) throw new CloudflareTextError('今日文本 AI 调用达到应用上限', 429, undefined, false)
+  if (!env.IS_ADMIN && counts.userText >= limits.userText) throw new CloudflareTextError('今日个人文本 AI 调用达到应用上限', 429, undefined, false)
 }
 
 function getUsage(response: unknown): { input: number; output: number } {

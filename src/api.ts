@@ -1,5 +1,6 @@
 import type { Difficulty } from '../shared/difficulty'
 import type { ReviewForecast } from '../shared/forecast'
+import { OPENAI_OVERRIDE_HEADER, shouldSendOpenAiOverride } from '../shared/ai-failure'
 import { beginWrite, cachedRead, clearReadCache } from './readCache'
 import type { Settings } from '../shared/settings'
 import type { Lesson, LessonSummary, Level, PracticeStats, ShareData } from '../shared/practice'
@@ -13,10 +14,47 @@ export type { PassageLadder }
 import { REMIX_TIMEOUT_SEC } from '../shared/remix'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
+export type AiProviderName = 'cloudflare' | 'gemini' | 'openai'
+
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly provider?: AiProviderName
+  readonly switchable: boolean
+  readonly openaiConfigured: boolean
+  constructor(
+    message: string,
+    readonly status: number,
+    extra?: { provider?: AiProviderName; switchable?: boolean; openaiConfigured?: boolean },
+  ) {
     super(message)
+    this.provider = extra?.provider
+    this.switchable = extra?.switchable === true
+    this.openaiConfigured = extra?.openaiConfigured === true
   }
+}
+
+/** 下一次非 GET 请求改走 OpenAI，不改已保存的提供方。 */
+let openaiOnce = false
+export function retryNextWithOpenAI() {
+  openaiOnce = true
+}
+
+/** 设置页之外保存成功时，让仍挂着的设置页跟上当前值。 */
+export const SETTINGS_CHANGED_EVENT = 'shiju-settings-changed'
+
+export function notifySettingsChanged(current: Settings) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent<Settings>(SETTINGS_CHANGED_EVENT, { detail: current }))
+}
+
+function takeOpenAiOverride(): string | undefined {
+  const once = openaiOnce
+  if (once) openaiOnce = false
+  try {
+    if (shouldSendOpenAiOverride(sessionStorage, window.location.pathname, once)) return 'openai'
+  } catch {
+    if (once) return 'openai'
+  }
+  return undefined
 }
 
 /** 请求默认超时：服务端卡住时给出明确提示，而不是让页面一直转圈 */
@@ -44,6 +82,11 @@ export function relogin(): boolean {
 }
 
 async function networkReq<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  const override = method === 'GET' ? undefined : takeOpenAiOverride()
+  const headers = new Headers(init?.headers)
+  if (init?.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
+  if (override) headers.set(OPENAI_OVERRIDE_HEADER, override)
   let res: Response
   try {
     res = await fetch(`/api${path}`, {
@@ -52,7 +95,7 @@ async function networkReq<T>(path: string, init?: RequestInit, timeoutMs = TIMEO
       credentials: 'same-origin',
       // Access 登录过期时会把请求重定向到登录页；不跟随，才能准确认出这种情况
       redirect: 'manual',
-      headers: init?.body ? { 'content-type': 'application/json', ...init.headers } : init?.headers,
+      headers,
     })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'TimeoutError') throw new ApiError('等得太久了，请求超时，请重试', 0)
@@ -66,10 +109,16 @@ async function networkReq<T>(path: string, init?: RequestInit, timeoutMs = TIMEO
   const data = await res.json().catch(() => null)
   if (!res.ok) {
     if ((data as { login?: boolean } | null)?.login && relogin()) throw new ApiError('登录已过期，正在重新登录…', res.status)
+    const body = data as { error?: string; provider?: string; switchable?: boolean; openaiConfigured?: boolean } | null
     const msg =
-      (data as { error?: string } | null)?.error ??
+      body?.error ??
       (res.status === 401 || res.status === 403 ? '登录已失效，请刷新页面' : `请求失败（${res.status}）`)
-    throw new ApiError(msg, res.status)
+    const provider = body?.provider === 'cloudflare' || body?.provider === 'gemini' || body?.provider === 'openai' ? body.provider : undefined
+    throw new ApiError(msg, res.status, {
+      provider,
+      switchable: body?.switchable === true,
+      openaiConfigured: body?.openaiConfigured === true,
+    })
   }
   return data as T
 }
@@ -92,6 +141,9 @@ async function req<T>(path: string, init?: RequestInit, timeoutMs = TIMEOUT_MS):
 }
 
 const json = (body: unknown) => JSON.stringify(body)
+
+/** openaiApiKey 只写入、不出现在 Settings 回包里。 */
+export type SettingsPatch = Partial<Record<keyof Settings, string | number | boolean | null>> & { openaiApiKey?: string | null }
 
 export interface SavedArticle {
   id: number
@@ -135,8 +187,11 @@ export const api = {
   translate: (paragraphs: string[]) =>
     req<{ translations: string[] }>('/practice/translate', { method: 'POST', body: json({ paragraphs }) }),
   settings: () => req<{ current: Settings; defaults: Settings; me: Me }>('/settings'),
-  saveSettings: (patch: Partial<Record<keyof Settings, string | number | null>>) =>
-    req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) }),
+  saveSettings: async (patch: SettingsPatch) => {
+    const saved = await req<{ current: Settings; me: Me }>('/settings', { method: 'PUT', body: json(patch) })
+    notifySettingsChanged(saved.current)
+    return saved
+  },
   usage: () => req<UsageReport>('/usage', undefined, 20_000),
   practiceStats: () => req<PracticeStats>('/practice/stats'),
   shareData: () => req<ShareData>('/practice/share'),

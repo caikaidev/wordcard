@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type PassageDetail } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { completionLines } from '../../shared/retention'
 import { Link, navigate, passagePath } from '../router'
 import { errMsg, toast } from '../components/ui'
@@ -146,10 +148,19 @@ export default function Passage({ id }: { id: string }) {
       const r = await api.createLesson({ text: passage.text })
       navigate(`/practice/${r.id}`)
     } catch (e) {
-      toast(errMsg(e), 'error')
       setMaking(false)
+      if (!reportAiFailure(e, () => { void makeLesson() })) toast(errMsg(e), 'error')
     }
   }
+
+  useEffect(() => {
+    if (!passage) return
+    const path = window.location.pathname
+    if (!resumeMatches(path)) return
+    if (readOpenAiDraft()) return
+    void makeLesson()
+    return scheduleFinishOpenAiResume(path)
+  }, [passage])
 
   const paragraphs = passage?.text.split(/\n+/) ?? []
   const marks = new Set(passage?.marks ?? [])

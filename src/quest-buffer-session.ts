@@ -10,6 +10,8 @@ type Ports = {
   complete: () => Promise<QuestSnapshot>
   onQuest: (quest: Quest) => void
   onError: (message: string) => void
+  /** 原始错误。页面用来决定要不要弹出换提供方的对话框；没有时只走 onError 文案。 */
+  onFail?: (error: unknown, source: 'start' | 'complete' | 'poll' | 'refill') => void
   onRefill: (state: RefillState) => void
   visible?: () => boolean
   schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
@@ -62,7 +64,7 @@ export function createQuestBufferSession(ports: Ports) {
     if (!valid(token) || !polling || !visible()) return
     if (++polls > 80) return fail('准备时间较长，已停止自动检查；可手动重试')
     try { accept(await ports.read(), token) }
-    catch (error) { if (valid(token)) fail(errorText(error)) }
+    catch (error) { if (valid(token)) { ports.onFail?.(error, 'poll'); fail(errorText(error)) } }
   }
   const run = async (tail: boolean) => {
     if (closed) return
@@ -71,7 +73,7 @@ export function createQuestBufferSession(ports: Ports) {
     ports.onError('')
     if (tail) { tailRequested = true; state(true, '正在准备后续题目…') }
     try { accept(await (tail ? ports.complete() : ports.start()), token) }
-    catch (error) { if (valid(token)) fail(errorText(error)) }
+    catch (error) { if (valid(token)) { ports.onFail?.(error, tail ? 'complete' : 'start'); fail(errorText(error)) } }
   }
   const tryRefill = async () => {
     if (closed || !visible() || tailRequested || !demand || current?.buffer?.phase !== 'starter') return
@@ -91,7 +93,7 @@ export function createQuestBufferSession(ports: Ports) {
       }
       polling = true; polls = 0
       await poll(token)
-    } catch (error) { if (valid(token)) state(false, errorText(error)) }
+    } catch (error) { if (valid(token)) { ports.onFail?.(error, 'refill'); state(false, errorText(error)) } }
   }
   return {
     load: () => run(false),

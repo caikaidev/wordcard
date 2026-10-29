@@ -6,13 +6,15 @@ import { selectRemixTargets } from '../shared/remix'
 import { resolveVocabCount } from '../shared/passages'
 import { rankOf } from './wordfreq'
 import { CloudflareTextError } from './cloudflare-text'
+import { OpenAITextError } from './openai-text'
 import { MELO_MIME, MeloTtsError, getOrGenerateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
 import { schedule } from '../shared/srs'
 import { REVIEW_GRADE_UPDATE_SQL } from '../shared/review'
 import { REVIEW_FORECAST_SQL, buildReviewForecast, reviewForecastWindow } from '../shared/forecast'
 import type { CardMeta, Grade, Item, ItemStatus, ItemType, WeeklyReport } from '../shared/types'
-import { aiEnv, defaultSettings, loadSettings, saveSettings } from './settings'
+import { OPENAI_OVERRIDE_HEADER } from '../shared/ai-failure'
+import { aiFrom, defaultSettings, loadSettings, openAiReady, openAiRequestOverride, saveSettings } from './settings'
 import { practice } from './practice'
 import { costOf } from '../shared/pricing'
 import { parseImport } from '../shared/import'
@@ -68,16 +70,37 @@ const app = new Hono<AppEnv>().basePath('/api')
 type Ctx = Context<AppEnv>
 /** 当前登录用户（邮箱）与是否管理员 */
 const who = (c: Ctx) => ({ user: c.get('user'), admin: c.get('admin') })
-const ai = (c: Ctx) => aiEnv(c.env, c.get('user'), c.get('admin'))
+const ai = (c: Ctx) => aiFrom(c)
 
 // /api/ext/* 给脚本和 AI 助手用，用个人令牌鉴权（见 lesson-import.ts），其余接口都要 Cloudflare Access 登录
 app.use('*', (c, next) => (c.req.path.startsWith('/api/ext/') ? next() : requireAccess(c, next)))
 app.route('/ext', ext)
 
-app.onError((err, c) => {
-  if (err instanceof GeminiError) return c.json({ error: err.message }, err.status as 500)
+app.onError(async (err, c) => {
+  const user = (() => {
+    try {
+      return c.get('user')
+    } catch {
+      return ''
+    }
+  })()
+  const aiError = async (error: { message: string; status: number; switchable?: boolean }, provider: 'gemini' | 'cloudflare' | 'openai') => {
+    const body: { error: string; provider: typeof provider; switchable: boolean; openaiConfigured?: boolean } = {
+      error: error.message,
+      provider,
+      switchable: error.switchable === true,
+    }
+    if (body.switchable) {
+      const ready = await openAiReady(c.env, user).catch(() => false)
+      const invalidKey = err instanceof OpenAITextError && (err.status === 401 || /API key/.test(err.message))
+      body.openaiConfigured = invalidKey ? false : ready
+    }
+    return c.json(body, error.status as 500)
+  }
+  if (err instanceof GeminiError) return aiError(err, 'gemini')
   if (err instanceof MeloTtsError) return c.json({ error: err.message }, err.status as 500)
-  if (err instanceof CloudflareTextError) return c.json({ error: err.message }, err.status as 500)
+  if (err instanceof CloudflareTextError) return aiError(err, 'cloudflare')
+  if (err instanceof OpenAITextError) return aiError(err, 'openai')
   console.error(err)
   return c.json({ error: '服务器出错了' }, 500)
 })
@@ -572,7 +595,14 @@ app.route('/tokens', tokens)
 /** 页面上传练习 JSON */
 app.post('/lessons/import', async (c) => {
   const body = await c.req.json().catch(() => null)
-  const r = await importLesson(c.env, c.get('user'), c.get('admin'), body, new URL(c.req.url).origin)
+  const r = await importLesson(
+    c.env,
+    c.get('user'),
+    c.get('admin'),
+    body,
+    new URL(c.req.url).origin,
+    openAiRequestOverride(c.req.header(OPENAI_OVERRIDE_HEADER)),
+  )
   if ('error' in r) return c.json(r, 400)
   return c.json(r, 201)
 })

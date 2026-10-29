@@ -33,6 +33,7 @@
 ## AI 生成内容
 
 - 卡片补全、练习题、批改和语音由部署者自己的 Gemini API key 生成，受 [Gemini API 条款](https://ai.google.dev/gemini-api/terms)约束。
+- 选择 OpenAI 时，文本生成走部署者或该用户自己的 OpenAI API key（Chat Completions），受 [OpenAI 使用条款](https://openai.com/policies/terms-of-use)约束。语音仍走 Cloudflare MeloTTS。
 - 注意：Gemini 免费层级的数据可能会被 Google 用于改进产品。部署给别人用时，建议使用付费层级，并在你自己的隐私说明里告知用户。
 
 ## 网页正文提取

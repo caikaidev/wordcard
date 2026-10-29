@@ -15,7 +15,7 @@
     "test:quest": "node --experimental-strip-types tests/quest-difficulty.test.mjs && node tests/quest-api.test.mjs && node tests/generation-jobs.test.mjs && node tests/quest-buffer.test.mjs && node tests/quest-buffer-client.test.mjs",
     "test:tts": "node tests/melo-tts.test.mjs && node tests/safari-audio.test.mjs && node tests/audio-prefetch.test.mjs",
     "test:assets": "node tests/icon-assets.test.mjs",
-    "test:ai": "node tests/text-provider.test.mjs",
+    "test:ai": "node tests/text-provider.test.mjs && node --experimental-strip-types tests/openai-settings.test.mjs",
     "test:review": "node --experimental-strip-types tests/review-grade.test.mjs && node --experimental-strip-types tests/review-forecast.test.mjs && node --experimental-strip-types tests/review-batch.test.mjs && node --experimental-strip-types tests/practice-compose.test.mjs",
     "test:reading": "node --experimental-strip-types tests/reading-loop.test.mjs",
     "test:ladder": "node --experimental-strip-types tests/content-ladder.test.mjs && node --experimental-strip-types tests/interest-retention.test.mjs"

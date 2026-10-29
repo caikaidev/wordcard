@@ -1,17 +1,45 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { api, ttsUrl, type ApiToken, type Me } from '../api'
+import { SETTINGS_CHANGED_EVENT, api, ttsUrl, type ApiToken, type Me } from '../api'
 import { speak, speakSystem } from '../audio'
-import { COACH_PROFILE_MAX, REVIEW_MODES, TEXT_MODELS, isSafeId, type Settings as S } from '../../shared/settings'
+import {
+  COACH_PROFILE_MAX,
+  DEFAULT_OPENAI_BASE_URL,
+  DEFAULT_OPENAI_MODEL,
+  OPENAI_MODELS,
+  REVIEW_MODES,
+  TEXT_MODELS,
+  cleanOpenAiApiKey,
+  isOpenAiApiKey,
+  isOpenAiBaseUrl,
+  isSafeId,
+  normalizeOpenAiBaseUrl,
+  type Settings as S,
+} from '../../shared/settings'
+import { openAiResumePath } from '../../shared/ai-failure'
 import { LEVELS, type Level } from '../../shared/practice'
 import { DAILY_GOALS, REMINDER_HOURS, RESCUE_HOUR } from '../../shared/streak'
 import type { LevelStatus } from '../../shared/level'
 import { LESSON_DOC_URL } from '../../shared/lesson-import'
 import { disablePush, enablePush, pushState, type PushState } from '../push'
-import { Link } from '../router'
+import { Link, asAppPath, navigate } from '../router'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { OPENAI_RESUME_EVENT, scheduleFinishOpenAiResume } from '../openai-retry'
 import StorageCard from '../components/StorageCard'
 import CostCard from '../components/CostCard'
 import { MerriamWebsterLogo, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconBack, IconCheck, IconPlay, IconSparkle } from '../components/icons'
+
+function engineLabel(cur: S) {
+  if (cur.textProvider === 'openai') return `OpenAI · ${cur.openaiModel}`
+  if (cur.textProvider === 'gemini') return `Gemini · ${cur.textModel}`
+  return 'Cloudflare · Qwen3 30B A3B'
+}
+
+function openAiKeyHint(cur: S) {
+  if (cur.openaiKeySource === 'user') return '已保存个人 key，这里不会显示原文。清除后，如果部署环境配了 OPENAI_API_KEY，会改用那一把。'
+  if (cur.openaiKeySource === 'server') return '部署环境已经有 OPENAI_API_KEY。填写个人 key 后，优先用你自己的额度。'
+  return '还没有 key。填在这里会存在这个账号；也可以由部署环境的 OPENAI_API_KEY 提供。'
+}
 
 export default function Settings() {
   const [cur, setCur] = useState<S | null>(null)
@@ -22,6 +50,10 @@ export default function Settings() {
   const [cloudAudioReady, setCloudAudioReady] = useState(false)
   const [usageKey, setUsageKey] = useState(0)
   const [result, setResult] = useState<{ kind: 'text' | 'tts'; label: string; ms: number; detail: string } | null>(null)
+  const [resumeArmed, setResumeArmed] = useState(false)
+  const [openaiKey, setOpenaiKey] = useState('')
+  const [openaiBase, setOpenaiBase] = useState('')
+  const [savingOpenAi, setSavingOpenAi] = useState(false)
 
   useEffect(() => {
     api
@@ -37,6 +69,35 @@ export default function Settings() {
       .then(setLevel)
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setResumeArmed(!!openAiResumePath(sessionStorage))
+      } catch {
+        setResumeArmed(false)
+      }
+    }
+    sync()
+    window.addEventListener(OPENAI_RESUME_EVENT, sync)
+    return () => window.removeEventListener(OPENAI_RESUME_EVENT, sync)
+  }, [])
+
+  useEffect(() => {
+    const onChange = (event: Event) => {
+      const next = (event as CustomEvent<S>).detail
+      if (next?.textProvider) setCur(next)
+    }
+    window.addEventListener(SETTINGS_CHANGED_EVENT, onChange)
+    return () => window.removeEventListener(SETTINGS_CHANGED_EVENT, onChange)
+  }, [])
+
+  useEffect(() => {
+    if (!cur) return
+    setOpenaiBase(cur.openaiBaseUrl)
+    if (!resumeArmed) return
+    document.getElementById('openai-api-key')?.focus()
+  }, [cur, resumeArmed])
 
   const save = async (key: keyof S, value: string | number, label = `已切换到 ${value}`) => {
     if (!cur || cur[key] === value) return
@@ -59,10 +120,10 @@ export default function Settings() {
     const t0 = performance.now()
     try {
       const r = await api.enrich('serendipity')
-      setResult({ kind: 'text', label: cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`, ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
+      setResult({ kind: 'text', label: engineLabel(cur), ms: performance.now() - t0, detail: `${r.meta.pos} ${r.meta.meaning}` })
       setUsageKey((k) => k + 1)
     } catch (e) {
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(e, () => { void testText() })) toast(errMsg(e), 'error')
     } finally {
       setTesting(null)
     }
@@ -116,6 +177,56 @@ export default function Settings() {
     })
   }
 
+  const saveOpenAiKey = async (value: string | null) => {
+    if (!cur || savingOpenAi) return
+    const cleaned = value === null ? null : cleanOpenAiApiKey(value)
+    if (cleaned !== null && !isOpenAiApiKey(cleaned)) {
+      toast('OpenAI API key 格式不对：不能有空格，长度 8 到 300', 'error')
+      return
+    }
+    setSavingOpenAi(true)
+    try {
+      const r = await api.saveSettings({ openaiApiKey: cleaned })
+      setCur(r.current)
+      setOpenaiKey('')
+      toast(cleaned ? 'OpenAI API key 已保存' : '已清除个人 OpenAI API key')
+      if (!cleaned || !r.current.openaiKeySet) return
+      let back: string | null = null
+      try {
+        back = openAiResumePath(sessionStorage)
+      } catch {
+        return
+      }
+      if (!back) return
+      if (back === '/settings') {
+        void testText()
+        scheduleFinishOpenAiResume('/settings')
+        return
+      }
+      const path = asAppPath(back)
+      if (path) navigate(path)
+      else scheduleFinishOpenAiResume(back)
+    } catch (e) {
+      toast(errMsg(e), 'error')
+    } finally {
+      setSavingOpenAi(false)
+    }
+  }
+
+  const saveOpenAiBase = async () => {
+    const trimmed = openaiBase.trim()
+    if (!trimmed) {
+      await save('openaiBaseUrl', '', '已恢复默认 OpenAI 地址')
+      return
+    }
+    if (!isOpenAiBaseUrl(trimmed)) {
+      toast('OpenAI Base URL 必须是 https 地址（本机可用 http://localhost），不能带账号或查询参数', 'error')
+      return
+    }
+    const normalized = normalizeOpenAiBaseUrl(trimmed)
+    await save('openaiBaseUrl', normalized, `OpenAI 地址已保存`)
+  }
+
   const testSystemVoice = () => {
     const t0 = performance.now()
     setResult({ kind: 'tts', label: '正在测试 Safari 系统朗读', ms: 0, detail: '如未发声，请点击页面下方的系统朗读按钮。' })
@@ -145,6 +256,11 @@ export default function Settings() {
           )}
         </div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">设置</h1>
+        {resumeArmed && (
+          <p className="mt-3 mb-0 rounded-2xl bg-accent-soft px-4 py-3 text-sm leading-relaxed text-ink">
+            保存 OpenAI API key 后，会自动回到刚才的页面再试一次。
+          </p>
+        )}
       </div>
 
       {!cur ? (
@@ -254,17 +370,19 @@ export default function Settings() {
             />
           </Section>
 
-          <Section title="文本 AI 引擎" desc="一键切换，保存后立即作用于下一次生成、批改和闯关。语音继续使用 MeloTTS。">
-            <div className="grid grid-cols-2 gap-2" role="group" aria-label="文本 AI 提供商">
+          <Section title="文本 AI 引擎" desc="单选后立刻作用于下一次生成、批改、重组和闯关。后台自动补题仍走 Cloudflare。语音继续使用 MeloTTS。">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="文本 AI 提供商">
               {([
-                { id: 'cloudflare', name: 'Cloudflare 免费', note: 'Qwen3 30B A3B' },
+                { id: 'cloudflare', name: 'Qwen', note: 'Cloudflare 免费' },
                 { id: 'gemini', name: 'Gemini', note: cur.textModel },
+                { id: 'openai', name: 'OpenAI', note: cur.openaiModel },
               ] as const).map((p) => (
                 <button
                   key={p.id}
                   type="button"
+                  role="radio"
+                  aria-checked={cur.textProvider === p.id}
                   onClick={() => save('textProvider', p.id, `已切换为 ${p.name}`)}
-                  aria-pressed={cur.textProvider === p.id}
                   className={`flex min-h-[76px] flex-col items-start justify-center gap-1 rounded-2xl border p-3.5 text-left ${cur.textProvider === p.id ? 'border-accent bg-accent-soft' : 'border-line-soft bg-surface'}`}
                 >
                   <span className="flex w-full items-center justify-between text-[15px] font-semibold">
@@ -276,14 +394,91 @@ export default function Settings() {
               ))}
             </div>
             <p className="mt-2 mb-0 text-[12px] leading-relaxed text-muted">
-              默认使用 Cloudflare Workers AI 的共享免费 Neurons 配额；Paid 计划超额可能计费。截图识别需手动切换 Gemini。
-              Qwen 失败不会自动扣用 Gemini 额度。
+              默认是 Cloudflare Workers AI 的 Qwen3 30B A3B，用共享免费 Neurons 配额；Paid 计划超额可能计费。
+              Qwen 失败不会自动改道。截图或打不开的链接需要 Gemini。
             </p>
+          </Section>
+
+          <Section
+            title="OpenAI"
+            desc={`默认模型 ${DEFAULT_OPENAI_MODEL}（当前最强旗舰，可在下面改）。默认地址 ${DEFAULT_OPENAI_BASE_URL}，可改成其它兼容 Chat Completions 的地址。结构化任务使用较低推理强度。个人 key 存在你的账号里，页面不会回显。`}
+          >
+            <form
+              className="flex flex-col gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void saveOpenAiKey(openaiKey)
+              }}
+            >
+              <label htmlFor="openai-api-key" className="text-xs text-muted">
+                API key
+              </label>
+              <input
+                id="openai-api-key"
+                type="password"
+                autoComplete="off"
+                value={openaiKey}
+                onChange={(event) => setOpenaiKey(event.target.value)}
+                placeholder={cur.openaiKeySource === 'none' ? 'sk-…' : '留空表示不改；要换 key 就贴新的'}
+                className="h-12 w-full rounded-2xl border border-line bg-surface px-4 font-mono text-sm text-ink outline-none placeholder:font-sans placeholder:text-faint focus:border-ink"
+              />
+              <p className="m-0 text-xs leading-relaxed text-muted">{openAiKeyHint(cur)}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="submit"
+                  disabled={savingOpenAi || !openaiKey.trim()}
+                  className="h-11 rounded-2xl border-0 bg-invert-bg text-sm font-medium text-invert-fg disabled:opacity-40"
+                >
+                  保存 key
+                </button>
+                <button
+                  type="button"
+                  disabled={savingOpenAi || cur.openaiKeySource !== 'user'}
+                  onClick={() => void saveOpenAiKey(null)}
+                  className="h-11 rounded-2xl border border-line bg-surface text-sm text-ink disabled:opacity-40"
+                >
+                  清除个人 key
+                </button>
+              </div>
+            </form>
+            <div className="mt-4">
+              <div className="mb-2 text-xs text-muted">模型 · 默认 {DEFAULT_OPENAI_MODEL}</div>
+              <Options
+                options={OPENAI_MODELS}
+                value={cur.openaiModel}
+                def={defaults?.openaiModel}
+                onChange={(v) => save('openaiModel', v, `OpenAI 模型：${v}`)}
+              />
+              <Custom value={cur.openaiModel} known={OPENAI_MODELS} onSave={(v) => save('openaiModel', v, `OpenAI 模型：${v}`)} placeholder="其它 OpenAI 模型" />
+            </div>
+            <form
+              className="mt-4 flex flex-col gap-2"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void saveOpenAiBase()
+              }}
+            >
+              <label htmlFor="openai-base-url" className="text-xs text-muted">
+                Base URL · 默认 {DEFAULT_OPENAI_BASE_URL}
+              </label>
+              <input
+                id="openai-base-url"
+                value={openaiBase}
+                onChange={(event) => setOpenaiBase(event.target.value)}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                className="h-12 w-full rounded-2xl border border-line bg-surface px-4 font-mono text-sm text-ink outline-none focus:border-ink"
+              />
+              <button type="submit" className="h-11 rounded-2xl border border-line bg-surface text-sm font-medium text-ink">
+                保存地址
+              </button>
+            </form>
           </Section>
 
           <Section title="模型与语音" desc="显示当前实际文本引擎；发音统一使用 MeloTTS。">
             <div className="rounded-2xl border border-line-soft bg-surface px-4 py-3 text-[13px] leading-relaxed text-muted">
-              文本 <span className="font-mono text-ink">{cur.textProvider === 'cloudflare' ? 'Cloudflare · Qwen3 30B A3B' : `Gemini · ${cur.textModel}`}</span>
+              文本 <span className="font-mono text-ink">{engineLabel(cur)}</span>
               <br />
               语音 <span className="font-mono text-ink">Cloudflare · MeloTTS (en)</span>
               <br />

@@ -5,7 +5,8 @@ import { CloudflareTextError } from './cloudflare-text'
 import { generateJson } from './gemini'
 import { warmMeloTts } from './melo'
 import { appendTail, starterContent, readyCount, stagePrepared, BUFFER_MAX, type QuestPart, type QuestPhase, type QuestBuffer } from '../shared/quest-buffer'
-import { aiEnv } from './settings'
+import { aiEnv, openAiRequestOverride } from './settings'
+import { OPENAI_OVERRIDE_HEADER } from '../shared/ai-failure'
 import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
 import { PLAYABLE, unlocked, XP_PER_STAGE, XP_PERFECT_BONUS, type Quest, type QuestContent, type QuestProgress, type StageId } from '../shared/quest'
@@ -267,7 +268,7 @@ const bankRow = (env: AppEnv['Bindings'], user: string, id: number) => env.DB.pr
 /** Both HTTP and Queue use this lease. A stale owner cannot overwrite a newer bank.
  * A lease bounds crash recovery; it is not an upstream exactly-once billing guarantee. */
 export async function generateQuestBank(
-  env: AppEnv['Bindings'], user: string, admin: boolean, id: number, part: QuestPart = 'full', background = false,
+  env: AppEnv['Bindings'], user: string, admin: boolean, id: number, part: QuestPart = 'full', background = false, override?: 'openai',
 ): Promise<QuestContent> {
   const lesson = await env.DB.prepare('SELECT title, level, content, source_text FROM lessons WHERE id = ? AND user_id = ?')
     .bind(id, user).first<{ title: string; level: number; content: string; source_text: string | null }>()
@@ -291,7 +292,7 @@ export async function generateQuestBank(
     // A partial bank must only be appended to, even via an old full-generation caller.
     const effectivePart = cached ? 'tail' : part
     const existing = cached ? JSON.parse(cached.content) as QuestContent : undefined
-    const ai = await aiEnv(env, user, admin)
+    const ai = await aiEnv(env, user, admin, override)
     if (background && (ai.TEXT_PROVIDER !== 'cloudflare' || env.AI_DISABLED === 'true')) throw new Error('Cloudflare-only background generation is disabled')
     const content = JSON.parse(lesson.content) as LessonContent
     const samples = await env.DB.prepare(`
@@ -392,7 +393,10 @@ async function startGeneration(c: Context<AppEnv>, part: 'starter' | 'tail') {
   const status = 'pending' in q ? q.status : q.buffer?.status
   if (status === 'queued' || status === 'running') return c.json({ pending: true, status }, 202)
   try {
-    const clean = await generateQuestBank(c.env, c.get('user'), c.get('admin'), Number(c.req.param('lessonId')), part)
+    const clean = await generateQuestBank(
+      c.env, c.get('user'), c.get('admin'), Number(c.req.param('lessonId')), part, false,
+      openAiRequestOverride(c.req.header(OPENAI_OVERRIDE_HEADER)),
+    )
     if (part === 'starter') {
       c.executionCtx.waitUntil(aiEnv(c.env, c.get('user'), c.get('admin'))
         .then((ai) => warmMeloTts(ai, clean.listening.map((l) => l.en.replace(/\s+/g, ' ').trim().slice(0, 500)))))

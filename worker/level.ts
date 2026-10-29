@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env } from './env'
 import { generateJson } from './gemini'
-import { aiEnv } from './settings'
+import { aiFrom } from './settings'
 import { rankOf, wordAt } from './wordfreq'
 import { BANDS, FAKES_PER_TEST, WORDS_PER_BAND, levelOf, type LevelStatus, type TestResult, type TestWord } from '../shared/level'
 
@@ -179,7 +179,7 @@ level.get('/', async (c) => c.json(await vocabEstimate(c.env, c.get('user'))))
 /** 出一套题：存下来（交卷时用来判分），只把词发给前端 */
 level.post('/test', async (c) => {
   const user = c.get('user')
-  const real = await sampleWords(await aiEnv(c.env, user, c.get('admin')))
+  const real = await sampleWords(await aiFrom(c))
   const fakes = shuffle([...FAKE_WORDS]).slice(0, FAKES_PER_TEST).map((word) => ({ word, rank: 0 }))
   const words = shuffle([...real, ...fakes])
   const row = await c.env.DB.prepare('INSERT INTO vocab_tests (user_id, words, created_at) VALUES (?, ?, ?) RETURNING id')

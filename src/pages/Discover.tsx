@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { DEFAULT_SOURCES, VOCAB_LEVELS, discoverArticles, formatSources, parseSources, shouldAutoEnroll, sourceLabel, type Discovery, type DiscoverArticle, type DiscoverReport } from '../../shared/discover'
 import type { Settings } from '../../shared/settings'
 import type { LevelStatus } from '../../shared/level'
@@ -50,6 +52,9 @@ export default function Discover() {
       .level()
       .then(setLevel)
       .catch(() => {})
+    if (!resumeMatches('/discover')) return
+    void run()
+    return scheduleFinishOpenAiResume('/discover')
   }, [])
 
   const toggleAuto = async (next: boolean) => {
@@ -82,7 +87,7 @@ export default function Discover() {
     }
   }
 
-  const run = async () => {
+  async function run() {
     setRunning(true)
     setReport(null)
     try {
@@ -90,7 +95,7 @@ export default function Discover() {
       setReport(r.report)
       await load()
     } catch (e) {
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(e, () => { void run() })) toast(errMsg(e), 'error')
     } finally {
       setRunning(false)
     }
