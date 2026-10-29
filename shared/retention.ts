@@ -4,12 +4,15 @@
 export const reviewEntry = '/?review=1'
 
 /**
- * 冷启动只改裸 `/`（一次新的打开、没有 query、没有 hash）。
- * `/?review=1` 以及任何需要留住的 query/hash 都停在原地址。
+ * 文档打开裸 `/` 时进练习。地址栏进入和硬刷新都算：硬刷新的 navigation type 是 `reload`，不是 `navigate`。
+ * 浏览器后退/前进（`back_forward`）是要回到刚才的复习页，不改写那条历史。
+ * `/?review=1` 以及其它 query/hash 留在原地址。
+ * 应用内点「复习」是 pushState，不会重新执行这段判断。
  */
 export function coldStartPath(pathname: string, navType: string, search = '', hash = ''): '/practice' | null {
-  if (pathname === '/' && navType === 'navigate' && search === '' && hash === '') return '/practice'
-  return null
+  if (pathname !== '/' || search !== '' || hash !== '') return null
+  if (navType === 'back_forward') return null
+  return '/practice'
 }
 
 /** 学习者读短文大约每分钟 90 词，界面上至少写 1 分钟。 */
