@@ -189,9 +189,11 @@ export async function generateJson<T>(
   /** 思考强度：翻译这类不需要推理的任务用 minimal，更快更省 */
   thinkingLevel: 'minimal' | 'low' = 'low',
   timeoutMs?: number,
+  /** 闯关首批关掉同提示重试，缺的部分另一次短请求补。 */
+  retry = true,
 ): Promise<T> {
   // Cloudflare failures never silently trigger a Gemini call.
-  if (env.TEXT_PROVIDER !== 'gemini') return cloudflareGenerateJson<T>(env, prompt, schema, kind, temperature)
+  if (env.TEXT_PROVIDER !== 'gemini') return cloudflareGenerateJson<T>(env, prompt, schema, kind, temperature, retry)
   const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
     contents: [{ role: 'user', parts: userParts }],

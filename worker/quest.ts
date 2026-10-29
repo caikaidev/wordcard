@@ -1,6 +1,7 @@
 import { difficultyPrompt, isDifficulty, type Difficulty, type DifficultySample } from '../shared/difficulty'
 import { Hono, type Context } from 'hono'
 import type { AppEnv } from './env'
+import { CloudflareTextError } from './cloudflare-text'
 import { generateJson } from './gemini'
 import { warmMeloTts } from './melo'
 import { appendTail, starterContent, readyCount, stagePrepared, BUFFER_MAX, type QuestPart, type QuestPhase, type QuestBuffer } from '../shared/quest-buffer'
@@ -9,12 +10,19 @@ import { checkIn } from './streak'
 import type { LessonContent } from '../shared/practice'
 import { PLAYABLE, unlocked, XP_PER_STAGE, XP_PERFECT_BONUS, type Quest, type QuestContent, type QuestProgress, type StageId } from '../shared/quest'
 
-/* 闯关：给一份练习出一套小题库（认词 / 听 / 读 / 说），AI 只调用一次；判分全在前端本地完成 */
+/* 闯关：给一份练习出一套小题库（认词 / 听 / 读 / 说）。首批只问一次；缺听力时另一次短请求补上，不把整段提示再跑一遍。判分在前端本地完成 */
 
 export const quest = new Hono<AppEnv>()
 
-/** 出题时给 AI 的原文长度上限 */
+/** 出题时给 AI 的原文长度上限。首批只出认词和听力，原文过长时模型会把 listening 写丢，连着两次都失败。 */
 const MAX_SOURCE = 6000
+const STARTER_SOURCE = 1600
+
+const STARTER_QUALITY = `中文质量要求：
+- 中文单独读要通顺，先按语境意思再按中文习惯写，不要照搬英语语序。
+- 干扰项不能是正确答案的另一种译法，也不能靠病句让人猜。
+- 听力 en 必须是脱离上下文也能听懂的完整句子。
+- 自查只在内部完成，不要写进回复。`
 
 const str = { type: 'STRING' }
 const strs = { type: 'ARRAY', items: str }
@@ -112,6 +120,7 @@ function phasePrompt(prompt: string, part: QuestPart, existing?: QuestContent): 
 2. reading：1–2 段 40–90 词的原文，每段 1–2 题。passage 为原文；questions 中 question、answer、distractors（3 项）、explain 都用自然中文。
 3. speaking：3 个独立完整的英文跟读短句（en）及中文译文（zh），忠实原文，不使用省略号或占位符。
 不要重出、修改或返回首批题目。已生成的听力句子：${existing?.listening.map((l) => l.en).join(' / ') ?? ''}`
+  if (part === 'starter') return prompt.slice(0, begin) + requirements + '\n\n' + STARTER_QUALITY
   return prompt.slice(0, begin) + requirements + '\n\n' + prompt.slice(end)
 }
 
@@ -119,6 +128,22 @@ function phaseSchema(part: QuestPart) {
   if (part === 'full') return questSchema
   const keys = part === 'starter' ? ['words', 'listening'] : ['cloze', 'reading', 'speaking']
   return { type: 'OBJECT', properties: Object.fromEntries(keys.map((key) => [key, questSchema.properties[key as keyof typeof questSchema.properties]])), required: keys }
+}
+
+const listeningSchema = {
+  type: 'OBJECT',
+  properties: { listening: questSchema.properties.listening },
+  required: ['listening'],
+}
+
+function listeningPrompt(content: LessonContent, source: string | null): string {
+  const lines = [...content.words.map((w) => w.quote), ...content.expressions.map((e) => e.example)]
+    .map((line) => line.trim()).filter(Boolean).slice(0, 6)
+  return `只补听力，严格返回 JSON 对象 {"listening":[...]}，不要 words。
+listening 要 4 句独立完整的短句，每句 6–14 个词。每项字段：en 英文原句，zh 自然中文译文，distractors 3 个中文干扰译文，extra 2 个不在原句里的英文单词。没有合适单词时 extra 用 []。
+优先用下面的原句；不够就按原意改写成完整句，不增加事实。
+${lines.length ? `原句：\n${lines.map((line) => `- ${line}`).join('\n')}` : '（没有单独摘出的原句）'}
+${source ? `原文节选：\n${source.slice(0, 800)}` : ''}`
 }
 
 const s = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().replace(/\s+/g, ' ').slice(0, max) : '')
@@ -153,6 +178,70 @@ export function cleanQuest(raw: Partial<QuestContent> | null | undefined): Quest
     .filter((q) => q.en && q.zh && !/\.{3}|…|\[|____/.test(q.en))
     .slice(0, 3)
   return { words, listening, cloze, reading, ...(speaking.length ? { speaking } : {}) }
+}
+
+/** 模型没交出可用认词时，用练习里已经有的词和释义。干扰项只取同篇其他释义，不另编。 */
+function lessonWordItems(content: LessonContent): QuestContent['words'] {
+  const pool: { en: string; zh: string }[] = []
+  for (const item of [...content.words.map((w) => ({ en: w.word, zh: w.meaning })), ...content.expressions.map((e) => ({ en: e.pattern, zh: e.meaning }))]) {
+    const en = s(item.en, 80)
+    const zh = s(item.zh, 40)
+    if (!en || !zh || pool.some((picked) => picked.en.toLowerCase() === en.toLowerCase())) continue
+    pool.push({ en, zh })
+  }
+  return pool.slice(0, 5).map((item) => ({
+    en: item.en,
+    zh: item.zh,
+    distractors: pool.map((other) => other.zh).filter((zh) => zh !== item.zh).slice(0, 3),
+  })).filter((item) => item.distractors.length >= 2)
+}
+
+function mergeListening(current: QuestContent['listening'], extra: QuestContent['listening']): QuestContent['listening'] {
+  if (extra.length >= 2) return extra.slice(0, 4)
+  const seen = new Set(current.map((item) => item.en))
+  const merged = [...current]
+  for (const item of extra) {
+    if (seen.has(item.en)) continue
+    seen.add(item.en)
+    merged.push(item)
+  }
+  return merged.slice(0, 4)
+}
+
+type AiEnv = Parameters<typeof generateJson>[0]
+
+function loosePayload(error: unknown): Partial<QuestContent> | undefined {
+  if (error instanceof CloudflareTextError) {
+    if (!error.message.includes('字段不完整') && !error.message.includes('不是合法 JSON')) return undefined
+    const partial = error.partial
+    if (partial && typeof partial === 'object' && !Array.isArray(partial)) return partial as Partial<QuestContent>
+    return {}
+  }
+  if (error instanceof Error && error.message.includes('不是合法 JSON')) return {}
+  return undefined
+}
+
+/** 首批不把同一篇长提示连问两遍。对得上就用；认词不够就用练习里的词；听力不够再单独补一次。 */
+async function generateStarter(ai: AiEnv, content: LessonContent, starterPrompt: string, source: string | null): Promise<Partial<QuestContent>> {
+  const loose = async (prompt: string, schema: unknown) => {
+    try {
+      return await generateJson<Partial<QuestContent>>(ai, prompt, schema, 'quest', 0.4, 'low', undefined, false)
+    } catch (error) {
+      const payload = loosePayload(error)
+      if (payload) return payload
+      throw error
+    }
+  }
+  let clean = cleanQuest(await loose(phasePrompt(starterPrompt, 'starter'), phaseSchema('starter')))
+  if (clean.words.length < 2) {
+    const local = lessonWordItems(content)
+    if (local.length >= 2) clean = { ...clean, words: local }
+  }
+  if (clean.listening.length < 2) {
+    const more = cleanQuest(await loose(listeningPrompt(content, source), listeningSchema)).listening
+    clean = { ...clean, listening: mergeListening(clean.listening, more) }
+  }
+  return clean
 }
 
 const parseProgress = (raw: string | null): QuestProgress => {
@@ -213,10 +302,12 @@ export async function generateQuestBank(
         WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
       ) WHERE n <= 8 ORDER BY stage, n
     `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
-    const prompt = questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results))
-    const raw = await generateJson<Partial<QuestContent>>(
-      ai, phasePrompt(prompt, effectivePart, existing), phaseSchema(effectivePart), 'quest', 0.5,
-    )
+    const sourceLimit = effectivePart === 'starter' ? STARTER_SOURCE : MAX_SOURCE
+    const source = lesson.source_text?.slice(0, sourceLimit) ?? null
+    const prompt = questPrompt(content, source, lesson.level, difficultyPrompt(samples.results))
+    const raw = effectivePart === 'starter'
+      ? await generateStarter(ai, content, prompt, source)
+      : await generateJson<Partial<QuestContent>>(ai, phasePrompt(prompt, effectivePart, existing), phaseSchema(effectivePart), 'quest', 0.5)
     const clean = cleanQuest(raw)
     if (effectivePart === 'tail') {
       if (!existing || !clean.speaking?.length || clean.cloze.length + clean.reading.length < 2)

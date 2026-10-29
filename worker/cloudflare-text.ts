@@ -5,7 +5,11 @@ import { aiCallCounts, aiLimits } from './gemini'
 export const CF_TEXT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'
 
 export class CloudflareTextError extends Error {
-  constructor(message: string, readonly status = 502) { super(message) }
+  readonly partial?: unknown
+  constructor(message: string, readonly status = 502, partial?: unknown) {
+    super(message)
+    this.partial = partial
+  }
 }
 type JsonSchema = {
   type?: string
@@ -31,18 +35,19 @@ const JSON_ERROR = 'Qwen 返回的不是合法 JSON。请重试或切换 Gemini'
 const SHAPE_ERROR = 'Qwen 返回的 JSON 字段不完整或类型不符。请重试或切换 Gemini'
 const FENCE = String.fromCharCode(96).repeat(3)
 /** 放在任务正文之后。闯关提示词要求先自查，模型会把自查写进回复，盖过前面的 JSON 指令。 */
-const OUTPUT_RULE = '输出要求：只返回一个 JSON 值。不要 Markdown、代码围栏、前后说明或思考过程。任务里的自查只在内部完成，不要写进回复。字符串数组必须写成 JSON 数组，不要拼成一段用逗号分开的文字。required 里的每个字段都要出现，没有内容的数组用 []。回复的第一个非空白字符必须是 { 或 [，最后一个必须是 } 或 ]。'
+const OUTPUT_RULE = '输出要求：只返回一个 JSON 值。不要 Markdown、代码围栏、前后说明或思考过程。任务里的自查只在内部完成，不要写进回复。字符串数组必须写成 JSON 数组，不要拼成一段用逗号分开的文字。required 里的每个字段都要出现，没有内容的数组用 []。字段名用 schema 里的原名，不要改成 word、meaning、options，也不要改大小写。回复的第一个非空白字符必须是 { 或 [，最后一个必须是 } 或 ]。'
 
 /** Qwen3 默认会思考。闯关回复里常夹着前后文、代码围栏，或在 max_tokens 处被截断。能对上 schema 的值才采用。 */
 export function parseCloudflareJson<T>(result: unknown, schema: unknown): T {
   const normalized = normalizeSchema(schema)
   const texts = valuesFromTexts([...contentTexts(result), ...responseTexts(result)])
   const objects = objectPayloads(result)
-  const passing = [...texts.strict, ...texts.repaired, ...objects]
-    .map((value) => coerce(value, normalized))
-    .filter((value) => verifyShape(value, normalized))
+  const coerced = [...texts.strict, ...texts.repaired, ...objects].map((value) => coerce(value, normalized))
+  const passing = coerced.filter((value) => verifyShape(value, normalized))
   if (passing.length) return largest(passing) as T
-  if (texts.strict.length || texts.repaired.length || objects.length) throw new CloudflareTextError(SHAPE_ERROR)
+  if (texts.strict.length || texts.repaired.length || objects.length) {
+    throw new CloudflareTextError(SHAPE_ERROR, 502, bestPartial(coerced, normalized))
+  }
   throw new CloudflareTextError(JSON_ERROR)
 }
 
@@ -353,12 +358,97 @@ function largest(values: unknown[]): unknown {
   return best
 }
 
+/** 整份对不上 schema 时，留下 required 字段更齐的那份，供闯关只补缺的那一侧。 */
+function bestPartial(values: unknown[], schema: JsonSchema): unknown | undefined {
+  const objects = values.filter((value) => value && typeof value === 'object' && !Array.isArray(value))
+  if (!objects.length) return undefined
+  const score = (value: unknown) => {
+    const record = value as Record<string, unknown>
+    return (schema.required ?? []).reduce((n, key) => {
+      const child = schema.properties?.[key]
+      if (record[key] === undefined) return n
+      return n + (child && verifyShape(record[key], child) ? 2 : 1)
+    }, 0)
+  }
+  return objects.reduce((best, value) => (score(value) > score(best) ? value : best))
+}
+
 function splitStringList(value: string): string[] {
   return value.split(/[,，、;；|\n]+/).map((part) => part.trim()).filter(Boolean)
 }
 
+/** 只在目标字段缺失时借用。不把 text / items 当成通用别名，避免把别的任务里的正文偷走。 */
+const FIELD_ALIASES: Record<string, readonly string[]> = {
+  en: ['word', 'english', 'term', 'expr', 'expression', 'sentence'],
+  zh: ['meaning', 'chinese', 'translation', 'cn', 'gloss'],
+  distractors: ['options', 'choices', 'wrongs', 'distractor'],
+  extra: ['extras', 'decoys', 'noise'],
+  words: ['vocab', 'vocabulary', 'wordList', 'word_list'],
+  listening: ['listen', 'audios', 'audioItems', 'audio', 'listenings'],
+  cloze: ['blanks', 'fillBlank', 'fill_blank'],
+  reading: ['readings', 'passages'],
+  speaking: ['speak', 'oral'],
+  passage: ['article', 'paragraph'],
+  questions: ['question', 'qs'],
+  question: ['q', 'prompt'],
+  explain: ['explanation', 'why', 'reason'],
+  answer: ['ans', 'correct', 'correctAnswer'],
+  sentence: ['line', 'blankSentence'],
+}
+
+const STRING_ITEM_KEYS = ['text', 'value', 'option', 'label', 'zh', 'en', 'word', 'content', 'meaning']
+
+function lookupAlias(src: Record<string, unknown>, key: string): { found: boolean; value: unknown } {
+  const names = [key, ...(FIELD_ALIASES[key] ?? [])]
+  for (const name of names) {
+    for (const [candidate, value] of Object.entries(src)) {
+      if (candidate.toLowerCase() !== name.toLowerCase()) continue
+      if (value === null || value === undefined) continue
+      return { found: true, value }
+    }
+  }
+  return { found: false, value: undefined }
+}
+
+function parseJsonArray(value: string): unknown[] | undefined {
+  const trimmed = value.trim()
+  if (!trimmed.startsWith('[')) return undefined
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    return Array.isArray(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function stringFromItem(item: unknown): string[] {
+  if (typeof item === 'string') return [item]
+  if (typeof item === 'number' && Number.isFinite(item)) return [String(item)]
+  if (typeof item === 'boolean') return [String(item)]
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+  for (const [key, value] of Object.entries(item as Record<string, unknown>)) {
+    if (!STRING_ITEM_KEYS.includes(key.toLowerCase())) continue
+    if (typeof value === 'string' && value.trim()) return [value.trim()]
+    if (typeof value === 'number' && Number.isFinite(value)) return [String(value)]
+  }
+  return []
+}
+
+function objectMapToItems(record: Record<string, unknown>, itemSchema: JsonSchema): unknown[] {
+  const entries = Object.entries(record)
+  if (!entries.length) return []
+  if (!entries.every(([, value]) => value && typeof value === 'object' && !Array.isArray(value))) return []
+  const wantsEn = Boolean(itemSchema.properties?.en)
+  const kept = entries.map(([key, value]) => {
+    const src: Record<string, unknown> = { ...(value as Record<string, unknown>) }
+    if (wantsEn && !lookupAlias(src, 'en').found && !/^\d+$/.test(key)) src.en = key
+    return coerce(src, itemSchema, true)
+  }).filter((item) => verifyShape(item, itemSchema))
+  return kept
+}
+
 /**
- * 模型常把字符串数组写成一整段文字，或漏掉听力题的 extra 这种空数组。
+ * 模型常把字符串数组写成一整段文字、把 distractors 写成对象、或用 word/meaning 代替 en/zh。
  * 只做不发明内容的修正：嵌套对象里缺的必填数组补 []，坏掉的数组元素丢掉。
  * 根上缺字段不补，全部元素都不合格时也不改成空数组，留给重试。
  */
@@ -389,32 +479,47 @@ function coerce(value: unknown, schema: JsonSchema, nested = false): unknown {
 
 function coerceArray(value: unknown, schema: JsonSchema): unknown {
   const itemSchema = schema.items
-  if (itemSchema && itemSchema.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
-    const one = coerce(value, itemSchema, true)
-    if (verifyShape(one, itemSchema)) return [one]
+  if (typeof value === 'string') {
+    const parsed = parseJsonArray(value)
+    if (parsed) return coerceArray(parsed, schema)
+    if (itemSchema?.type === 'string') return coerceArray(splitStringList(value), schema)
   }
-  const items = typeof value === 'string' && itemSchema?.type === 'string' ? splitStringList(value) : value
-  if (!Array.isArray(items)) return value
-  if (!itemSchema) return items
-  const kept = items.map((item) => coerce(item, itemSchema, true)).filter((item) => verifyShape(item, itemSchema))
+  if (itemSchema?.type === 'string' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const strings = Object.values(value as Record<string, unknown>).flatMap(stringFromItem)
+    if (strings.length) return strings
+    return value
+  }
+  if (itemSchema?.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>
+    const one = coerce(record, itemSchema, true)
+    if (verifyShape(one, itemSchema)) return [one]
+    const fromMap = objectMapToItems(record, itemSchema)
+    if (fromMap.length) return fromMap
+    return value
+  }
+  if (!Array.isArray(value)) return value
+  if (!itemSchema) return value
+  const kept = itemSchema.type === 'string'
+    ? value.flatMap(stringFromItem)
+    : value.map((item) => coerce(item, itemSchema, true)).filter((item) => verifyShape(item, itemSchema))
   // 模型给了元素但每一条都不合格：留着原值，让整段校验失败并重试，而不是悄悄变成 []。
-  if (items.length > 0 && kept.length === 0) return value
+  if (value.length > 0 && kept.length === 0) return value
   return kept
 }
 
 function coerceObject(value: unknown, schema: JsonSchema, nested: boolean): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value
   const src = value as Record<string, unknown>
-  const out: Record<string, unknown> = { ...src }
+  const out: Record<string, unknown> = {}
   for (const [key, sub] of Object.entries(schema.properties ?? {})) {
     const required = (schema.required ?? []).includes(key)
-    const missing = !Object.hasOwn(src, key) || src[key] === null
-    if (missing) {
+    const direct = Object.hasOwn(src, key) ? src[key] : undefined
+    const looked = direct === null || direct === undefined ? lookupAlias(src, key) : { found: true, value: direct }
+    if (!looked.found) {
       if (nested && required && sub.type === 'array') out[key] = []
-      else if (src[key] === null && !required) delete out[key]
       continue
     }
-    out[key] = coerce(src[key], sub, true)
+    out[key] = coerce(looked.value, sub, true)
     if (sub.enum && typeof out[key] === 'string') {
       const hit = sub.enum.find((item) => typeof item === 'string' && item.toLowerCase() === (out[key] as string).toLowerCase())
       if (hit !== undefined) out[key] = hit
@@ -483,6 +588,7 @@ export async function cloudflareGenerateJson<T>(
   schema: unknown,
   kind: UsageKind,
   temperature: number,
+  retry = true,
 ): Promise<T> {
   const parts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   if (parts.some((part) => part.inlineData)) {
@@ -521,14 +627,25 @@ export async function cloudflareGenerateJson<T>(
     return parseCloudflareJson<T>(first, schema)
   } catch (error) {
     // 非法 JSON 和字段/类型对不上都再问 Qwen 一次。两次都失败就抛原来的文案，不转 Gemini。
+    // 闯关首批会关掉这次整段重试，避免同一篇长提示连跑两遍。
     const note = error instanceof CloudflareTextError ? retryNote(error.message) : undefined
-    if (!note) throw error
-    return parseCloudflareJson<T>(await once(note), schema)
+    if (!retry || !note) throw error
+    try {
+      return parseCloudflareJson<T>(await once(note), schema)
+    } catch (second) {
+      throw keepPartial(second, error)
+    }
   }
+}
+
+function keepPartial(second: unknown, first: unknown): unknown {
+  if (!(second instanceof CloudflareTextError) || !(first instanceof CloudflareTextError)) return second
+  if (second.partial !== undefined || first.partial === undefined) return second
+  return new CloudflareTextError(second.message, second.status, first.partial)
 }
 
 function retryNote(message: string): string | undefined {
   if (message.includes('不是合法 JSON')) return '上一次没有返回合法 JSON。这次不要解释，只输出 JSON 值本身。'
-  if (message.includes('字段不完整')) return '上一次的 JSON 对不上 schema：缺 required 字段，或字段类型不对。请补全每一个 required 字段；字符串数组写成 JSON 数组，数字不要加引号。不要解释。'
+  if (message.includes('字段不完整')) return '上一次的 JSON 对不上 schema：缺 required 字段，或字段类型不对。请补全每一个 required 字段；字符串数组写成 JSON 数组，数字不要加引号。字段名必须用 schema 里的 en、zh、distractors、words、listening，不要用 word、meaning、options，也不要改大小写。不要解释。'
   return undefined
 }

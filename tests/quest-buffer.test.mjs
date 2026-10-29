@@ -14,6 +14,21 @@ const bundle = await build({ stdin: { contents: `
 const { quest, generateQuestBank, prepareQuest, processGenerationBatch, readyCount, remainingReady } = await import(
   'data:text/javascript;base64,' + Buffer.from(bundle.outputFiles[0].text + '\n//# sourceURL=buffer-worker-test.mjs').toString('base64'))
 
+const listeningOnly = [
+  { en: 'Ship the commit today.', zh: '今天把提交发出去。', distractors: ['把收成运走。', '取消提交。', '明天再写。'], extra: ['park', 'bike'] },
+  { en: 'Harvest comes after the work.', zh: '工作做完才收割。', distractors: ['先收割。', '不做了。', '明天写。'], extra: [] },
+]
+
+const glossedLesson = {
+  title: 'Commit 收割', summary: '',
+  words: [
+    { word: 'commit', ipa: '', meaning: '提交', quote: 'Ship the commit today.' },
+    { word: 'harvest', ipa: '', meaning: '收割', quote: 'Harvest comes after the work.' },
+    { word: 'branch', ipa: '', meaning: '分支', quote: 'The branch is ready.' },
+  ],
+  expressions: [], tasks: [], speaking: [],
+}
+
 const full = {
   words: ['habit','routine','practice','learn','read'].map((en, i) => ({ en, zh: `正确${i}`, distractors: ['甲','乙','丙'] })),
   listening: ['We practice every day.', 'I read every morning.', 'They learn in school.', 'We share useful ideas.']
@@ -69,6 +84,8 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
   const s = setup()
   try {
     s.lesson(1)
+    const sourceMark = '甲'.repeat(2000)
+    s.sqlite.prepare('UPDATE lessons SET source_text = ? WHERE id = 1').run(sourceMark)
     const first = await s.request('/1', 'POST')
     assert.equal(first.status, 200, await first.clone().text())
     const q = await first.json()
@@ -79,6 +96,9 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
     assert.equal(s.calls.length, 1)
     const prompt = s.calls[0].input.messages[0].content
     assert.match(prompt, /只生成首批认词与听力题/)
+    assert.match(prompt, /中文单独读要通顺/)
+    assert.doesNotMatch(prompt, /绊脚石/)
+    assert.equal((prompt.match(/甲/g) ?? []).length, 1600)
     const progress = JSON.stringify({ stages: { words: { accuracy: 1, firstAccuracy: 1, at: 1 } }, xp: 15 })
     s.sqlite.prepare('UPDATE quests SET progress = ? WHERE lesson_id = 1').run(progress)
     assert.equal((await prepareQuest(s.env, 'alice', 1)).status, 'cached', 'opening lesson does not auto-fill tail')
@@ -95,11 +115,146 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
     assert.equal(s.sqlite.prepare('SELECT progress FROM quests').get().progress, progress)
     assert.equal(s.calls.length, 2)
     assert.match(s.calls[1].input.messages[0].content, /只补充后半套题/)
+    assert.match(s.calls[1].input.messages[0].content, /绊脚石/)
+    assert.equal((s.calls[1].input.messages[0].content.match(/甲/g) ?? []).length, 2000)
     await s.deliver(job.jobId)
     await s.request('/1', 'POST')
     await s.request('/1/complete', 'POST')
     assert.equal(s.calls.length, 2, 'cached, complete and redelivered tasks spend no inference')
     await Promise.all(s.tasks)
+  } finally { s.sqlite.close() }
+})
+
+test('aliased first quest reply stays playable instead of a shape 502', async () => {
+  const s = setup()
+  try {
+    s.lesson(11)
+    s.env.AI.run = async (model, input) => {
+      s.calls.push({ model, input })
+      return { response: JSON.stringify({
+        Words: {
+          commit: { meaning: '提交', options: [{ text: '收获' }, { text: '放弃' }, { text: '推迟' }] },
+          harvest: { zh: '收割', distractors: ['甲', '乙', '丙'] },
+        },
+        Listening: [
+          { word: 'Ship the commit today.', translation: '今天把这次提交发出去。', choices: ['把收成运走。', '取消提交。', '明天再写。'], extra: ['park', 'bike'] },
+          { sentence: 'Harvest comes after the commit.', chinese: '提交之后才是收割。', options: '甲，乙，丙' },
+        ],
+      }) }
+    }
+    const response = await s.request('/11', 'POST')
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json()
+    assert.equal(s.calls.length, 1)
+    assert.equal(body.buffer.phase, 'starter')
+    assert.equal(body.content.words[0].en, 'commit')
+    assert.equal(body.content.words[0].zh, '提交')
+    assert.deepEqual(body.content.words[0].distractors, ['收获', '放弃', '推迟'])
+    assert.equal(body.content.words[1].en, 'harvest')
+    assert.equal(body.content.listening[0].en, 'Ship the commit today.')
+    assert.equal(body.content.listening[1].zh, '提交之后才是收割。')
+    assert.deepEqual(body.content.listening[1].distractors, ['甲', '乙', '丙'])
+    assert.ok(body.content.words.length >= 2 && body.content.listening.length >= 2)
+  } finally { s.sqlite.close() }
+})
+
+test('starter keeps salvaged words and asks once more only for listening', async () => {
+  const s = setup()
+  try {
+    s.lesson(11)
+    s.sqlite.prepare('UPDATE lessons SET source_text = ? WHERE id = 11').run('甲'.repeat(2000))
+    let n = 0
+    s.env.AI.run = async (model, input) => {
+      s.calls.push({ model, input })
+      n++
+      if (n === 1) return { response: JSON.stringify({
+        Words: {
+          commit: { meaning: '提交', options: [{ text: '收获' }, { text: '放弃' }, { text: '推迟' }] },
+          harvest: { zh: '收割', distractors: ['甲', '乙', '丙'] },
+        },
+      }) }
+      return { response: JSON.stringify({ listening: listeningOnly }) }
+    }
+    const response = await s.request('/11', 'POST')
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json()
+    assert.equal(s.calls.length, 2)
+    assert.match(s.calls[0].input.messages[0].content, /只生成首批认词与听力题/)
+    assert.equal((s.calls[0].input.messages[0].content.match(/甲/g) ?? []).length, 1600)
+    const repair = s.calls[1].input.messages[0].content
+    assert.match(repair, /只补听力/)
+    assert.doesNotMatch(repair, /只生成首批认词与听力题/)
+    assert.equal((repair.match(/甲/g) ?? []).length, 800)
+    assert.equal(body.content.words[0].en, 'commit')
+    assert.equal(body.content.words[0].zh, '提交')
+    assert.deepEqual(body.content.words[0].distractors, ['收获', '放弃', '推迟'])
+    assert.equal(body.content.listening.length, 2)
+    assert.equal(body.buffer.phase, 'starter')
+  } finally { s.sqlite.close() }
+})
+
+test('starter uses lesson glosses when the model words are unusable', async () => {
+  const s = setup()
+  try {
+    s.lesson(12)
+    s.sqlite.prepare('UPDATE lessons SET content = ? WHERE id = 12').run(JSON.stringify(glossedLesson))
+    let n = 0
+    s.env.AI.run = async () => {
+      s.calls.push(1)
+      n++
+      if (n === 1) return { response: '抱歉，这次写不出来。' }
+      return { response: JSON.stringify({ listening: listeningOnly }) }
+    }
+    const response = await s.request('/12', 'POST')
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json()
+    assert.equal(s.calls.length, 2)
+    assert.deepEqual(body.content.words.map((word) => word.en), ['commit', 'harvest', 'branch'])
+    assert.deepEqual(body.content.words[0].distractors, ['收割', '分支'])
+    assert.equal(body.content.listening[0].en, 'Ship the commit today.')
+  } finally { s.sqlite.close() }
+})
+
+test('starter does not ask again when the lesson can fill the missing words', async () => {
+  const s = setup()
+  try {
+    s.lesson(13)
+    s.sqlite.prepare('UPDATE lessons SET content = ? WHERE id = 13').run(JSON.stringify(glossedLesson))
+    s.env.AI.run = async () => {
+      s.calls.push(1)
+      return { response: JSON.stringify({ listening: listeningOnly }) }
+    }
+    const response = await s.request('/13', 'POST')
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json()
+    assert.equal(s.calls.length, 1)
+    assert.equal(body.content.words[0].en, 'commit')
+    assert.equal(body.content.listening.length, 2)
+  } finally { s.sqlite.close() }
+})
+
+test('starter upstream failure is not followed by another generation', async () => {
+  const s = setup()
+  try {
+    s.lesson(14)
+    s.env.AI.run = async () => { s.calls.push(1); throw new Error('3040 out of capacity') }
+    await assert.rejects(generateQuestBank(s.env, 'alice', false, 14, 'starter'), /容量不足/)
+    assert.equal(s.calls.length, 1)
+    assert.equal(s.sqlite.prepare('SELECT COUNT(*) n FROM quests').get().n, 0)
+  } finally { s.sqlite.close() }
+})
+
+test('two unusable starter replies stay retryable without the shape sentence', async () => {
+  const s = setup()
+  try {
+    s.lesson(15)
+    s.env.AI.run = async () => { s.calls.push(1); return { response: '写不出来' } }
+    const response = await s.request('/15', 'POST')
+    assert.equal(response.status, 502)
+    const body = await response.json()
+    assert.match(body.error, /首批题不完整/)
+    assert.doesNotMatch(body.error, /字段不完整/)
+    assert.equal(s.calls.length, 2)
   } finally { s.sqlite.close() }
 })
 
