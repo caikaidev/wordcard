@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { matchingSenseIndex } from '../../shared/retention'
 import { createPortal } from 'react-dom'
 import { api, ApiError } from '../api'
 import { refreshStats } from '../store'
@@ -13,11 +14,16 @@ export function WordLookupSheet({
   context,
   onClose,
   onSaved,
+  senseHint,
+  contextGloss,
 }: {
   text: string
   context: string
   onClose: () => void
   onSaved?: (t: string) => void
+  /** 有这句的语境提示时，高亮对得上的那条英英义项 */
+  senseHint?: string
+  contextGloss?: string
 }) {
   const isPhrase = /\s/.test(text.trim())
   const [dict, setDict] = useState<{ source: string; senses: { pos: string; def: string }[] } | null>(null)
@@ -99,18 +105,12 @@ export function WordLookupSheet({
 
         {!card && (
           <div className="flex flex-col gap-1.5">
+            {contextGloss && <p className="m-0 text-[15px] leading-relaxed font-medium">本句里：{contextGloss}</p>}
             {!dict ? (
               <div className="h-16 animate-shimmer rounded-xl bg-surface" />
             ) : dict.senses.length ? (
               <>
-                <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
-                  {dict.senses.slice(0, 4).map((s, i) => (
-                    <li key={i} className="flex gap-2 text-[15px]">
-                      <span className="shrink-0 font-serif text-sm text-muted italic">{s.pos || '·'}</span>
-                      <EnglishDefinition text={s.def} />
-                    </li>
-                  ))}
-                </ol>
+                <SenseList senses={dict.senses.slice(0, 4)} hint={senseHint} />
                 <div className="flex items-center justify-between gap-2 text-[11px] text-faint">
                   <span>{dict.source}</span>
                   {mw && <MerriamWebsterLogo size={50} />}
@@ -151,6 +151,23 @@ export function WordLookupSheet({
   )
 }
 
+function SenseList({ senses, hint }: { senses: { pos: string; def: string }[]; hint?: string }) {
+  const hit = hint ? matchingSenseIndex(senses, hint) : -1
+  return (
+    <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
+      {senses.map((s, i) => (
+        <li key={i} className={`flex gap-2 text-[15px] ${i === hit ? 'rounded-lg bg-accent-soft px-2 py-1.5' : ''}`}>
+          <span className="shrink-0 font-serif text-sm text-muted italic">{s.pos || '·'}</span>
+          <span className="min-w-0">
+            {i === hit && <span className="mb-0.5 block text-[11px] font-medium text-accent">这句里的意思</span>}
+            <EnglishDefinition text={s.def} />
+          </span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
 function HighlightIn({ text, mark }: { text: string; mark: string }) {
   const i = text.toLowerCase().indexOf(mark.toLowerCase())
   if (i < 0) return <>{text}</>
@@ -163,8 +180,10 @@ function HighlightIn({ text, mark }: { text: string; mark: string }) {
   )
 }
 
+export type WordMark = 'hard' | 'seen' | false
+
 /** Tokens from an already revealed example are individually queryable; preserve original punctuation and phrase emphasis. */
-export function TappableExample({ text, highlight, onLookup }: { text: string; highlight?: string; onLookup: (word: string) => void }) {
+export function TappableExample({ text, highlight, onLookup, mark }: { text: string; highlight?: string; onLookup: (word: string) => void; mark?: (word: string) => WordMark }) {
   const pieces: ReactNode[] = []
   const markStart = highlight ? text.toLowerCase().indexOf(highlight.toLowerCase()) : -1
   const markEnd = markStart < 0 ? -1 : markStart + (highlight?.length ?? 0)
@@ -175,6 +194,13 @@ export function TappableExample({ text, highlight, onLookup }: { text: string; h
     const word = match[0]
     pieces.push(text.slice(last, start))
     const emphasized = markStart >= 0 && start >= markStart && start + word.length <= markEnd
+    const flagged = mark ? mark(word) : 'hard'
+    const line =
+      flagged === 'seen'
+        ? 'underline decoration-accent decoration-2 underline-offset-4'
+        : flagged === 'hard'
+          ? 'underline decoration-dotted underline-offset-4 hover:decoration-solid'
+          : ''
     pieces.push(
       <button
         key={start}
@@ -182,7 +208,7 @@ export function TappableExample({ text, highlight, onLookup }: { text: string; h
         aria-label={`查义：${word}`}
         title={`查义：${word}`}
         onClick={(e) => { e.stopPropagation(); onLookup(word) }}
-        className={`inline cursor-pointer rounded-sm border-0 bg-transparent p-0 underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 ${emphasized ? 'font-semibold text-accent' : ''}`}
+        className={`inline cursor-pointer rounded-sm border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 ${line} ${emphasized ? 'font-semibold text-accent' : ''}`}
         style={{ font: 'inherit' }}
       >{word}</button>,
     )

@@ -1,4 +1,28 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
+import { coldStartPath } from '../shared/retention'
+
+/** 冷启动只把裸 `/` 改到练习。`/?review=1`、其它 query/hash、刷新、应用内点「复习」留在原地址。 */
+function applyColdStart() {
+  let seen = false
+  try {
+    seen = sessionStorage.getItem('shiju:cold-start') === '1'
+    if (!seen) sessionStorage.setItem('shiju:cold-start', '1')
+  } catch {
+    seen = false
+  }
+  if (seen) return
+  let navType = 'navigate'
+  try {
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    if (nav?.type) navType = nav.type
+  } catch {
+    /* 当作一次新的打开 */
+  }
+  const next = coldStartPath(window.location.pathname, navType, window.location.search, window.location.hash)
+  if (next) window.history.replaceState(null, '', next)
+}
+
+applyColdStart()
 
 export type Path = '/' | '/add' | '/library' | '/remix' | '/weekly' | '/settings' | '/discover' | '/level' | '/practice' | `/practice/${number}` | `/practice/${number}/read` | `/practice/${number}/path` | `/practice/saved/${number}` | `/practice/passage/${string}`
 

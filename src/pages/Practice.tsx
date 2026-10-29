@@ -5,7 +5,7 @@ import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../.
 import { formatReadingScore } from '../../shared/reading'
 import { practiceGenerateBlock } from '../../shared/practice-compose'
 import { Link, navigate } from '../router'
-import { PageTitle, errMsg, toast } from '../components/ui'
+import { errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
 import { PassageHome } from '../components/PassageHome'
@@ -90,9 +90,6 @@ export default function Practice() {
 
   return (
     <div className="pt-safe flex flex-1 flex-col px-4 pb-6 md:px-6 md:pt-10">
-      <div className="md:hidden">
-        <PageTitle eyebrow="英语教练" title="练习" />
-      </div>
       <PassageHome />
       <StatsCard stats={stats} phase={statsPhase} error={statsError} onRetry={loadStats} />
       {lessons && <ContinueQuest lessons={lessons} />}

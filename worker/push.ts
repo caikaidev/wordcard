@@ -3,6 +3,7 @@ import { SignJWT, importJWK } from 'jose'
 import type { AppEnv, Env } from './env'
 import { loadSettings } from './settings'
 import { streakStatus } from './streak'
+import { reviewEntry } from '../shared/retention'
 import { RESCUE_HOUR, type StreakStatus } from '../shared/streak'
 
 /*
@@ -194,7 +195,7 @@ export function reminderMessage(s: StreakStatus, due: number, rescue: boolean): 
   const left = Math.max(1, Math.min(s.goal - s.reviewsToday, due || s.goal))
   const task = due ? `复习 ${left} 张就能打卡` : '今天没有到期的卡片，做一次练习就能打卡'
   const toNext = s.next - s.streak
-  const base = { url: due ? '/' : '/practice', badge: due, tag: 'daily' }
+  const base = { url: due ? reviewEntry : '/practice', badge: due, tag: 'daily' }
   if (!s.streak) {
     return {
       ...base,
@@ -287,7 +288,7 @@ push.post('/test', async (c) => {
     .bind(user, Date.now())
     .first<{ n: number }>()
   const msg = s.today
-    ? { title: '拾句 · 测试提醒', body: `今天已经打卡了，连续 ${s.streak} 天。提醒会在你设定的钟点发出。`, url: '/', tag: 'test' }
+    ? { title: '拾句 · 测试提醒', body: `今天已经打卡了，连续 ${s.streak} 天。提醒会在你设定的钟点发出。`, url: reviewEntry, tag: 'test' }
     : reminderMessage(s, due?.n ?? 0, false)
   const { sent, failures } = await sendToUser(c.env, user, msg)
   if (!sent) {

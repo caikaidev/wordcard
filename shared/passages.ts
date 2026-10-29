@@ -248,3 +248,12 @@ export function nextReadableId(items: LadderItem[], id: string): string | null {
   const nxt = items.slice(idx + 1).find((i) => i.state !== 'locked')
   return nxt?.id ?? null
 }
+
+/** 解锁规则仍走 nextReadableId。这里只补上下一篇标题，给读完预告用。 */
+export function nextPassagePreview(items: LadderItem[], id: string): { id: string; title: string } | null {
+  const nextId = nextReadableId(items, id)
+  if (!nextId) return null
+  const title = passageById(nextId)?.title
+  if (!title) return null
+  return { id: nextId, title }
+}
