@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '../api'
 import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../shared/practice'
-import { splitScoreLabels } from '../../shared/reading'
+import { lessonListMeaning, splitScoreLabels } from '../../shared/reading'
 import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
@@ -134,39 +134,42 @@ export default function LessonPage({ id }: { id: number }) {
           )}
           <ScoreSplit lesson={lesson} />
 
-          {/* 生词 */}
+          {/* 生词：能读原文时先不写词义，避免进「读原文」前看到答案 */}
           {c.words.length > 0 && (
-            <Section title="生词" count={c.words.length}>
-              {c.words.map((w, i) => (
-                <Row key={i} first={i === 0}>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="font-serif text-[18px] font-medium">{w.word}</span>
-                      {w.ipa && <span className="font-serif text-sm text-muted italic">{w.ipa}</span>}
-                    </div>
-                    <div className="text-[13px]">{w.meaning}</div>
-                    {w.quote && (
-                      <div className="mt-0.5 font-serif text-[14px] leading-snug text-muted italic">
-                        <Highlighted text={w.quote} marks={[w.word]} />
+            <Section title="生词" count={c.words.length} note={lesson.readable ? '词义先不显示，去读原文猜一猜' : undefined}>
+              {c.words.map((w, i) => {
+                const gloss = lessonListMeaning(w.meaning, lesson.readable)
+                return (
+                  <Row key={i} first={i === 0}>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <div className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="font-serif text-[18px] font-medium">{w.word}</span>
+                        {w.ipa && <span className="font-serif text-sm text-muted italic">{w.ipa}</span>}
                       </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center">
-                    <SpeakButton text={w.word} size={36} variant="ghost" />
-                    <AddButton
-                      done={added.has(`w${i}`)}
-                      onClick={() =>
-                        addCard(`w${i}`, /\s/.test(w.word) ? 'sentence' : 'word', w.word, {
-                          ipa: w.ipa,
-                          meaning: w.meaning,
-                          example: tidyQuote(w.quote, w.word),
-                          highlight: w.word,
-                        })
-                      }
-                    />
-                  </div>
-                </Row>
-              ))}
+                      {gloss !== null && <div className="text-[13px]">{gloss}</div>}
+                      {w.quote && (
+                        <div className="mt-0.5 font-serif text-[14px] leading-snug text-muted italic">
+                          <Highlighted text={w.quote} marks={[w.word]} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center">
+                      <SpeakButton text={w.word} size={36} variant="ghost" />
+                      <AddButton
+                        done={added.has(`w${i}`)}
+                        onClick={() =>
+                          addCard(`w${i}`, /\s/.test(w.word) ? 'sentence' : 'word', w.word, {
+                            ipa: w.ipa,
+                            meaning: w.meaning,
+                            example: tidyQuote(w.quote, w.word),
+                            highlight: w.word,
+                          })
+                        }
+                      />
+                    </div>
+                  </Row>
+                )
+              })}
             </Section>
           )}
 

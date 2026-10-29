@@ -19,6 +19,7 @@ import {
   formatReadingScore,
   gradeGuess,
   initialGuess,
+  lessonListMeaning,
   parseReadingScore,
   splitScoreLabels,
   stepGuess,
@@ -78,6 +79,17 @@ test('guess blanks the target word, keeps context, and withholds the answer afte
   const correct = stepGuess(initialGuess(), { type: 'answer', hit: true })
   assert.equal(correct.correct, true)
   assert.equal(canRevealAnswer(correct), true)
+})
+
+test('lesson detail hides target glosses before read-the-original, reveal still keeps them', () => {
+  assert.equal(lessonListMeaning('新鲜的', true), null)
+  assert.equal(lessonListMeaning('在……之前', true), null)
+  assert.equal(lessonListMeaning('新鲜的', false), '新鲜的')
+
+  const item = buildGuessItems(words, text, () => 0).find((row) => row.word === 'fresh')
+  assert.ok(item)
+  assert.equal(item.meaning, '新鲜的')
+  assert.equal(canRevealAnswer(stepGuess(initialGuess(), { type: 'answer', hit: true })), true)
 })
 
 test('short input accepts the word or the gloss, not an unrelated meaning', () => {
