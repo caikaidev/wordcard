@@ -27,23 +27,331 @@ export function normalizeSchema(schema: unknown): JsonSchema {
   return result
 }
 
+const JSON_ERROR = 'Qwen 返回的不是合法 JSON。请重试或切换 Gemini'
+const SHAPE_ERROR = 'Qwen 返回的 JSON 字段不完整或类型不符。请重试或切换 Gemini'
+const FENCE = String.fromCharCode(96).repeat(3)
+/** 放在任务正文之后。闯关提示词要求先自查，模型会把自查写进回复，盖过前面的 JSON 指令。 */
+const OUTPUT_RULE = '输出要求：只返回一个 JSON 值。不要 Markdown、代码围栏、前后说明或思考过程。任务里的自查只在内部完成，不要写进回复。回复的第一个非空白字符必须是 { 或 [，最后一个必须是 } 或 ]。'
+
+/** Qwen3 默认会思考。闯关回复里常夹着前后文、代码围栏，或在 max_tokens 处被截断。能对上 schema 的值才采用。 */
 export function parseCloudflareJson<T>(result: unknown, schema: unknown): T {
-  const obj = result && typeof result === 'object' ? result as Record<string, unknown> : {}
-  const choices = Array.isArray(obj.choices) ? obj.choices : []
-  const message = choices[0] && typeof choices[0] === 'object' ? (choices[0] as { message?: { content?: unknown } }).message : undefined
-  const raw = obj.response ?? message?.content ?? result
-  let value: unknown = raw
-  if (typeof raw === 'string') {
-    const trimmed = raw.trim().replace(/^<think>[\s\S]*?<\/think>\s*/i, '')
-    const fence = String.fromCharCode(96).repeat(3)
-    const text = trimmed.startsWith(fence) ? trimmed.split('\n').slice(1).join('\n').replace(new RegExp('\\s*' + fence + '\\s*$'), '') : trimmed
-    try { value = JSON.parse(text) }
-    catch { throw new CloudflareTextError('Qwen 返回的不是合法 JSON。请重试或切换 Gemini') }
+  const normalized = normalizeSchema(schema)
+  const texts = valuesFromTexts([...contentTexts(result), ...responseTexts(result)], normalized)
+  const objects = objectPayloads(result)
+  const passing = [...texts.passing, ...objects.filter((value) => verifyShape(value, normalized))]
+  if (passing.length) return largest(passing) as T
+  if (texts.strict.length || objects.length) throw new CloudflareTextError(SHAPE_ERROR)
+  throw new CloudflareTextError(JSON_ERROR)
+}
+
+function choiceMessage(result: unknown): { content?: unknown } | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const choices = (result as { choices?: unknown }).choices
+  const choice = Array.isArray(choices) ? choices[0] : undefined
+  if (!choice || typeof choice !== 'object') return undefined
+  const message = (choice as { message?: unknown }).message
+  return message && typeof message === 'object' ? message as { content?: unknown } : undefined
+}
+
+function contentTexts(result: unknown): string[] {
+  const content = choiceMessage(result)?.content
+  if (typeof content === 'string') return content.trim() ? [content] : []
+  if (!Array.isArray(content)) return []
+  const parts: string[] = []
+  for (const part of content) {
+    if (typeof part === 'string') { parts.push(part); continue }
+    if (!part || typeof part !== 'object') continue
+    const block = part as { type?: unknown; text?: unknown; content?: unknown }
+    if (block.type === 'thinking' || block.type === 'reasoning') continue
+    if (typeof block.text === 'string') parts.push(block.text)
+    else if (typeof block.content === 'string') parts.push(block.content)
   }
-  if (!verifyShape(value, normalizeSchema(schema))) {
-    throw new CloudflareTextError('Qwen 返回的 JSON 字段不完整或类型不符。请重试或切换 Gemini')
+  const joined = parts.join('')
+  return joined.trim() ? [joined] : []
+}
+
+function responseTexts(result: unknown): string[] {
+  if (typeof result === 'string') return result.trim() ? [result] : []
+  if (!result || typeof result !== 'object') return []
+  const obj = result as { response?: unknown; result?: unknown }
+  const out: string[] = []
+  if (typeof obj.response === 'string' && obj.response.trim()) out.push(obj.response)
+  if (obj.result && typeof obj.result === 'object') {
+    const nested = (obj.result as { response?: unknown }).response
+    if (typeof nested === 'string' && nested.trim()) out.push(nested)
   }
-  return value as T
+  return out
+}
+
+function objectPayloads(result: unknown): unknown[] {
+  if (!result || typeof result !== 'object') return []
+  const obj = result as Record<string, unknown>
+  const out: unknown[] = []
+  if (isJsonPayload(obj.response)) out.push(obj.response)
+  const content = choiceMessage(result)?.content
+  if (isJsonPayload(content)) out.push(content)
+  const envelope = 'response' in obj || 'choices' in obj || 'usage' in obj || 'result' in obj
+  if (!envelope && isJsonPayload(obj)) out.push(obj)
+  return out
+}
+
+function isContainer(value: unknown): value is Record<string, unknown> | unknown[] {
+  return !!value && typeof value === 'object'
+}
+
+function isMessagePart(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const part = value as Record<string, unknown>
+  if (part.type !== 'text' && part.type !== 'thinking' && part.type !== 'reasoning') return false
+  return Object.keys(part).every((key) => key === 'type' || key === 'text' || key === 'content')
+}
+
+function isJsonPayload(value: unknown): value is Record<string, unknown> | unknown[] {
+  if (!isContainer(value)) return false
+  return !Array.isArray(value) || value.length === 0 || !value.every(isMessagePart)
+}
+
+function valuesFromTexts(texts: string[], schema: JsonSchema): { passing: unknown[]; strict: unknown[] } {
+  const strict: unknown[] = []
+  const repaired: unknown[] = []
+  for (const text of texts) {
+    strict.push(...strictValues(text))
+    for (const fixed of repairedValues(stripWrappers(text))) {
+      try {
+        const value = JSON.parse(fixed) as unknown
+        if (verifyShape(value, schema)) repaired.push(value)
+      } catch { /* ignore */ }
+    }
+  }
+  return { passing: [...strict, ...repaired].filter((value) => verifyShape(value, schema)), strict }
+}
+
+function strictValues(text: string): unknown[] {
+  const stripped = stripWrappers(text)
+  const chunks = [stripped, ...fencedBodies(stripped), ...outermost(stripped)]
+  const values: unknown[] = []
+  for (const chunk of chunks) {
+    for (const candidate of [chunk.trim(), stripTrailingCommas(chunk).trim()]) {
+      if (!candidate) continue
+      try { values.push(JSON.parse(candidate) as unknown) } catch { /* ignore */ }
+    }
+  }
+  return values
+}
+
+function stripWrappers(text: string): string {
+  let s = text.replace(/^\uFEFF/, '').replace(/[\u200B-\u200D\uFEFF]/g, '')
+  s = s.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, '')
+  const open = s.search(/<think>|<redacted_thinking>/i)
+  const jsonAt = s.search(/[\[{]/)
+  // 思考没写完就截断时，后面没有正式答案，不要把思考草稿当成 JSON。
+  if (open >= 0 && (jsonAt < 0 || open < jsonAt)) s = s.slice(0, open)
+  return s.trim()
+}
+
+function fencedBodies(text: string): string[] {
+  const bodies: string[] = []
+  for (const match of text.matchAll(new RegExp(FENCE + '(?:json)?\\s*([\\s\\S]*?)' + FENCE, 'gi'))) {
+    const body = match[1]?.trim()
+    if (body) bodies.push(body)
+  }
+  return bodies
+}
+
+function outermost(text: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"') {
+      const end = stringEnd(text, i)
+      i = end < 0 ? text.length : end - 1
+      continue
+    }
+    if (text[i] !== '{' && text[i] !== '[') continue
+    const end = valueEnd(text, i)
+    if (end > i) { out.push(text.slice(i, end)); i = end - 1 }
+  }
+  return out
+}
+
+function repairedValues(text: string): string[] {
+  const out: string[] = []
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '"') {
+      const end = stringEnd(text, i)
+      i = end < 0 ? text.length : end - 1
+      continue
+    }
+    if (c !== '{' && c !== '[') continue
+    const end = valueEnd(text, i)
+    if (end > i) { i = end - 1; continue }
+    const fixed = closeTruncated(text.slice(i))
+    if (fixed) out.push(fixed)
+  }
+  return out
+}
+
+function stripTrailingCommas(text: string): string {
+  let out = ''
+  let inString = false
+  let escape = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      out += c
+      if (escape) escape = false
+      else if (c === '\\') escape = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') { inString = true; out += c; continue }
+    if (c === ',') {
+      let k = i + 1
+      while (k < text.length && /\s/.test(text[k])) k++
+      if (text[k] === '}' || text[k] === ']') continue
+    }
+    out += c
+  }
+  return out
+}
+
+function skipSpace(s: string, i: number): number {
+  while (i < s.length && /\s/.test(s[i])) i++
+  return i
+}
+
+function stringEnd(s: string, i: number): number {
+  if (s[i] !== '"') return -1
+  for (let j = i + 1; j < s.length; j++) {
+    if (s[j] === '\\') { j++; continue }
+    if (s[j] === '"') return j + 1
+  }
+  return -1
+}
+
+function literalEnd(s: string, i: number): number {
+  const start = skipSpace(s, i)
+  if (start >= s.length) return -1
+  const c = s[start]
+  if (c === '-' || (c >= '0' && c <= '9')) {
+    const m = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(s.slice(start))
+    return m ? start + m[0].length : -1
+  }
+  for (const word of ['true', 'false', 'null']) {
+    if (!s.startsWith(word, start)) continue
+    const next = s[start + word.length]
+    if (next && /[0-9A-Za-z_]/.test(next)) return -1
+    return start + word.length
+  }
+  return -1
+}
+
+function valueEnd(s: string, i: number): number {
+  const start = skipSpace(s, i)
+  if (start >= s.length) return -1
+  const c = s[start]
+  if (c === '"') return stringEnd(s, start)
+  if (c === '{' || c === '[') return containerEnd(s, start)
+  return literalEnd(s, start)
+}
+
+function containerEnd(s: string, i: number): number {
+  const open = s[i]
+  const close = open === '{' ? '}' : ']'
+  let j = skipSpace(s, i + 1)
+  if (s[j] === close) return j + 1
+  while (j < s.length) {
+    if (open === '{') {
+      j = skipSpace(s, j)
+      if (s[j] !== '"') return -1
+      const keyEnd = stringEnd(s, j)
+      if (keyEnd < 0) return -1
+      j = skipSpace(s, keyEnd)
+      if (s[j] !== ':') return -1
+      j++
+    }
+    const valueAt = valueEnd(s, j)
+    if (valueAt < 0) return -1
+    j = skipSpace(s, valueAt)
+    if (s[j] === close) return j + 1
+    if (s[j] !== ',') return -1
+    j = skipSpace(s, j + 1)
+    if (s[j] === close) return j + 1
+  }
+  return -1
+}
+
+/** 只补上未闭合的括号，并丢掉最后一个没写完的字符串。字符串写到一半时不擅自收尾。 */
+function closeTruncated(slice: string): string | undefined {
+  const stack: ('{' | '[')[] = []
+  let i = 0
+  let safe = -1
+  let safeStack: ('{' | '[')[] = []
+  const mark = () => { safe = i; safeStack = stack.slice() }
+  const parseString = (): boolean => {
+    const end = stringEnd(slice, i)
+    if (end < 0) return false
+    i = end
+    return true
+  }
+  const parseValue = (): boolean => {
+    i = skipSpace(slice, i)
+    if (i >= slice.length) return false
+    const c = slice[i]
+    if (c === '{' || c === '[') {
+      const close = c === '{' ? '}' : ']'
+      stack.push(c)
+      i++
+      i = skipSpace(slice, i)
+      if (slice[i] === close) { i++; stack.pop(); mark(); return true }
+      while (i < slice.length) {
+        if (c === '{') {
+          i = skipSpace(slice, i)
+          if (slice[i] !== '"') return false
+          if (!parseString()) return false
+          i = skipSpace(slice, i)
+          if (slice[i] !== ':') return false
+          i++
+        }
+        if (!parseValue()) return false
+        i = skipSpace(slice, i)
+        if (slice[i] === ',') {
+          i++
+          i = skipSpace(slice, i)
+          if (slice[i] === close) { i++; stack.pop(); mark(); return true }
+          continue
+        }
+        if (slice[i] === close) { i++; stack.pop(); mark(); return true }
+        return false
+      }
+      return false
+    }
+    if (c === '"') {
+      if (!parseString()) return false
+      mark()
+      return true
+    }
+    const end = literalEnd(slice, i)
+    if (end < 0) return false
+    i = end
+    mark()
+    return true
+  }
+  if (parseValue() && stack.length === 0) return undefined
+  if (!safeStack.length) return undefined
+  const body = slice.slice(0, safe).replace(/\s+$/, '').replace(/,\s*$/, '')
+  const closers = [...safeStack].reverse().map((kind) => (kind === '{' ? '}' : ']')).join('')
+  return body + closers
+}
+
+function largest(values: unknown[]): unknown {
+  let best = values[0]
+  let size = JSON.stringify(best).length
+  for (let i = 1; i < values.length; i++) {
+    const next = JSON.stringify(values[i]).length
+    if (next >= size) { best = values[i]; size = next }
+  }
+  return best
 }
 
 function verifyShape(value: unknown, schema: JsonSchema): boolean {
@@ -113,26 +421,39 @@ export async function cloudflareGenerateJson<T>(
   }
   await guard(env)
   const user = parts.map((p) => p.text ?? '').join('\n')
-  const instruction = [
-    '/no_think',
-    '你是英语学习应用中的结构化 JSON 生成器。',
-    '严格返回一个完整且合法的 JSON 值，不要 Markdown、说明、思考过程或代码块。',
-    '必须符合下列 JSON Schema，包含所有 required 字段，字段类型不可变。',
-    '输出可以是对象或数组，以 schema 的根 type 为准。',
-    'JSON Schema:',
-    JSON.stringify(normalizeSchema(schema)),
-    '任务内容:',
-    user,
-  ].join('\n\n')
-  let result: unknown
+  const schemaText = JSON.stringify(normalizeSchema(schema))
+  const once = async (extra: string): Promise<unknown> => {
+    const instruction = [
+      '/no_think',
+      '你是英语学习应用中的结构化 JSON 生成器。',
+      '严格返回一个完整且合法的 JSON 值，不要 Markdown、说明、思考过程或代码块。',
+      '必须符合下列 JSON Schema，包含所有 required 字段，字段类型不可变。',
+      '输出可以是对象或数组，以 schema 的根 type 为准。',
+      'JSON Schema:',
+      schemaText,
+      '任务内容:',
+      user,
+      extra ? `${extra}\n${OUTPUT_RULE}` : OUTPUT_RULE,
+    ].join('\n\n')
+    let result: unknown
+    try {
+      result = await env.AI.run(CF_TEXT_MODEL, {
+        messages: [{ role: 'user', content: instruction }],
+        temperature: Math.max(0, Math.min(1, temperature)),
+        max_tokens: kind === 'quest' || kind === 'lesson' ? 6500 : 4000,
+        stream: false,
+      })
+    } catch (e) { throw classifyError(e) }
+    await recordUsage(env, kind, getUsage(result))
+    return result
+  }
+  const first = await once('')
   try {
-    result = await env.AI.run(CF_TEXT_MODEL, {
-      messages: [{ role: 'user', content: instruction }],
-      temperature: Math.max(0, Math.min(1, temperature)),
-      max_tokens: kind === 'quest' || kind === 'lesson' ? 6500 : 4000,
-      stream: false,
-    })
-  } catch (e) { throw classifyError(e) }
-  await recordUsage(env, kind, getUsage(result))
-  return parseCloudflareJson<T>(result, schema)
+    return parseCloudflareJson<T>(first, schema)
+  } catch (error) {
+    // 字段齐全与否不自动再打一次：缺字段是另一次明确失败，测试和额度都按单次计算。
+    // 语法上不是 JSON（废话、围栏没剥干净、截断）才再要一次，仍不转去 Gemini。
+    if (!(error instanceof CloudflareTextError) || !error.message.includes('不是合法 JSON')) throw error
+    return parseCloudflareJson<T>(await once('上一次没有返回合法 JSON。这次不要解释，只输出 JSON 值本身。'), schema)
+  }
 }
