@@ -1,7 +1,8 @@
 import { readCached } from '../readCache'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type SavedArticle } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
+import { practiceGenerateBlock } from '../../shared/practice-compose'
 import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
@@ -16,34 +17,81 @@ type Source = 'url' | 'text' | 'image'
 
 export default function Practice() {
   const [stats, setStats] = useState<PracticeStats | null>(() => readCached<PracticeStats>('/practice/stats'))
+  const [statsPhase, setStatsPhase] = useState<'loading' | 'ready' | 'error'>(() => (readCached<PracticeStats>('/practice/stats') ? 'ready' : 'loading'))
+  const [statsError, setStatsError] = useState<string | null>(null)
   const [lessons, setLessons] = useState<LessonSummary[] | null>(() => readCached<{ lessons: LessonSummary[] }>('/practice/lessons')?.lessons ?? null)
+  const [lessonsPhase, setLessonsPhase] = useState<'loading' | 'ready' | 'error'>(() =>
+    readCached<{ lessons: LessonSummary[] }>('/practice/lessons') ? 'ready' : 'loading',
+  )
+  const [lessonsError, setLessonsError] = useState<string | null>(null)
   const [saved, setSaved] = useState<SavedArticle[]>(() => readCached<{ saved: SavedArticle[] }>('/practice/saved')?.saved ?? [])
   const [packages, setPackages] = useState<PackageInfo[]>(() => readCached<{ packages: PackageInfo[] }>('/packages')?.packages ?? [])
+  const statsRef = useRef(stats)
+  statsRef.current = stats
+  const lessonsRef = useRef(lessons)
+  lessonsRef.current = lessons
   const loadSaved = () =>
     api
       .saved()
       .then((r) => setSaved(r.saved))
       .catch(() => {})
+  const loadStats = useCallback(() => {
+    setStatsError(null)
+    if (!statsRef.current) setStatsPhase('loading')
+    return api
+      .practiceStats()
+      .then((next) => {
+        statsRef.current = next
+        setStats(next)
+        setStatsPhase('ready')
+      })
+      .catch((e) => {
+        if (statsRef.current) {
+          setStatsPhase('ready')
+          toast(errMsg(e), 'error')
+        } else {
+          setStatsPhase('error')
+          setStatsError(errMsg(e))
+        }
+      })
+  }, [])
+  const loadLessons = useCallback(() => {
+    setLessonsError(null)
+    if (!lessonsRef.current) setLessonsPhase('loading')
+    return api
+      .lessons()
+      .then((r) => {
+        lessonsRef.current = r.lessons
+        setLessons(r.lessons)
+        setLessonsPhase('ready')
+      })
+      .catch((e) => {
+        if (lessonsRef.current) {
+          setLessonsPhase('ready')
+          toast(errMsg(e), 'error')
+        } else {
+          setLessonsPhase('error')
+          setLessonsError(errMsg(e))
+        }
+      })
+  }, [])
 
   useEffect(() => {
-    api.practiceStats().then(setStats).catch((e) => toast(errMsg(e), 'error'))
+    loadStats()
     loadSaved()
     api
       .packages()
       .then((r) => setPackages(r.packages))
       .catch(() => {})
-    api
-      .lessons()
-      .then((r) => setLessons(r.lessons))
-      .catch((e) => toast(errMsg(e), 'error'))
-  }, [])
+    loadLessons()
+  }, [loadLessons, loadStats])
 
   return (
     <div className="pt-safe flex flex-1 flex-col px-4 pb-6 md:px-6 md:pt-10">
       <div className="md:hidden">
         <PageTitle eyebrow="英语教练" title="练习" />
       </div>
-      <StatsCard stats={stats} />
+      <StatsCard stats={stats} phase={statsPhase} error={statsError} onRetry={loadStats} />
       {lessons && <ContinueQuest lessons={lessons} />}
       <Composer onSaved={loadSaved} />
       {saved.length > 0 && <SavedList items={saved} onChange={setSaved} />}
@@ -63,9 +111,11 @@ export default function Practice() {
         <h2 className="m-0 text-[13px] font-semibold">最近的练习</h2>
         <ImportLessonButton />
       </div>
-      {!lessons ? (
-        <div className="mt-2 h-32 animate-shimmer rounded-2xl bg-surface" />
-      ) : lessons.length === 0 ? (
+      {lessonsPhase === 'loading' && !lessons ? (
+        <SectionSkeleton label="正在加载最近的练习" className="mt-2" />
+      ) : lessonsPhase === 'error' && !lessons ? (
+        <SectionError message={lessonsError ?? '最近的练习加载失败'} onRetry={loadLessons} className="mt-2" />
+      ) : !lessons || lessons.length === 0 ? (
         <p className="mt-1 text-[13px] leading-relaxed text-muted">
           还没有练习。发一篇你感兴趣的英文文章（博客、新闻、Reddit 帖子都可以），开始第一次练习吧。
         </p>
@@ -292,9 +342,45 @@ function ImportLessonButton() {
 
 /* ---------------------------- 打卡统计 ---------------------------- */
 
-function StatsCard({ stats }: { stats: PracticeStats | null }) {
+function SectionSkeleton({ label, className = 'mt-4 md:mt-0' }: { label: string; className?: string }) {
+  return (
+    <div role="status" aria-busy="true" aria-label={label} className={`rounded-2xl border border-line-soft bg-surface p-4 ${className}`}>
+      <div className="flex gap-4">
+        <div className="h-3 w-16 animate-shimmer rounded bg-line-soft" />
+        <div className="h-3 w-16 animate-shimmer rounded bg-line-soft" />
+        <div className="h-3 w-16 animate-shimmer rounded bg-line-soft" />
+      </div>
+      <div className="mt-3 h-6 w-2/5 animate-shimmer rounded bg-line-soft" />
+      <div className="mt-3 h-3 w-full animate-shimmer rounded bg-line-soft" />
+    </div>
+  )
+}
+
+function SectionError({ message, onRetry, className = 'mt-4 md:mt-0' }: { message: string; onRetry: () => void; className?: string }) {
+  return (
+    <div role="alert" className={`flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 ${className}`}>
+      <p className="m-0 text-sm leading-relaxed text-muted">{message}</p>
+      <button type="button" onClick={onRetry} className="h-9 shrink-0 rounded-xl border border-line bg-transparent px-3 text-sm text-ink">
+        重试
+      </button>
+    </div>
+  )
+}
+
+function StatsCard({
+  stats,
+  phase,
+  error,
+  onRetry,
+}: {
+  stats: PracticeStats | null
+  phase: 'loading' | 'ready' | 'error'
+  error: string | null
+  onRetry: () => void
+}) {
   const [sharing, setSharing] = useState(false)
-  if (!stats) return <div className="mt-4 h-[168px] animate-shimmer rounded-2xl bg-surface md:mt-0" />
+  if (!stats && phase === 'error') return <SectionError message={error ?? '打卡统计加载失败'} onRetry={onRetry} />
+  if (!stats) return <SectionSkeleton label="正在加载打卡统计" />
   const checked = new Set(stats.days)
   const frozen = new Set(stats.frozen)
   const checkedToday = checked.has(stats.today)
@@ -410,7 +496,8 @@ function Composer({ onSaved }: { onSaved: () => void }) {
       .catch(() => setLevel((l) => l ?? 1))
   }, [])
 
-  const ready = source === 'url' ? /^https?:\/\/\S+$/.test(url.trim()) : source === 'text' ? text.trim().length > 80 : images.length > 0
+  const blockReason = practiceGenerateBlock({ source, url, text, imageCount: images.length })
+  const ready = !blockReason
 
   const addFiles = async (files: FileList | null) => {
     if (!files) return
@@ -617,11 +704,17 @@ function Composer({ onSaved }: { onSaved: () => void }) {
         <button
           onClick={create}
           disabled={!ready || busy}
+          aria-describedby={blockReason && !busy ? 'generate-reason' : undefined}
           className="flex h-12 flex-1 items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-40"
         >
           {busy ? <span className="animate-shimmer">AI 正在读文章、出练习…（10–20 秒）</span> : '生成练习'}
         </button>
       </div>
+      {blockReason && !busy && (
+        <p id="generate-reason" role="status" className="mt-2 mb-0 text-xs text-muted">
+          {blockReason}
+        </p>
+      )}
     </section>
   )
 }

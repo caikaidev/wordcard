@@ -4,6 +4,8 @@ import { api } from '../api'
 import { prefetch, prefetchCached, speak, speakFast, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
 import { reviewGradeDecision } from '../../shared/review'
+import { batchProgress, reduceBatch, resumeOrStart, REVIEW_BATCH_SIZE, type ReviewBatchState } from '../../shared/review-batch'
+import { readReviewBatch, writeReviewBatch } from '../review-session'
 import { BLANK, clozeOf, contextClozeOf, type Cloze, type Grade, type Item, type ReviewMode } from '../../shared/types'
 import { Link } from '../router'
 import { libraryJump, refreshStats, useStats } from '../store'
@@ -16,7 +18,7 @@ import { StreakChip, celebrate } from '../components/Streak'
 import type { StreakStatus } from '../../shared/streak'
 
 /** 每批张数：到期很多时分批来，先完成一小批，不被总数吓到 */
-const BATCH = 20
+const BATCH = REVIEW_BATCH_SIZE
 
 /** 只在本机记的「看过了」标记（新手引导、快捷键提示） */
 const seen = (k: string) => {
@@ -40,13 +42,17 @@ const today = () => {
 }
 
 export default function Review() {
-  const [queue, setQueue] = useState<Item[] | null>(() => readCached<{ items: Item[] }>('/review')?.items ?? null)
-  const [reviewed, setReviewed] = useState(0)
+  // 批次放在标签页存储里：离开首页、浏览器返回都还是同一批，已评张不会从 1 重计
+  const [batch, setBatch] = useState<ReviewBatchState | null>(() => readReviewBatch())
+  const batchRef = useRef(batch)
+  batchRef.current = batch
+  const commit = useCallback((next: ReviewBatchState) => {
+    batchRef.current = next
+    setBatch(next)
+    writeReviewBatch(next)
+    if (next.phase === 'resting' || next.phase === 'done' || next.phase === 'empty') refreshStats()
+  }, [])
   const [sharing, setSharing] = useState(false)
-  // 本次跳过的卡片：不评分、不改复习时间，只在这一轮里先放一边
-  const [skipped, setSkipped] = useState<Item[]>([])
-  // 本轮点过「忘了」、排到队尾等着再来一次的卡片 id
-  const [again, setAgain] = useState<Set<number>>(new Set())
   const [drag, setDrag] = useState(0)
   const touch = useRef<{ x: number; y: number; horizontal?: boolean } | null>(null)
   const [flipped, setFlipped] = useState(false)
@@ -72,8 +78,6 @@ export default function Review() {
       .then((r) => setMode(r.current.reviewMode))
       .catch(() => setMode('mixed'))
   }, [])
-  // 本批的目标张数（已复习数达到它就停下来休息一下）
-  const [batchEnd, setBatchEnd] = useState(BATCH)
   const [guide, setGuide] = useState(() => !seen('guide-v1'))
   const [keysHint, setKeysHint] = useState(() => !seen('keys-hint-v1'))
   const closeGuide = () => {
@@ -87,30 +91,44 @@ export default function Review() {
     if (el && el !== document.body && el.closest('nav, header')) el.blur()
   }, [])
 
+  const loadGen = useRef(0)
   const load = useCallback(async () => {
+    const gen = ++loadGen.current
     setError(null)
     try {
       const { items } = await api.review()
-      setQueue(items)
-      setReviewed(0)
-      setBatchEnd(BATCH)
-      setSkipped([])
-      setAgain(new Set())
-      setFlipped(false)
-      setHintUsed(false)
+      if (loadGen.current !== gen) return
+      // 读最新批次：请求回来之前用户可能已经又评了一张
+      const prevHead = batchRef.current?.queue[0]?.id
+      const next = resumeOrStart(readReviewBatch(), items)
+      if (loadGen.current !== gen) return
+      commit(next)
+      if (next.queue[0]?.id !== prevHead) {
+        setFlipped(false)
+        setHintUsed(false)
+      }
     } catch (e) {
-      setError(errMsg(e))
+      if (loadGen.current !== gen) return
+      if (batchRef.current) toast(errMsg(e), 'error')
+      else setError(errMsg(e))
     }
-  }, [])
+  }, [commit])
 
   useEffect(() => {
     load()
     return () => stop()
   }, [load])
 
+  const queue = batch ? batch.queue : null
+  const reviewed = batch?.reviewed ?? 0
+  const skipped = batch?.skipped ?? []
+  const againIds = batch?.againIds ?? []
+  const progress = batch ? batchProgress(batch) : null
+  // 中途回来的批次不再盖一层「今天有 N 张」的新手引导，避免和真实进度打架
+  const showGuide = guide && !!batch && batch.phase === 'active' && batch.batchIndex === 0 && batch.reviewed === 0 && batch.sessionGraded === 0 && !batch.isNewBatch
   // 这一批做完了、还有剩余：先停下来，让用户决定继续还是到此为止
-  const resting = !!queue && queue.length > 0 && reviewed >= batchEnd
-  const card = resting || guide || !modeSetting ? undefined : queue?.[0]
+  const resting = batch?.phase === 'resting'
+  const card = resting || showGuide || !modeSetting || !batch ? undefined : queue?.[0]
   // 这张卡用哪种方式：混合模式下新卡先认读，之后认读 / 产出交替（按复习次数奇偶）
   const context = mode === 'context'
   const cloze = card ? (context ? contextClozeOf(card) : clozeOf(card)) : null
@@ -118,13 +136,8 @@ export default function Review() {
   const production = !!cloze && wantProduction
   // 没有例句可挖空的卡片：产出模式下改成「看中文，说出英文」，而不是退回到直接显示英文
   const recall = !cloze && wantProduction && !context && !!card?.meta.meaning
-  const total = reviewed + (queue?.length ?? 0) + skipped.length
-  // 进度条只算当前这一批，总数大时也不会显得遥遥无期
-  const batchStart = batchEnd - BATCH
-  const batchTotal = Math.min(BATCH, total - batchStart)
-  const batchDone = Math.max(0, reviewed - batchStart)
-  const retrying = queue ? queue.filter((x) => again.has(x.id)).length : 0
-  const isAgain = !!card && again.has(card.id)
+  const retrying = progress?.retrying ?? 0
+  const isAgain = !!card && againIds.includes(card.id)
 
   // 滑动预取窗口：前 8 张仅检查 R2（不消耗 AI）。
   // 本次复习最多为 8 个近期单词创建新音频，防止长时间翻卡耗尽免费额度。
@@ -143,41 +156,25 @@ export default function Review() {
     prefetch(toWarm)
   }, [queue])
 
-  const advance = (requeue?: Item) => {
-    stop()
-    if (card) {
-      setAgain((s) => {
-        const n = new Set(s)
-        if (requeue) n.add(card.id)
-        else n.delete(card.id)
-        return n
-      })
+  const apply = (action: Parameters<typeof reduceBatch>[1], keepFace = false) => {
+    const current = batchRef.current
+    if (!current) return
+    if (!keepFace) {
+      stop()
+      setFlipped(false)
+      setHintUsed(false)
+      setDrag(0)
     }
-    setQueue((q) => {
-      if (!q) return q
-      const rest = q.slice(1)
-      return requeue ? [...rest, requeue] : rest
-    })
-    setReviewed((n) => n + (requeue ? 0 : 1))
-    setFlipped(false)
-    setHintUsed(false)
+    commit(reduceBatch(current, action))
   }
 
   const skip = () => {
     if (!card || busy) return
-    stop()
-    setSkipped((l) => [...l, card])
-    setQueue((q) => (q ? q.slice(1) : q))
-    setFlipped(false)
-    setHintUsed(false)
-    setDrag(0)
+    apply({ type: 'skip' })
   }
 
   const restoreSkipped = () => {
-    setQueue((q) => [...(q ?? []), ...skipped])
-    setSkipped([])
-    setFlipped(false)
-    setHintUsed(false)
+    apply({ type: 'restore-skipped' })
   }
 
   // 手机上把卡片往左滑 = 跳过
@@ -211,7 +208,7 @@ export default function Review() {
     }
     if (decision === 'practice') {
       // 忘记的卡片已在第一次作答时安排了 10 分钟后的复习；这里仅巩固，不再写服务端评分。
-      advance()
+      apply({ type: 'practice' })
       return
     }
     setBusy(true)
@@ -226,7 +223,7 @@ export default function Review() {
         const name = card.text.length > 16 ? `${card.text.slice(0, 16)}…` : card.text // 句子卡很长，提示里只放开头
         toast(queue && queue.length > 1 ? `「${name}」稍后再来一次` : `「${name}」马上再来一次`)
       }
-      advance(g === 0 ? item : undefined)
+      apply({ type: 'record', grade: g, updated: item })
       refreshStats()
     } catch (e) {
       toast(errMsg(e), 'error')
@@ -241,7 +238,7 @@ export default function Review() {
     try {
       await api.update(card.id, { status: 'done' })
       toast(`「${card.text}」已标记 DONE`)
-      advance()
+      apply({ type: 'done' })
       refreshStats()
     } catch (e) {
       toast(errMsg(e), 'error')
@@ -302,7 +299,7 @@ export default function Review() {
               </Link>
               <div className="flex h-10 items-center gap-1.5 rounded-full bg-invert-bg px-3.5 text-[13px] text-invert-fg">
                 <span className="opacity-70">本批剩</span>
-                <span className="tabular font-semibold">{queue ? Math.min(queue.length, Math.max(0, batchEnd - reviewed)) : '–'}</span>
+                <span className="tabular font-semibold">{progress ? progress.remaining : '–'}</span>
               </div>
             </div>
           }
@@ -315,12 +312,15 @@ export default function Review() {
         <div className="h-[3px] flex-1 overflow-hidden rounded-sm bg-line">
           <div
             className="h-[3px] rounded-sm bg-accent transition-[width] duration-500"
-            style={{ width: batchTotal > 0 ? `${Math.round((batchDone / batchTotal) * 100)}%` : '0%' }}
+            style={{ width: progress && progress.total > 0 ? `${Math.round((progress.done / progress.total) * 100)}%` : '0%' }}
           />
         </div>
-        <div className={`tabular text-xs text-muted md:text-[13px] ${total ? '' : 'invisible'}`}>
-          {total > BATCH && <span className="text-faint">第 {Math.floor(batchStart / BATCH) + 1} 批 · </span>}
-          {card ? Math.min(batchDone + 1, batchTotal) : batchDone} / {batchTotal}
+        <div
+          className={`tabular text-xs text-muted md:text-[13px] ${progress?.total ? '' : 'invisible'}`}
+          aria-live="polite"
+          aria-label={progress?.label ? `本批进度 ${progress.label}` : undefined}
+        >
+          {progress?.label}
           {retrying > 0 && (
             <span className="text-faint" title="点了「忘了」的卡片，这一轮结束前会再出现一次">
               {' '}
@@ -348,20 +348,20 @@ export default function Review() {
           <Empty icon={<IconAlert size={26} />} tone="error" title="加载失败" desc={error} action={<button className={btnPrimary} onClick={load}>重试</button>} />
         ) : !queue || !modeSetting ? (
           <Card className="min-h-[300px] flex-1 animate-shimmer md:h-[440px] md:flex-none" />
-        ) : guide && queue.length > 0 ? (
+        ) : showGuide && queue.length > 0 ? (
           <Guide due={queue.length} onClose={closeGuide} />
         ) : resting ? (
           <Empty
             icon={<span className="text-2xl">🎉</span>}
-            title={`这一批 ${BATCH} 张完成了`}
+            title={`这一批 ${batch?.batchSize ?? BATCH} 张完成了`}
             desc={`还剩 ${queue.length} 张，大约 ${minutesOf(Math.min(queue.length, BATCH))} 分钟一批。休息一下，或者现在继续。没复习完的明天还在，不会丢。`}
             action={
               <div className="flex gap-2.5">
                 <Link to="/practice" className={`${btnGhost} no-underline`}>
                   先到这里
                 </Link>
-                <button className={btnPrimary} onClick={() => setBatchEnd(reviewed + BATCH)}>
-                  再来 {Math.min(queue.length, BATCH)} 张
+                <button className={btnPrimary} onClick={() => apply({ type: 'continue' })}>
+                  再来 {Math.min(queue.length, BATCH)} 张，开始新一批
                 </button>
               </div>
             }
@@ -438,7 +438,7 @@ export default function Review() {
                   cloze={production && !context ? cloze : null}
                   onDone={markDone}
                   busy={busy}
-                  onUpdate={(item) => setQueue((q) => (q ? q.map((x) => (x.id === item.id ? { ...x, ...item } : x)) : q))}
+                  onUpdate={(item) => apply({ type: 'replace', item }, true)}
                 />
               ) : (
                 recall ? (

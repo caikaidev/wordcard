@@ -86,6 +86,13 @@ export const IconStop = ({ size = 18, ...p }: P) => (
     <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
   </svg>
 )
+export const IconMore = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <circle cx="5" cy="12" r="1.25" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.25" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.25" fill="currentColor" stroke="none" />
+  </svg>
+)
 export const IconTrash = ({ size, ...p }: P) => (
   <svg {...base(size)} {...p}>
     <path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5" />
