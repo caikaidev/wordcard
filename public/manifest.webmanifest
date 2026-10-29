@@ -16,7 +16,7 @@
     "params": { "title": "title", "text": "text", "url": "url" }
   },
   "shortcuts": [
-    { "name": "复习", "short_name": "复习", "url": "/", "icons": [{ "src": "/icon-192.png?v=3", "sizes": "192x192" }] },
+    { "name": "复习", "short_name": "复习", "url": "/?review=1", "icons": [{ "src": "/icon-192.png?v=3", "sizes": "192x192" }] },
     { "name": "新练习", "short_name": "练习", "url": "/practice", "icons": [{ "src": "/icon-192.png?v=3", "sizes": "192x192" }] },
     { "name": "添加单词", "short_name": "添加", "url": "/add", "icons": [{ "src": "/icon-192.png?v=3", "sizes": "192x192" }] }
   ],

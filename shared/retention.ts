@@ -1,7 +1,14 @@
 /** 兴趣与留存：冷启动、阅读时长、点词该不该划线、读完摘要。不含短文正文。 */
 
-export function coldStartPath(pathname: string, navType: string): '/practice' | null {
-  if (pathname === '/' && navType === 'navigate') return '/practice'
+/** 推送和主屏幕「复习」快捷方式。带这个标记的 `/` 是复习，不是冷启动。 */
+export const reviewEntry = '/?review=1'
+
+/**
+ * 冷启动只改裸 `/`（一次新的打开、没有 query、没有 hash）。
+ * `/?review=1` 以及任何需要留住的 query/hash 都停在原地址。
+ */
+export function coldStartPath(pathname: string, navType: string, search = '', hash = ''): '/practice' | null {
+  if (pathname === '/' && navType === 'navigate' && search === '' && hash === '') return '/practice'
   return null
 }
 

@@ -10,6 +10,7 @@ import {
   matchingSenseIndex,
   passageReadingAids,
   readingMinutes,
+  reviewEntry,
 } from '../shared/retention.ts'
 
 const lines = readFileSync(new URL('../shared/wordfreq-en.txt', import.meta.url), 'utf8').trimEnd().split('\n')
@@ -18,13 +19,26 @@ const rankOf = (word) => ranks.get(word)
 
 test('cold start opens practice, refresh and in-app review stay put', () => {
   assert.equal(coldStartPath('/', 'navigate'), '/practice')
+  assert.equal(coldStartPath('/', 'navigate', '', ''), '/practice')
   assert.equal(coldStartPath('/', 'reload'), null)
   assert.equal(coldStartPath('/', 'back_forward'), null)
   assert.equal(coldStartPath('/practice', 'navigate'), null)
   assert.equal(coldStartPath('/add', 'navigate'), null)
+  assert.equal(reviewEntry, '/?review=1')
+  assert.equal(coldStartPath('/', 'navigate', '?review=1', ''), null)
+  assert.equal(coldStartPath('/', 'navigate', '?utm=1'), null)
+  assert.equal(coldStartPath('/', 'navigate', '', '#card'), null)
   const router = readFileSync(new URL('../src/router.tsx', import.meta.url), 'utf8')
   assert.match(router, /coldStartPath/)
   assert.match(router, /shiju:cold-start/)
+  assert.match(router, /location\.search/)
+  assert.match(router, /location\.hash/)
+  const push = readFileSync(new URL('../worker/push.ts', import.meta.url), 'utf8')
+  assert.match(push, /due \? reviewEntry : '\/practice'/)
+  assert.equal(push.includes("url: '/'"), false)
+  const manifest = JSON.parse(readFileSync(new URL('../public/manifest.webmanifest', import.meta.url), 'utf8'))
+  assert.equal(manifest.start_url, '/')
+  assert.equal(manifest.shortcuts.find((item) => item.name === '复习').url, reviewEntry)
 })
 
 test('today card states minutes, streak, and a secondary review entry', () => {

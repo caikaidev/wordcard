@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
 import { coldStartPath } from '../shared/retention'
 
-/** 冷启动（地址栏打开 /）落在练习。同一标签里刷新复习页、或点底部「复习」不再改道。 */
+/** 冷启动只把裸 `/` 改到练习。`/?review=1`、其它 query/hash、刷新、应用内点「复习」留在原地址。 */
 function applyColdStart() {
   let seen = false
   try {
@@ -18,8 +18,8 @@ function applyColdStart() {
   } catch {
     /* 当作一次新的打开 */
   }
-  const next = coldStartPath(window.location.pathname, navType)
-  if (next && window.location.pathname !== next) window.history.replaceState(null, '', next)
+  const next = coldStartPath(window.location.pathname, navType, window.location.search, window.location.hash)
+  if (next) window.history.replaceState(null, '', next)
 }
 
 applyColdStart()
