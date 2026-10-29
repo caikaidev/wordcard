@@ -45,7 +45,7 @@ const questSchema = {
           passage: str,
           questions: {
             type: 'ARRAY',
-            items: { type: 'OBJECT', properties: { question: str, answer: str, distractors: strs, explain: str }, required: ['question', 'answer', 'distractors', 'explain'] },
+            items: { type: 'OBJECT', properties: { question: str, answer: str, distractors: strs, explain: str }, required: ['question', 'answer', 'distractors'] },
           },
         },
         required: ['passage', 'questions'],

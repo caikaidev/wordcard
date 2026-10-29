@@ -47,16 +47,25 @@ test('default Cloudflare routes to Qwen and never hits Gemini', async () => {
     assert.match(calls[0].request.messages[0].content, /"type":"object"/)
     const prompt = calls[0].request.messages[0].content
     assert.ok(prompt.indexOf('Explain commitment') < prompt.indexOf('输出要求'))
+    assert.match(prompt, /字符串数组必须写成 JSON 数组/)
     assert.match(prompt, /最后一个必须是 \} 或 \]。$/)
     assert.equal(logs[0].args[2], '@cf/qwen/qwen3-30b-a3b-fp8')
   } finally { globalThis.fetch = old }
 })
 
-test('Qwen rejects incomplete JSON without silent Gemini fallback', async () => {
+test('Qwen retries a shape mismatch once and still does not call Gemini', async () => {
   const { settings, calls } = env()
+  const old = globalThis.fetch
+  globalThis.fetch = () => { throw new Error('Gemini must not be called') }
   settings.AI.run = async (model, request) => { calls.push({ model, request }); return { response: '{"meaning":"承诺"}' } }
-  await assert.rejects(ai.generateJson(settings, 'x', schema, 'enrich'), /字段不完整/)
-  assert.equal(calls.length, 1)
+  try {
+    await assert.rejects(
+      ai.generateJson(settings, 'x', schema, 'enrich'),
+      (error) => error instanceof Error && error.message === 'Qwen 返回的 JSON 字段不完整或类型不符。请重试或切换 Gemini',
+    )
+    assert.equal(calls.length, 2)
+    assert.match(calls[1].request.messages[0].content, /对不上 schema/)
+  } finally { globalThis.fetch = old }
 })
 
 test('Qwen rejects screenshots with actionable switch instructions', async () => {
@@ -230,14 +239,99 @@ test('a cut-off first reply retries; a later capacity error is not hidden', asyn
   assert.equal(calls.length, 2)
 })
 
-test('complete JSON that misses fields still fails once, even with a trailing note', async () => {
+test('complete JSON that misses fields retries once, even with a trailing note', async () => {
   const { settings, calls } = env()
   settings.AI.run = async () => {
     calls.push({})
     return { response: '{"meaning":"承诺"}\n自查完成。' }
   }
   await assert.rejects(ai.generateJson(settings, 'x', schema, 'enrich'), /字段不完整/)
+  assert.equal(calls.length, 2)
+})
+
+test('quest JSON keeps good items when one field is missing or a list is a string', async () => {
+  const { settings, calls } = env()
+  const tolerant = {
+    type: 'OBJECT',
+    properties: {
+      words: {
+        type: 'ARRAY',
+        items: { type: 'OBJECT', properties: { en: { type: 'STRING' }, zh: { type: 'STRING' }, distractors: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['en', 'zh', 'distractors'] },
+      },
+      listening: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: { en: { type: 'STRING' }, zh: { type: 'STRING' }, distractors: { type: 'ARRAY', items: { type: 'STRING' } }, extra: { type: 'ARRAY', items: { type: 'STRING' } } },
+          required: ['en', 'zh', 'distractors', 'extra'],
+        },
+      },
+    },
+    required: ['words', 'listening'],
+  }
+  settings.AI.run = async () => {
+    calls.push({})
+    return { response: JSON.stringify({
+      words: [{ en: 'habit', zh: '习惯', distractors: '甲，乙，丙' }, { en: 'routine' }],
+      listening: { en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'] },
+    }) }
+  }
+  const result = await ai.generateJson(settings, '出题', tolerant, 'quest')
+  assert.deepEqual(result, {
+    words: [{ en: 'habit', zh: '习惯', distractors: ['甲', '乙', '丙'] }],
+    listening: [{ en: 'I read every day.', zh: '我每天阅读。', distractors: ['甲', '乙'], extra: [] }],
+  })
   assert.equal(calls.length, 1)
+})
+
+test('a missing root field retries; a later complete reply is used', async () => {
+  const { settings, calls } = env()
+  const old = globalThis.fetch
+  globalThis.fetch = () => { throw new Error('Gemini must not be called') }
+  let n = 0
+  settings.AI.run = async () => {
+    n++
+    calls.push({})
+    if (n === 1) return { response: JSON.stringify({ words: [{ en: 'habit', zh: '习惯', distractors: ['甲', '乙'] }] }) }
+    return { response: JSON.stringify(questJson) }
+  }
+  try {
+    assert.deepEqual(await ai.generateJson(settings, '出题', questSchema, 'quest'), questJson)
+    assert.equal(calls.length, 2)
+  } finally { globalThis.fetch = old }
+})
+
+test('dropping every array item does not pretend the payload is empty', async () => {
+  const { settings, calls } = env()
+  const strict = {
+    type: 'OBJECT',
+    properties: {
+      words: { type: 'ARRAY', items: { type: 'OBJECT', properties: { en: { type: 'STRING' }, zh: { type: 'STRING' } }, required: ['en', 'zh'] } },
+    },
+    required: ['words'],
+  }
+  settings.AI.run = async () => {
+    calls.push({})
+    return { response: '{"words":[{"en":"habit"},{"en":"routine"}]}' }
+  }
+  await assert.rejects(ai.generateJson(settings, '出题', strict, 'quest'), /字段不完整/)
+  assert.equal(calls.length, 2)
+})
+
+test('numeric strings coerce to integers; an inner fragment still gets one retry', async () => {
+  const { settings, calls } = env()
+  const indexSchema = { type: 'OBJECT', properties: { senseIndex: { type: 'INTEGER' } }, required: ['senseIndex'] }
+  settings.AI.run = async () => ({ response: '{"senseIndex":"2"}' })
+  assert.deepEqual(await ai.generateJson(settings, 'pick', indexSchema, 'enrich'), { senseIndex: 2 })
+  let n = 0
+  settings.AI.run = async () => {
+    n++
+    calls.push({})
+    if (n === 1) return { response: '先看这句 [1, 2, 3]' }
+    return { response: JSON.stringify({ meaning: '承诺', examples: ['A'] }) }
+  }
+  assert.deepEqual(await ai.generateJson(settings, 'x', schema, 'enrich'), { meaning: '承诺', examples: ['A'] })
+  assert.equal(calls.length, 2)
 })
 
 test('explicit Gemini selection continues using Gemini generateContent endpoint', async () => {
