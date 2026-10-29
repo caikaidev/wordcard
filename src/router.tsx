@@ -1,16 +1,12 @@
 import { useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent } from 'react'
 import { coldStartPath } from '../shared/retention'
 
-/** 冷启动只把裸 `/` 改到练习。`/?review=1`、其它 query/hash、刷新、应用内点「复习」留在原地址。 */
+/**
+ * 裸 `/` 的整页打开（含硬刷新）改到练习。同步改 history，React 第一次读地址时已经是练习页。
+ * 不记「本会话改过一次」：那个标记撑过硬刷新，第二次、第三次刷新会直接跳过。
+ * 应用内 pushState（底部「复习」）不会重跑这里。`/?review=1` 留在复习。
+ */
 function applyColdStart() {
-  let seen = false
-  try {
-    seen = sessionStorage.getItem('shiju:cold-start') === '1'
-    if (!seen) sessionStorage.setItem('shiju:cold-start', '1')
-  } catch {
-    seen = false
-  }
-  if (seen) return
   let navType = 'navigate'
   try {
     const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
@@ -19,7 +15,9 @@ function applyColdStart() {
     /* 当作一次新的打开 */
   }
   const next = coldStartPath(window.location.pathname, navType, window.location.search, window.location.hash)
-  if (next) window.history.replaceState(null, '', next)
+  if (!next) return
+  window.history.replaceState(null, '', next)
+  window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
 applyColdStart()
