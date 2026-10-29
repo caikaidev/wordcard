@@ -1,21 +1,25 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import type { Lesson } from '../../shared/practice'
+import { decorateSentence, sameSentence, splitSentences, type DecorToken, type GuessItem } from '../../shared/reading'
 import { Link, navigate } from '../router'
 import { errMsg, toast } from '../components/ui'
 import { IconBack, IconPlusCircle, IconSparkle } from '../components/icons'
 import { WordLookupSheet } from '../components/WordLookupSheet'
+import { ReadingDock, useReadingLoop } from '../components/ReadingSession'
 
 type Source = { title: string; text: string; url?: string | null }
 
 /**
- * 读原文：点单词查词典（不花 AI 额度），长按选中短语或句子；想记的一键加入复习（AI 结合原句补全）。
+ * 读原文：目标生词先遮住，先猜后查；猜错给线索句，揭晓只给语境词义和线索词。
+ * 读完做理解检查。点其他单词仍可查词典（不花 AI 额度），长按选中短语或句子。
  * 每段末尾可以点「译」看这段中文；难的文章可以打开「对照」整篇显示中文。
  * kind = lesson：练习的原文；kind = saved：稍后学的文章（底部可以直接生成练习）
  */
 export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: number }) {
   const [lesson, setLesson] = useState<Lesson | null>(null)
+  const [lessonStatus, setLessonStatus] = useState<'loading' | 'ready' | 'missing'>(kind === 'lesson' ? 'loading' : 'ready')
   const [source, setSource] = useState<Source | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pick, setPick] = useState<{ text: string; context: string } | null>(null)
@@ -28,12 +32,34 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
   const [peeked, setPeeked] = useState<Set<number>>(new Set())
   const [bilingual, setBilingual] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [savingWord, setSavingWord] = useState(false)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const reported = useRef(false)
 
   useEffect(() => {
-    if (kind === 'lesson') api.lesson(id).then((r) => setLesson(r.lesson)).catch(() => {})
+    if (kind !== 'lesson') return
+    api
+      .lesson(id)
+      .then((r) => {
+        setLesson(r.lesson)
+        setLessonStatus('ready')
+      })
+      .catch(() => setLessonStatus('missing'))
+  }, [kind, id])
+
+  useEffect(() => {
     ;(kind === 'lesson' ? api.lessonSource(id) : api.savedSource(id)).then(setSource).catch((e) => setError(errMsg(e)))
   }, [kind, id])
+
+  const ready = !!source && lessonStatus !== 'loading'
+  const loop = useReadingLoop({
+    ready,
+    articleKey: `${kind}-${id}`,
+    title: lesson?.content.title || lesson?.title || source?.title || '',
+    summary: lesson?.content.summary ?? '',
+    text: source?.text ?? '',
+    words: lesson?.content.words,
+  })
 
   // 长按选中一段文字：底部出现“查义 / 收藏”
   useEffect(() => {
@@ -107,10 +133,54 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
     const sel = window.getSelection()
     if (sel && !sel.isCollapsed) return
     const t = e.target as HTMLElement
+    const blank = t.dataset.blank
+    if (blank) {
+      loop.focus(blank)
+      return
+    }
     const word = t.dataset.w
     if (!word) return
     setPick({ text: word, context: sentenceOf(t) })
   }
+
+  const saveCurrent = async () => {
+    const item = loop.items[loop.index]
+    if (!item || savingWord || !loop.progress.revealed) return
+    setSavingWord(true)
+    try {
+      await api.create(/\s/.test(item.word) ? 'sentence' : 'word', item.word, {
+        ipa: item.ipa,
+        pos: '',
+        meaning: item.meaning,
+        example: item.sentence,
+        exampleZh: '',
+        highlight: item.word,
+        phrases: [],
+      })
+      toast(`已加入复习：${item.word}`)
+      setSaved((s) => new Set(s).add(item.word.toLowerCase()))
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        toast('已经在词库里了')
+        setSaved((s) => new Set(s).add(item.word.toLowerCase()))
+      } else toast(errMsg(e), 'error')
+    } finally {
+      setSavingWord(false)
+    }
+  }
+
+  useEffect(() => {
+    const el = bodyRef.current?.querySelector('[data-active="true"]')
+    el?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [loop.activeId, loop.showClues, loop.evidence])
+
+  useEffect(() => {
+    if (kind !== 'lesson' || loop.mode !== 'score' || reported.current || loop.results.length < 1) return
+    reported.current = true
+    api.saveReading(id, { correct: loop.correctCount, total: loop.results.length }).catch(() => {
+      toast('阅读成绩没保存上，这次仍显示在本页', 'error')
+    })
+  }, [kind, id, loop.mode, loop.correctCount, loop.results.length])
 
   const createLesson = async () => {
     if (creating) return
@@ -126,9 +196,12 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
 
   const title = lesson?.title || source?.title
   const link = lesson?.source_url ?? source?.url
+  const savedBar = kind === 'saved' && loop.mode === 'browse' && !selection && !pick
+  const dockVisible = !selection && !pick && !(kind === 'saved' && loop.mode === 'browse') && (loop.mode !== 'browse' || loop.questions.length > 0)
+  const bottomPad = dockVisible || savedBar ? 'pb-80' : 'pb-28'
 
   return (
-    <div className="pt-safe flex flex-1 flex-col pb-28 md:pt-8">
+    <div className={`pt-safe flex flex-1 flex-col md:pt-8 ${bottomPad}`}>
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 bg-bg/95 px-2 pr-4 backdrop-blur md:px-6">
         <Link
           to={kind === 'lesson' ? `/practice/${id}` : '/practice'}
@@ -138,7 +211,15 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
           <IconBack size={22} />
         </Link>
         <span className="min-w-0 flex-1 truncate text-xs text-muted">
-          {peeked.size > 0 ? `看了 ${peeked.size} / ${total} 段翻译` : '点单词查义 · 长按选中短语'}
+          {loop.mode === 'guess'
+            ? '生词先遮住 · 猜错给线索句'
+            : loop.mode === 'check'
+              ? '读完理解检查'
+              : loop.mode === 'score'
+                ? '阅读和写作成绩分开记'
+                : peeked.size > 0
+                  ? `看了 ${peeked.size} / ${total} 段翻译`
+                  : '点单词查义 · 长按选中短语'}
         </span>
         {source && total > 0 && (
           <button
@@ -157,7 +238,7 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
       <article className="px-5 md:px-6">
         {error ? (
           <p className="text-sm leading-relaxed text-forgot-fg">{error}</p>
-        ) : !source ? (
+        ) : !source || (kind === 'lesson' && lessonStatus === 'loading') ? (
           <div className="mt-2 flex flex-col gap-3">
             <div className="h-8 w-3/4 animate-shimmer rounded-lg bg-surface" />
             {[0, 1, 2, 3].map((i) => (
@@ -186,6 +267,17 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
                   zhOpen={open.has(i)}
                   loading={loading.has(i)}
                   onToggleZh={toggleZh}
+                  loop={
+                    loop.mode === 'guess' || loop.evidence
+                      ? {
+                          items: loop.mode === 'guess' ? loop.items : [],
+                          revealed: loop.revealed,
+                          activeId: loop.activeId,
+                          showClues: loop.showClues,
+                          evidence: loop.evidence,
+                        }
+                      : undefined
+                  }
                 />
               ))}
             </div>
@@ -193,17 +285,36 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
         )}
       </article>
 
-      {kind === 'saved' && source && !selection && !pick && (
+      {kind === 'saved' && source && loop.mode === 'browse' && !selection && !pick && (
         <div className="fixed inset-x-0 bottom-0 z-30 flex justify-center bg-gradient-to-t from-bg via-bg/90 to-transparent px-4 pt-6 pb-[max(env(safe-area-inset-bottom),16px)]">
-          <button
-            onClick={createLesson}
-            disabled={creating}
-            className="flex h-12 w-full max-w-[560px] items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-60"
-          >
-            {creating ? <span className="animate-shimmer">正在生成练习…</span> : <><IconSparkle size={18} /> 读完了，生成练习</>}
-          </button>
+          <div className="flex w-full max-w-[560px] flex-col gap-2">
+            {loop.questions.length > 0 && (
+              <button
+                onClick={loop.startCheck}
+                className="flex h-12 items-center justify-center rounded-[14px] border border-line bg-surface text-[15px] font-medium text-ink"
+              >
+                读完了，做理解检查
+              </button>
+            )}
+            <button
+              onClick={createLesson}
+              disabled={creating}
+              className="flex h-12 items-center justify-center gap-2 rounded-[14px] border-0 bg-invert-bg text-[15px] font-medium text-invert-fg disabled:opacity-60"
+            >
+              {creating ? <span className="animate-shimmer">正在生成练习…</span> : <><IconSparkle size={18} /> 读完了，生成练习</>}
+            </button>
+          </div>
         </div>
       )}
+      <ReadingDock
+        loop={loop}
+        hidden={!!selection || !!pick || (kind === 'saved' && loop.mode === 'browse')}
+        showBrowse={kind === 'lesson' && loop.questions.length > 0}
+        wordSaved={!!loop.items[loop.index] && saved.has(loop.items[loop.index].word.toLowerCase())}
+        saving={savingWord}
+        onSave={saveCurrent}
+        onDone={() => navigate(kind === 'lesson' ? `/practice/${id}` : '/practice')}
+      />
 
       {selection && !pick && (
         <SelectionBar
@@ -236,7 +347,40 @@ function splitArticle(text: string): string[][] {
     .split(/\n+/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .map((p) => p.split(/(?<=[.!?]["”’)]?)\s+(?=["“‘(]?[A-Z0-9])/))
+    .map((p) => splitSentences(p))
+}
+
+function Token({ tok, marked, saved }: { tok: DecorToken; marked: Set<string>; saved: Set<string> }) {
+  if (tok.blankId) {
+    return (
+      <span
+        data-blank={tok.blankId}
+        role="button"
+        tabIndex={0}
+        aria-label="待猜的词"
+        className={`mx-0.5 inline-block min-w-[2.5em] cursor-pointer border-b-2 align-baseline ${tok.active ? 'border-accent' : 'border-muted/70'}`}
+      >
+        {'\u00a0'}
+      </span>
+    )
+  }
+  if (!tok.lookup) return <>{tok.text}</>
+  const key = tok.lookup.toLowerCase()
+  const cls = [
+    saved.has(key)
+      ? 'underline decoration-accent decoration-2 underline-offset-4'
+      : marked.has(key)
+        ? 'underline decoration-accent/60 decoration-dotted decoration-2 underline-offset-4'
+        : '',
+    tok.clue ? 'rounded-sm bg-accent-soft font-medium text-accent' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  return (
+    <span data-w={tok.lookup} className={`cursor-pointer rounded-[3px] active:bg-accent-soft ${cls}`}>
+      {tok.text}
+    </span>
+  )
 }
 
 /** 点到的词所在的整句 */
@@ -256,6 +400,7 @@ const Paragraph = memo(function Paragraph({
   zhOpen,
   loading,
   onToggleZh,
+  loop,
 }: {
   idx: number
   sentences: string[]
@@ -267,29 +412,50 @@ const Paragraph = memo(function Paragraph({
   zhOpen: boolean
   loading: boolean
   onToggleZh: (i: number) => void
+  loop?: { items: GuessItem[]; revealed: ReadonlySet<string>; activeId: string | null; showClues: boolean; evidence: string | null }
 }) {
   return (
     <div className="mb-5" data-p={idx}>
       <p className="m-0">
-        {sentences.map((s, i) => (
-          <span key={i} data-s="">
-            {s.split(/([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])/).map((tok, j) => {
-              if (j % 2 === 0) return tok
-              const key = tok.toLowerCase()
-              const cls = saved.has(key)
-                ? 'underline decoration-accent decoration-2 underline-offset-4'
-                : marked.has(key)
-                  ? 'underline decoration-accent/60 decoration-dotted decoration-2 underline-offset-4'
-                  : ''
-              return (
-                <span key={j} data-w={tok} className={`cursor-pointer rounded-[3px] active:bg-accent-soft ${cls}`}>
-                  {tok}
-                </span>
-              )
-            })}
+        {sentences.map((s, i) => {
+          const active = !!loop?.activeId && loop.items.some((item) => item.id === loop.activeId && sameSentence(item.sentence, s))
+          const cited = !!loop?.evidence && loop.evidence.split('\n').some((line) => sameSentence(line, s))
+          const tokens = loop ? decorateSentence(s, loop.items, loop.revealed, loop.activeId, loop.showClues) : null
+          return (
+          <span
+            key={i}
+            data-s=""
+            data-active={active ? 'true' : undefined}
+            className={
+              active && loop?.showClues
+                ? 'scroll-mt-16 rounded-md bg-accent-soft/80'
+                : cited
+                  ? 'scroll-mt-16 rounded-md bg-forgot-bg/80'
+                  : active
+                    ? 'scroll-mt-16'
+                    : undefined
+            }
+          >
+            {tokens
+              ? tokens.map((tok, j) => <Token key={j} tok={tok} marked={marked} saved={saved} />)
+              : s.split(/([A-Za-z][A-Za-z'’-]*[A-Za-z]|[A-Za-z])/).map((tok, j) => {
+                  if (j % 2 === 0) return tok
+                  const key = tok.toLowerCase()
+                  const cls = saved.has(key)
+                    ? 'underline decoration-accent decoration-2 underline-offset-4'
+                    : marked.has(key)
+                      ? 'underline decoration-accent/60 decoration-dotted decoration-2 underline-offset-4'
+                      : ''
+                  return (
+                    <span key={j} data-w={tok} className={`cursor-pointer rounded-[3px] active:bg-accent-soft ${cls}`}>
+                      {tok}
+                    </span>
+                  )
+                })}
             {i < sentences.length - 1 ? ' ' : ''}
           </span>
-        ))}
+          )
+        })}
         {canTranslate && (
           <button
             onClick={(e) => {

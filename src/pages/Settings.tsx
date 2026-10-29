@@ -245,7 +245,7 @@ export default function Settings() {
             </div>
           </Section>
 
-          <Section title="教练设定" desc="你的背景、目标和原则。出题和批改都会参考这段话，写得越具体，练习越贴合你">
+          <Section title="教练设定" desc="默认是「入门日常阅读」。出题和批改都会参考这段话；想换成别的目标，直接改这里">
             <CoachProfile
               value={cur.coachProfile}
               isDefault={cur.coachProfile === defaults?.coachProfile}

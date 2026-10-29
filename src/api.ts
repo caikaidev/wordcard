@@ -139,6 +139,8 @@ export const api = {
   shareData: () => req<ShareData>('/practice/share'),
   lessons: () => req<{ lessons: LessonSummary[] }>('/practice/lessons'),
   lesson: (id: number) => req<{ lesson: Lesson }>(`/practice/lessons/${id}`),
+  saveReading: (id: number, score: { correct: number; total: number }) =>
+    req<{ reading: { correct: number; total: number } }>(`/practice/lessons/${id}/reading`, { method: 'POST', body: json(score) }),
   createLesson: (input: { url?: string; text?: string; images?: { mime: string; data: string }[]; level?: Level; savedId?: number }) =>
     req<{ id: number }>('/practice/lessons', { method: 'POST', body: json(input) }, 180_000),
   deleteLesson: (id: number) => req<void>(`/practice/lessons/${id}`, { method: 'DELETE' }),

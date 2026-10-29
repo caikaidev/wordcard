@@ -2,6 +2,7 @@ import { readCached } from '../readCache'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type SavedArticle } from '../api'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
+import { formatReadingScore } from '../../shared/reading'
 import { practiceGenerateBlock } from '../../shared/practice-compose'
 import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
@@ -134,6 +135,12 @@ export default function Practice() {
                   <span>{dateLabel(l.created_at)}</span>
                   <span>·</span>
                   <span>{LEVELS[l.level - 1]?.short}</span>
+                  {l.reading && (
+                    <>
+                      <span>·</span>
+                      <span>{formatReadingScore(l.reading)}</span>
+                    </>
+                  )}
                 </div>
               </div>
               {l.quest ? <QuestChip l={l} /> : <Progress passed={l.passed} submitted={l.submitted} />}
@@ -215,7 +222,7 @@ function dateLabel(ts: number) {
 /** 3 个小圆点：通过 = 实心，已提交未通过 = 空心描边 */
 function Progress({ passed, submitted }: { passed: number; submitted: number }) {
   return (
-    <div className="flex shrink-0 items-center gap-1" aria-label={`3 句中通过 ${passed} 句，已提交 ${submitted} 句`}>
+    <div className="flex shrink-0 items-center gap-1" aria-label={`写作：3 句中通过 ${passed} 句，已提交 ${submitted} 句`}>
       {[0, 1, 2].map((i) => (
         <span
           key={i}

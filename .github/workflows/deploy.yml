@@ -26,6 +26,7 @@ jobs:
       - run: npm run test:assets
       - run: npm run test:ai
       - run: npm run test:review
+      - run: npm run test:reading
       - name: 下载 Merriam-Webster 官方标志（按其品牌规范原样使用，不提交进仓库）
         run: |
           for v in LightBG DarkBG; do
