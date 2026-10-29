@@ -2,6 +2,8 @@ import { clearReadCache } from './readCache'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
+import { useReviewBatch } from './review-session'
+import { batchInProgress, batchProgress } from '../shared/review-batch'
 import { Confirmer, Toaster } from './components/ui'
 import { SpeechFallback } from './components/SpeechFallback'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
@@ -127,7 +129,6 @@ function MobileTabBar({ path }: { path: Path }) {
 
 /** 电脑端：顶部分段导航 */
 function DesktopHeader({ path }: { path: Path }) {
-  const stats = useStats()
   return (
     <header className="desktop-header z-40 hidden h-[72px] shrink-0 grid-cols-[minmax(0,1fr)_max-content_max-content] items-center gap-4 border-b border-line bg-bg/95 px-5 backdrop-blur md:grid xl:grid-cols-[minmax(0,1fr)_max-content_minmax(0,1fr)] xl:px-10">
       <Link to="/" className="shrink-0 whitespace-nowrap font-serif text-[22px] font-medium tracking-tight text-ink no-underline">
@@ -170,24 +171,62 @@ function DesktopHeader({ path }: { path: Path }) {
         >
           <IconGear size={18} />
         </Link>
-        <div
-          className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
-          title={stats?.due ? `今天有 ${stats.due} 张到期，分批复习，每批 20 张，做完一批就可以停` : undefined}
-        >
-          {stats && stats.due > 0 ? (
-            <>
-              <span className="opacity-70">{stats.due > 20 ? '先来 20 张' : `今日 ${stats.due} 张`}</span>
-              <span className="tabular font-semibold">约 {Math.max(1, Math.round((Math.min(stats.due, 20) * 10) / 60))} 分钟</span>
-            </>
-          ) : (
-            <>
-              <span className="opacity-70">今日到期</span>
-              <span className="tabular font-semibold">{stats?.due ?? '–'}</span>
-            </>
-          )}
-        </div>
+        <DuePill />
       </div>
     </header>
+  )
+}
+
+/**
+ * 批内把「今天有 N 张」折起来，避免和本批 4/20 抢注意力。
+ * 点开才看今天还剩多少；这一批结束后面上的数字是刷新后的到期数。
+ */
+function DuePill() {
+  const stats = useStats()
+  const batch = useReviewBatch()
+  const [open, setOpen] = useState(false)
+  const inBatch = batchInProgress(batch) && !!batch && batch.batchSize > 0 && Array.isArray(batch.queue)
+  if (inBatch && batch) {
+    const progress = batchProgress(batch)
+    return (
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title={open ? '收起今天的到期张数' : '今天的到期张数已折叠，点开查看'}
+        className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
+      >
+        {open ? (
+          <>
+            <span className="opacity-70">今天还有</span>
+            <span className="tabular font-semibold">{stats?.due ?? '–'} 张</span>
+          </>
+        ) : (
+          <>
+            <span className="opacity-70">本批</span>
+            <span className="tabular font-semibold">{progress.label}</span>
+          </>
+        )}
+      </button>
+    )
+  }
+  return (
+    <div
+      className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-invert-bg px-4 text-sm text-invert-fg"
+      title={stats?.due ? `今天有 ${stats.due} 张到期，分批复习，每批 20 张，做完一批就可以停` : undefined}
+    >
+      {stats && stats.due > 0 ? (
+        <>
+          <span className="opacity-70">{stats.due > 20 ? '先来 20 张' : `今日 ${stats.due} 张`}</span>
+          <span className="tabular font-semibold">约 {Math.max(1, Math.round((Math.min(stats.due, 20) * 10) / 60))} 分钟</span>
+        </>
+      ) : (
+        <>
+          <span className="opacity-70">今日到期</span>
+          <span className="tabular font-semibold">{stats?.due ?? '–'}</span>
+        </>
+      )}
+    </div>
   )
 }
 

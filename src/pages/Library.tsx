@@ -1,5 +1,5 @@
 import { readCached } from '../readCache'
-import { useEffect, useRef, useState, type ReactNode, type TouchEvent } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
 import { dueLabel } from '../../shared/srs'
 import type { Item, ItemStatus, PackageInfo } from '../../shared/types'
@@ -10,16 +10,14 @@ import EditSheet from '../components/EditSheet'
 import { useExampleZh } from '../exampleZh'
 import { Link } from '../router'
 import { EnglishDefinition, Highlighted, PageTitle, SpeakButton, confirmDialog, errMsg, toast } from '../components/ui'
-import { IconCheck, IconCheckCircle, IconGear, IconPen, IconSearch, IconTrash, IconUndo } from '../components/icons'
-
-const ACTION_W = 88
+import { IconGear, IconMore, IconPen, IconSearch, IconTrash } from '../components/icons'
 
 export default function Library() {
   const [tab, setTab] = useState<ItemStatus>('active')
   const [q, setQ] = useState('')
   const [items, setItems] = useState<Item[] | null>(() => readCached<{ items: Item[] }>(`/items?status=active${libraryJump.packageId ? `&package=${libraryJump.packageId}` : ''}`)?.items ?? null)
   const [openId, setOpenId] = useState<number | null>(null)
-  const [swipedId, setSwipedId] = useState<number | null>(null)
+  const [menuId, setMenuId] = useState<number | null>(null)
   const [packages, setPackages] = useState<PackageInfo[]>(() => readCached<{ packages: PackageInfo[] }>('/packages')?.packages ?? [])
   // 从复习卡片的「来自《包名》」跳过来时直接筛选该包（严格模式下初始化函数会跑两次，所以到 effect 里再清空）
   const [pkgId, setPkgId] = useState<number | null>(() => libraryJump.packageId)
@@ -62,14 +60,14 @@ export default function Library() {
     if (t === tab) return
     setItems(null)
     setOpenId(null)
-    setSwipedId(null)
+    setMenuId(null)
     setTab(t)
   }
 
   const toggle = async (item: Item) => {
     const next: ItemStatus = item.status === 'active' ? 'done' : 'active'
     setItems((l) => l?.filter((x) => x.id !== item.id) ?? l)
-    setSwipedId(null)
+    setMenuId(null)
     try {
       await api.update(item.id, { status: next })
       toast(next === 'done' ? `「${item.text}」已标记 DONE` : `「${item.text}」已移回进行中`)
@@ -81,10 +79,21 @@ export default function Library() {
     }
   }
 
+  const changeStatus = async (item: Item) => {
+    setMenuId(null)
+    const markingDone = item.status === 'active'
+    const text = markingDone
+      ? `把「${item.text}」标记为 DONE？之后不会再出现在复习里。`
+      : `把「${item.text}」移回进行中？它会重新进入复习。`
+    if (!(await confirmDialog(text, { ok: markingDone ? '标记 DONE' : '移回', danger: markingDone }))) return
+    await toggle(item)
+  }
+
   const remove = async (item: Item) => {
+    setMenuId(null)
     if (!(await confirmDialog(`删除「${item.text}」？删除后不能恢复。`, { ok: '删除', danger: true }))) return
     setItems((l) => l?.filter((x) => x.id !== item.id) ?? l)
-    setSwipedId(null)
+    setMenuId(null)
     setOpenId(null)
     try {
       await api.remove(item.id)
@@ -213,14 +222,15 @@ export default function Library() {
               key={item.id}
               item={item}
               open={openId === item.id}
-              swiped={swipedId === item.id}
+              menuOpen={menuId === item.id}
               onOpen={() => {
-                setSwipedId(null)
+                setMenuId(null)
                 setOpenId(openId === item.id ? null : item.id)
               }}
-              onSwipe={(s) => setSwipedId(s ? item.id : null)}
+              onMenu={() => setMenuId(menuId === item.id ? null : item.id)}
+              onMenuClose={() => setMenuId((id) => (id === item.id ? null : id))}
               query={query}
-              onToggle={() => toggle(item)}
+              onToggle={() => changeStatus(item)}
               onRemove={() => remove(item)}
               onEdit={() => setEditing(item)}
               onUpdate={replace}
@@ -274,9 +284,10 @@ function PkgChip({ active, onClick, children }: { active: boolean; onClick: () =
 function Row({
   item,
   open,
-  swiped,
+  menuOpen,
   onOpen,
-  onSwipe,
+  onMenu,
+  onMenuClose,
   query,
   onToggle,
   onRemove,
@@ -285,9 +296,10 @@ function Row({
 }: {
   item: Item
   open: boolean
-  swiped: boolean
+  menuOpen: boolean
   onOpen: () => void
-  onSwipe: (s: boolean) => void
+  onMenu: () => void
+  onMenuClose: () => void
   query: string
   onToggle: () => void
   onRemove: () => void
@@ -300,136 +312,118 @@ function Row({
   const translating = useExampleZh(item, onUpdate, open)
   // 搜索词只出现在例句等地方时标出来，免得以为搜错了
   const indirect = !!query && !item.text.toLowerCase().includes(query) && !m.meaning.toLowerCase().includes(query)
-  const [drag, setDrag] = useState<number | null>(null)
-  const start = useRef<{ x: number; y: number; base: number; locked?: 'x' | 'y' } | null>(null)
-  const actionsW = ACTION_W * 2
-
-  const onTouchStart = (e: TouchEvent) => {
-    const t = e.touches[0]
-    start.current = { x: t.clientX, y: t.clientY, base: swiped ? -actionsW : 0 }
-  }
-  const onTouchMove = (e: TouchEvent) => {
-    const s = start.current
-    if (!s) return
-    const t = e.touches[0]
-    const dx = t.clientX - s.x
-    const dy = t.clientY - s.y
-    if (!s.locked) {
-      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return
-      s.locked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'
+  const menuRef = useRef<HTMLDivElement>(null)
+  const closeRef = useRef(onMenuClose)
+  closeRef.current = onMenuClose
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointer = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) closeRef.current()
     }
-    if (s.locked === 'x') setDrag(Math.min(0, Math.max(-actionsW - 24, s.base + dx)))
-  }
-  const onTouchEnd = () => {
-    if (drag !== null) onSwipe(drag < -actionsW / 2)
-    setDrag(null)
-    start.current = null
-  }
-
-  const offset = drag ?? (swiped ? -actionsW : 0)
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeRef.current()
+    }
+    document.addEventListener('pointerdown', onPointer)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointer)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
 
   return (
-    <div className="relative overflow-hidden border-b border-line">
-      {/* 左滑露出的操作 */}
-      <div className="absolute inset-y-0 right-0 flex" style={{ width: actionsW }} aria-hidden={!swiped}>
+    <div className={`relative border-b border-line ${menuOpen ? 'z-20' : ''}`}>
+      <div className="flex items-center gap-3 py-4">
         <button
-          tabIndex={swiped ? 0 : -1}
-          onClick={onToggle}
-          className="flex flex-1 flex-col items-center justify-center gap-1 border-0 bg-accent text-[13px] font-semibold text-on-accent"
+          onClick={onOpen}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 flex-col gap-1 border-0 bg-transparent p-0 text-left text-ink"
         >
-          {isDone ? <IconUndo size={18} /> : <IconCheck size={18} />}
-          {isDone ? '恢复' : 'DONE'}
-        </button>
-        <button
-          tabIndex={swiped ? 0 : -1}
-          onClick={onRemove}
-          className="flex flex-1 flex-col items-center justify-center gap-1 border-0 bg-forgot-bg text-[13px] font-semibold text-forgot-fg"
-        >
-          <IconTrash size={18} />
-          删除
-        </button>
-      </div>
-
-      <div
-        className={`relative bg-bg ${drag === null ? 'transition-transform duration-200' : ''}`}
-        style={{ transform: offset ? `translateX(${offset}px)` : undefined, touchAction: 'pan-y' }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-      >
-        <div className="flex items-center gap-3 py-4">
-          <button
-            onClick={onOpen}
-            aria-expanded={open}
-            className="flex min-w-0 flex-1 flex-col gap-1 border-0 bg-transparent p-0 text-left text-ink"
+          <div
+            className={`w-full truncate font-serif leading-snug ${item.type === 'sentence' ? 'text-[17px]' : 'text-[19px]'} ${open ? 'whitespace-normal' : ''}`}
           >
-            <div
-              className={`w-full truncate font-serif leading-snug ${item.type === 'sentence' ? 'text-[17px]' : 'text-[19px]'} ${open ? 'whitespace-normal' : ''}`}
-            >
-              {item.text}
-            </div>
-            <div className={`w-full text-[13px] text-muted ${open ? '' : 'truncate'}`}>
-              {indirect && <span className="mr-1.5 rounded bg-chip px-1.5 py-0.5 text-[11px] text-muted-2">例句中出现</span>}
-              {m.pos && `${m.pos} `}
-              {m.meaning}
-            </div>
-          </button>
-          <div className={`text-xs whitespace-nowrap ${due === '今天' ? 'text-accent' : 'text-muted'}`}>{due}</div>
+            {item.text}
+          </div>
+          <div className={`w-full text-[13px] text-muted ${open ? '' : 'truncate'}`}>
+            {indirect && <span className="mr-1.5 rounded bg-chip px-1.5 py-0.5 text-[11px] text-muted-2">例句中出现</span>}
+            {m.pos && `${m.pos} `}
+            {m.meaning}
+          </div>
+        </button>
+        <div className={`text-xs whitespace-nowrap ${due === '今天' ? 'text-accent' : 'text-muted'}`}>{due}</div>
+        <div className="relative -mr-2.5" ref={menuRef}>
           <button
-            onClick={onToggle}
-            aria-label={isDone ? '移回进行中' : '标记 DONE'}
-            className={`-mr-2.5 flex h-11 w-11 items-center justify-center border-0 bg-transparent ${isDone ? 'text-accent' : 'text-faint hover:text-muted'}`}
+            type="button"
+            onClick={onMenu}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={`「${item.text}」的更多操作`}
+            className="flex h-11 w-11 items-center justify-center border-0 bg-transparent text-muted"
           >
-            <IconCheckCircle size={20} />
+            <IconMore size={18} />
           </button>
-        </div>
-
-        {open && (
-          <div className="flex animate-rise flex-col gap-3 pb-4">
-            {m.ipa && <div className="font-serif text-[15px] text-muted italic">{m.ipa}</div>}
-            {m.definitionEn && <EnglishDefinition text={m.definitionEn} source={m.definitionSrc} word={item.text} className="text-[15px]" />}
-            {m.example && (
-              <div className="flex items-start gap-2">
-                <div className="flex flex-1 flex-col gap-1">
-                  <div className="font-serif text-[17px] leading-normal">
-                    <Highlighted text={m.example} marks={[m.highlight]} />
-                  </div>
-                  {m.exampleZh ? (
-                    <div className="text-[13px] text-muted">{m.exampleZh}</div>
-                  ) : (
-                    translating && <div className="animate-shimmer text-[13px] text-faint">正在翻译例句…</div>
-                  )}
-                </div>
-                <SpeakButton text={m.example} size={40} waves={1} label="播放例句" />
-              </div>
-            )}
-            {m.memoryTip && <div className="rounded-xl bg-chip px-3 py-2 text-[13px] leading-relaxed text-muted-2">💡 {m.memoryTip}</div>}
-            {item.package_title && (
-              <div className="text-xs text-muted">
-                来自《{item.package_title}》{item.source_ref && ` · ${item.source_ref}`}
-              </div>
-            )}
-            <div className="flex items-center gap-2">
-              <SpeakButton text={item.text} size={40} />
-              <div className="flex-1" />
+          {menuOpen && (
+            <div role="menu" aria-label={`「${item.text}」的操作`} className="absolute top-11 right-0 z-30 w-44 overflow-hidden rounded-2xl border border-line bg-surface py-1 shadow-card">
               <button
-                onClick={onEdit}
-                className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-transparent px-3 text-[13px] text-ink"
+                type="button"
+                role="menuitem"
+                onClick={onToggle}
+                className="flex h-11 w-full items-center border-0 bg-transparent px-3.5 text-left text-[14px] text-ink"
               >
-                <IconPen size={16} />
-                编辑
+                {isDone ? '移回进行中' : '标记 DONE'}
               </button>
               <button
+                type="button"
+                role="menuitem"
                 onClick={onRemove}
-                className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-transparent px-3 text-[13px] text-muted hover:text-forgot-fg"
+                className="flex h-11 w-full items-center gap-1.5 border-0 bg-transparent px-3.5 text-left text-[14px] text-forgot-fg"
               >
                 <IconTrash size={16} />
                 删除
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {open && (
+        <div className="flex animate-rise flex-col gap-3 pb-4">
+          {m.ipa && <div className="font-serif text-[15px] text-muted italic">{m.ipa}</div>}
+          {m.definitionEn && <EnglishDefinition text={m.definitionEn} source={m.definitionSrc} word={item.text} className="text-[15px]" />}
+          {m.example && (
+            <div className="flex items-start gap-2">
+              <div className="flex flex-1 flex-col gap-1">
+                <div className="font-serif text-[17px] leading-normal">
+                  <Highlighted text={m.example} marks={[m.highlight]} />
+                </div>
+                {m.exampleZh ? (
+                  <div className="text-[13px] text-muted">{m.exampleZh}</div>
+                ) : (
+                  translating && <div className="animate-shimmer text-[13px] text-faint">正在翻译例句…</div>
+                )}
+              </div>
+              <SpeakButton text={m.example} size={40} waves={1} label="播放例句" />
+            </div>
+          )}
+          {m.memoryTip && <div className="rounded-xl bg-chip px-3 py-2 text-[13px] leading-relaxed text-muted-2">💡 {m.memoryTip}</div>}
+          {item.package_title && (
+            <div className="text-xs text-muted">
+              来自《{item.package_title}》{item.source_ref && ` · ${item.source_ref}`}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <SpeakButton text={item.text} size={40} />
+            <div className="flex-1" />
+            <button
+              onClick={onEdit}
+              className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-transparent px-3 text-[13px] text-ink"
+            >
+              <IconPen size={16} />
+              编辑
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
