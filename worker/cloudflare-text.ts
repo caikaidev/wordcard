@@ -5,7 +5,11 @@ import { aiCallCounts, aiLimits } from './gemini'
 export const CF_TEXT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'
 
 export class CloudflareTextError extends Error {
-  constructor(message: string, readonly status = 502) { super(message) }
+  readonly partial?: unknown
+  constructor(message: string, readonly status = 502, partial?: unknown) {
+    super(message)
+    this.partial = partial
+  }
 }
 type JsonSchema = {
   type?: string
@@ -38,11 +42,12 @@ export function parseCloudflareJson<T>(result: unknown, schema: unknown): T {
   const normalized = normalizeSchema(schema)
   const texts = valuesFromTexts([...contentTexts(result), ...responseTexts(result)])
   const objects = objectPayloads(result)
-  const passing = [...texts.strict, ...texts.repaired, ...objects]
-    .map((value) => coerce(value, normalized))
-    .filter((value) => verifyShape(value, normalized))
+  const coerced = [...texts.strict, ...texts.repaired, ...objects].map((value) => coerce(value, normalized))
+  const passing = coerced.filter((value) => verifyShape(value, normalized))
   if (passing.length) return largest(passing) as T
-  if (texts.strict.length || texts.repaired.length || objects.length) throw new CloudflareTextError(SHAPE_ERROR)
+  if (texts.strict.length || texts.repaired.length || objects.length) {
+    throw new CloudflareTextError(SHAPE_ERROR, 502, bestPartial(coerced, normalized))
+  }
   throw new CloudflareTextError(JSON_ERROR)
 }
 
@@ -353,6 +358,21 @@ function largest(values: unknown[]): unknown {
   return best
 }
 
+/** 整份对不上 schema 时，留下 required 字段更齐的那份，供闯关只补缺的那一侧。 */
+function bestPartial(values: unknown[], schema: JsonSchema): unknown | undefined {
+  const objects = values.filter((value) => value && typeof value === 'object' && !Array.isArray(value))
+  if (!objects.length) return undefined
+  const score = (value: unknown) => {
+    const record = value as Record<string, unknown>
+    return (schema.required ?? []).reduce((n, key) => {
+      const child = schema.properties?.[key]
+      if (record[key] === undefined) return n
+      return n + (child && verifyShape(record[key], child) ? 2 : 1)
+    }, 0)
+  }
+  return objects.reduce((best, value) => (score(value) > score(best) ? value : best))
+}
+
 function splitStringList(value: string): string[] {
   return value.split(/[,，、;；|\n]+/).map((part) => part.trim()).filter(Boolean)
 }
@@ -568,6 +588,7 @@ export async function cloudflareGenerateJson<T>(
   schema: unknown,
   kind: UsageKind,
   temperature: number,
+  retry = true,
 ): Promise<T> {
   const parts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   if (parts.some((part) => part.inlineData)) {
@@ -606,10 +627,21 @@ export async function cloudflareGenerateJson<T>(
     return parseCloudflareJson<T>(first, schema)
   } catch (error) {
     // 非法 JSON 和字段/类型对不上都再问 Qwen 一次。两次都失败就抛原来的文案，不转 Gemini。
+    // 闯关首批会关掉这次整段重试，避免同一篇长提示连跑两遍。
     const note = error instanceof CloudflareTextError ? retryNote(error.message) : undefined
-    if (!note) throw error
-    return parseCloudflareJson<T>(await once(note), schema)
+    if (!retry || !note) throw error
+    try {
+      return parseCloudflareJson<T>(await once(note), schema)
+    } catch (second) {
+      throw keepPartial(second, error)
+    }
   }
+}
+
+function keepPartial(second: unknown, first: unknown): unknown {
+  if (!(second instanceof CloudflareTextError) || !(first instanceof CloudflareTextError)) return second
+  if (second.partial !== undefined || first.partial === undefined) return second
+  return new CloudflareTextError(second.message, second.status, first.partial)
 }
 
 function retryNote(message: string): string | undefined {

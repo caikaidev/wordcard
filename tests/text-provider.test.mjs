@@ -366,6 +366,44 @@ test('quest aliases, object options, and a word map salvage on the first reply',
   }])
 })
 
+test('a shape miss can skip the repeat call and keep the partial object', async () => {
+  const { settings, calls } = env()
+  settings.AI.run = async () => {
+    calls.push({})
+    return { response: JSON.stringify({ words: [{ en: 'habit', zh: '习惯' }] }) }
+  }
+  await assert.rejects(
+    ai.generateJson(settings, '出题', questSchema, 'quest', 0.5, 'low', undefined, false),
+    (error) => {
+      assert.equal(error instanceof Error && error.message.includes('字段不完整'), true)
+      assert.equal(error.partial.words[0].en, 'habit')
+      assert.equal(error.partial.listening, undefined)
+      return true
+    },
+  )
+  assert.equal(calls.length, 1)
+})
+
+test('a failed retry keeps the first partial object', async () => {
+  const { settings, calls } = env()
+  let n = 0
+  settings.AI.run = async () => {
+    n++
+    calls.push({})
+    if (n === 1) return { response: JSON.stringify({ words: [{ en: 'habit', zh: '习惯' }] }) }
+    return { response: '写不出来' }
+  }
+  await assert.rejects(
+    ai.generateJson(settings, '出题', questSchema, 'quest'),
+    (error) => {
+      assert.equal(error instanceof Error && error.message.includes('不是合法 JSON'), true)
+      assert.equal(error.partial.words[0].en, 'habit')
+      return true
+    },
+  )
+  assert.equal(calls.length, 2)
+})
+
 test('numeric strings coerce to integers; an inner fragment still gets one retry', async () => {
   const { settings, calls } = env()
   const indexSchema = { type: 'OBJECT', properties: { senseIndex: { type: 'INTEGER' } }, required: ['senseIndex'] }
