@@ -8,6 +8,9 @@ import type { Discovery, DiscoverReport } from '../shared/discover'
 import type { LevelStatus, TestResult } from '../shared/level'
 import type { Quest, QuestProgress, StageId } from '../shared/quest'
 import type { LessonImportReport } from '../shared/lesson-import'
+import type { PassageLadder } from '../shared/passages'
+export type { PassageLadder }
+import { REMIX_TIMEOUT_SEC } from '../shared/remix'
 import type { CardMeta, EnrichResult, Grade, Item, ItemStatus, ItemType, PackageInfo, RemixResult, WeeklyReport } from '../shared/types'
 
 export class ApiError extends Error {
@@ -178,7 +181,22 @@ export const api = {
   pushSubscribe: (sub: PushSubscriptionJSON) => req<void>('/push/subscribe', { method: 'POST', body: json(sub) }),
   pushUnsubscribe: (endpoint: string) => req<void>('/push/unsubscribe', { method: 'POST', body: json({ endpoint }) }),
   pushTest: () => req<{ sent: number; failed?: number; note?: string }>('/push/test', { method: 'POST' }, 30_000),
-  remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, 40_000),
+  remix: (exclude: number[] = []) => req<RemixResult>('/remix', { method: 'POST', body: json({ exclude }) }, REMIX_TIMEOUT_SEC * 1000),
+  passages: () => req<PassageLadder>('/practice/passages'),
+  passage: (id: string) => req<PassageDetail>(`/practice/passages/${encodeURIComponent(id)}`),
+  completePassage: (id: string) =>
+    req<{ ok: true; nextId: string | null }>(`/practice/passages/${encodeURIComponent(id)}/complete`, { method: 'POST' }),
+}
+
+export interface PassageDetail {
+  id: string
+  title: string
+  text: string
+  words: number
+  band: number
+  bandName: string
+  state: 'done' | 'current' | 'locked'
+  nextId: string | null
 }
 
 export const ttsUrl = (text: string, slow = false) =>

@@ -291,8 +291,8 @@ export default function Review() {
             <div className="flex items-center gap-2">
               <Link
                 to="/remix"
-                aria-label="AI 重组：用今天要复习的词造几个新句子"
-                title="AI 重组：用今天要复习的词造几个新句子"
+                aria-label="AI 重组：用今天要复习的词写成一段短文"
+                title="AI 重组：用今天要复习的词写成一段短文"
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface text-ink"
               >
                 <IconSparkle />
@@ -387,19 +387,22 @@ export default function Review() {
             title={reviewed ? '今日完成！' : stats && stats.active + stats.done === 0 ? '词库还是空的' : '现在没有要复习的'}
             desc={
               reviewed
-                ? `今天复习了 ${reviewed} 张卡片${streak?.today ? `，连续打卡 ${streak.streak} 天` : ''}，坚持就是最难的部分，你做到了。想再巩固，可以用「AI 重组」把这些词放进新句子里读一遍。`
+                ? `今天复习了 ${reviewed} 张卡片${streak?.today ? `，连续打卡 ${streak.streak} 天` : ''}，坚持就是最难的部分，你做到了。想再巩固，可以用「AI 重组」把这些词写成一段短文。`
                 : stats && stats.active + stats.done === 0
                   ? '先添加几个单词或句子，AI 会帮你补全释义和例句。'
                   : '到期的卡片会自动出现在这里。'
             }
             action={
               <div className="flex flex-col items-center gap-3">
-                <div className="flex gap-2.5">
+                <div className="flex flex-wrap justify-center gap-2.5">
+                  <Link to="/practice" className={`${btnPrimary} no-underline`}>
+                    今日短文
+                  </Link>
                   <Link to="/add" className={`${btnGhost} no-underline`}>
                     <IconPlusCircle size={18} /> 添加
                   </Link>
                   {stats && stats.active > 0 && (
-                    <Link to="/remix" className={`${btnPrimary} no-underline`}>
+                    <Link to="/remix" className={`${btnGhost} no-underline`}>
                       <IconSparkle size={18} /> AI 重组
                     </Link>
                   )}
@@ -600,7 +603,7 @@ function Guide({ due, onClose }: { due: number; onClose: () => void }) {
   const steps: [string, string][] = [
     ['看卡片，先在心里回想', '正面是单词或句子，想想它的意思；有时是中文情境填空，要你说出英文。想好了点「显示答案」（电脑上按空格）。'],
     ['按记忆程度打分', '「忘了」会安排 10 分钟后正式复习，本轮末尾还会有一次不计分的巩固。看过首字母提示后最多选「模糊」；只有独立记住才能选「记得」。彻底掌握的可以点「已掌握」（DONE）。'],
-    ['复习完还想练？', `右上角 ✨「AI 重组」会用今天要复习的词现编几句新例句；「练习」页可以贴一篇文章，写几句英文让 AI 批改。`],
+    ['复习完还想练？', `右上角 ✨「AI 重组」会用今天要复习的词写成一段连贯短文；「练习」页有今日短文，也可以自己贴一篇。`],
   ]
   return (
     <Card className="review-guide flex flex-1 animate-rise flex-col gap-4 overflow-y-auto p-6 md:min-h-[440px] md:flex-none md:p-10">

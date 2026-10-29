@@ -46,7 +46,7 @@ export interface Settings {
   discoverSources: string
   /** 词汇量：词频排名在这之前的词不推荐 */
   vocabLevel: VocabLevel
-  /** 每天早上自动找一批新词，直接加入复习 */
+  /** 每天早上自动把发现的词加入复习。默认关：先读短文再决定 */
   discoverAuto: boolean
 }
 

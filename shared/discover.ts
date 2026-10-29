@@ -65,6 +65,91 @@ export interface Discovery {
   /** 在这一批帖子里出现在多少条内容中 */
   hits: number
   created_at: number
+  passage?: DiscoverPassage
+}
+
+export interface DiscoverArticle {
+  key: string
+  title: string
+  en: string
+  zh: string
+  /** 模型写成的连贯短文；false 表示还是原帖句子收成的一张卡片 */
+  composed: boolean
+  words: Discovery[]
+}
+
+function wordCount(text: string) {
+  return text.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g)?.length ?? 0
+}
+
+/** 模型返回的短文：太短，或几乎没用到挑出的词，就不当成短文。 */
+export function takeDiscoverPassage(raw: unknown, words: string[], batch: number): DiscoverPassage | null {
+  if (!raw || typeof raw !== 'object') return null
+  const p = raw as { title?: unknown; en?: unknown; zh?: unknown }
+  const en = typeof p.en === 'string' ? p.en.trim().slice(0, 4000) : ''
+  const title = typeof p.title === 'string' ? p.title.trim().slice(0, 80) : ''
+  const zh = typeof p.zh === 'string' ? p.zh.trim().slice(0, 4000) : ''
+  const targets = words.map((w) => w.trim()).filter(Boolean)
+  if (!title || wordCount(en) < 80) return null
+  const lower = en.toLowerCase()
+  const used = targets.filter((w) => lower.includes(w.toLowerCase())).length
+  if (used < Math.min(2, targets.length)) return null
+  return { title, en, zh, batch }
+}
+
+export function parseDiscoverPassage(raw: unknown): DiscoverPassage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const p = raw as { title?: unknown; en?: unknown; zh?: unknown; batch?: unknown }
+  const en = typeof p.en === 'string' ? p.en.trim() : ''
+  const title = typeof p.title === 'string' ? p.title.trim() : ''
+  const zh = typeof p.zh === 'string' ? p.zh.trim() : ''
+  const batch = Number(p.batch) || 0
+  if (!en || !title) return undefined
+  return { title: title.slice(0, 80), en: en.slice(0, 4000), zh: zh.slice(0, 4000), batch }
+}
+
+/** 同一批词收成一张短文卡片，而不是一张词一张卡。 */
+export function discoverArticles(items: Discovery[]): DiscoverArticle[] {
+  const groups: Discovery[][] = []
+  const index = new Map<string, number>()
+  for (const item of items) {
+    const key = item.passage?.en ? `p:${item.passage.batch}:${item.passage.title}` : `b:${item.created_at}`
+    const at = index.get(key)
+    if (at === undefined) {
+      index.set(key, groups.length)
+      groups.push([item])
+    } else groups[at].push(item)
+  }
+  return groups.map((words) => {
+    const passage = words.find((w) => w.passage?.en)?.passage
+    if (passage) {
+      return {
+        key: `p:${passage.batch}:${passage.title}`,
+        title: passage.title,
+        en: passage.en,
+        zh: passage.zh,
+        composed: true,
+        words,
+      }
+    }
+    const examples = words.map((w) => w.meta.example.trim()).filter(Boolean)
+    return {
+      key: `b:${words[0]?.created_at ?? 0}:${words[0]?.id ?? 0}`,
+      title: examples.length > 1 ? '这些词出现在最近的讨论里' : '这个词出现在最近的讨论里',
+      en: examples.join(' '),
+      zh: words.map((w) => w.meta.exampleZh.trim()).filter(Boolean).join(''),
+      composed: false,
+      words,
+    }
+  })
+}
+
+/** 这一批词被写成的短文。旧数据没有这层，页面会退回原帖句子拼成的卡片。 */
+export interface DiscoverPassage {
+  title: string
+  en: string
+  zh: string
+  batch: number
 }
 
 export interface DiscoverReport {
@@ -73,6 +158,8 @@ export interface DiscoverReport {
   /** 进入 AI 挑选前的候选数 */
   candidates: number
   added: number
+  /** 这批有没有写成一篇连贯短文 */
+  passage?: boolean
 }
 
 /** 自动加入时放进这个学习包，方便在词库里筛选、用学习包练习 */

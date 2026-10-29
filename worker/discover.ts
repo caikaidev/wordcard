@@ -3,7 +3,8 @@ import type { AppEnv, Env } from './env'
 import { generateJson } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import { isAdminEmail } from './auth'
-import { DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
+import { parseDiscoverPassage, takeDiscoverPassage, DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
+import { resolveVocabCount } from '../shared/passages'
 import type { CardMeta } from '../shared/types'
 import { rankOf } from './wordfreq'
 import { vocabEstimate } from './level'
@@ -200,6 +201,15 @@ const pickSchema = {
         required: ['index', 'text', 'ipa', 'pos', 'meaning', 'example', 'exampleZh', 'highlight', 'why'],
       },
     },
+    passage: {
+      type: 'OBJECT',
+      properties: {
+        title: { type: 'STRING' },
+        en: { type: 'STRING' },
+        zh: { type: 'STRING' },
+      },
+      required: ['title', 'en', 'zh'],
+    },
   },
   required: ['picks'],
 }
@@ -230,6 +240,13 @@ ${profile}
 - exampleZh：例句的中文翻译
 - highlight：例句里这个词实际出现的形式（必须是 example 的子串）
 - why：一句中文，不超过 30 个字，说明它在这些讨论里怎么用、为什么值得学
+
+另外写一篇短文 passage，把你挑出的词自然地用进去：
+- title：英文标题，不超过 8 个词
+- en：120 到 220 个英文词，3 到 6 句，同一场景的连贯短文，不是词表，也不是把例句拼在一起
+- 至少让 4 个挑出的词（不够 4 个就全部）以原形或合理词形出现在 en 里
+- zh：整段自然的中文
+- 不要在短文里逐词解释
 
 候选词：
 ${list}`
@@ -268,7 +285,7 @@ async function excluded(db: D1Database, user: string) {
 async function vocabCutoff(env: Env, user: string, level: number) {
   if (level) return level
   const est = await vocabEstimate(env, user)
-  return Math.min(20000, Math.max(1000, Math.round(est.vocab ?? 5000)))
+  return resolveVocabCount(0, est.vocab)
 }
 
 export async function runDiscover(env: Env, user: string, admin: boolean): Promise<{ report: DiscoverReport; ids: number[] }> {
@@ -296,13 +313,21 @@ export async function runDiscover(env: Env, user: string, admin: boolean): Promi
   if (!cands.length) return { report, ids: [] }
 
   const ai = await aiEnv(env, user, admin)
-  const { picks } = await generateJson<{ picks: Pick[] }>(ai, pickPrompt(cands, settings.coachProfile, cutoff), pickSchema, 'discover', 0.4)
+  const generated = await generateJson<{ picks: Pick[]; passage?: { title?: string; en?: string; zh?: string } }>(
+    ai,
+    pickPrompt(cands, settings.coachProfile, cutoff),
+    pickSchema,
+    'discover',
+    0.4,
+  )
+  const picks = generated.picks
   const now = Date.now()
   const insert = env.DB.prepare(
     `INSERT OR IGNORE INTO discoveries (user_id, text, meta, source, url, hits, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
   )
   const stmts: D1PreparedStatement[] = []
   const taken = new Set<string>()
+  const planned: { text: string; meta: ReturnType<typeof toMeta>; from: string; source: string; url: string | null; hits: number }[] = []
   for (const p of (picks ?? []).slice(0, MAX_PICKS)) {
     const c = cands[p.index]
     const text = typeof p.text === 'string' ? p.text.trim().replace(/\s+/g, ' ').slice(0, 60) : ''
@@ -313,7 +338,14 @@ export async function runDiscover(env: Env, user: string, admin: boolean): Promi
     const meta = toMeta(p)
     if (!meta.meaning) continue
     if (!meta.example) Object.assign(meta, { example: c.example, highlight: c.example.includes(c.word) ? c.word : '' })
-    stmts.push(insert.bind(user, text, JSON.stringify({ ...meta, from: c.word }), c.source, c.url, c.hits, now))
+    planned.push({ text, meta, from: c.word, source: c.source, url: c.url, hits: c.hits })
+  }
+  const passage = takeDiscoverPassage(generated.passage, planned.map((row) => row.text), now)
+  report.passage = !!passage
+  for (const row of planned) {
+    stmts.push(
+      insert.bind(user, row.text, JSON.stringify({ ...row.meta, from: row.from, ...(passage ? { passage } : {}) }), row.source, row.url, row.hits, now),
+    )
   }
   const res = stmts.length ? await env.DB.batch<{ id: number }>(stmts) : []
   const ids = res.flatMap((r) => r.results.map((x) => x.id))
@@ -324,13 +356,13 @@ export async function runDiscover(env: Env, user: string, admin: boolean): Promi
 type DiscoveryRow = { id: number; text: string; meta: string; source: string; url: string | null; hits: number; created_at: number }
 
 const toDiscovery = (r: DiscoveryRow): Discovery => {
-  let m: Partial<CardMeta & { why: string; from: string }> = {}
+  let m: Partial<CardMeta & { why: string; from: string; passage?: unknown }> = {}
   try {
     m = JSON.parse(r.meta)
   } catch {
     /* 坏数据当空的 */
   }
-  const { why = '', from: _, ...meta } = m
+  const { why = '', from: _, passage: passageRaw, ...meta } = m
   return {
     id: r.id,
     text: r.text,
@@ -340,6 +372,7 @@ const toDiscovery = (r: DiscoveryRow): Discovery => {
     url: r.url,
     hits: r.hits,
     created_at: r.created_at,
+    passage: parseDiscoverPassage(passageRaw),
   }
 }
 

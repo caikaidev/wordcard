@@ -1,6 +1,6 @@
 import { clearReadCache } from './readCache'
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Link, lessonIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
+import { Link, lessonIdOf, passageIdOf, pathIdOf, readerIdOf, savedIdOf, usePath, type Path } from './router'
 import { refreshStats, useStats } from './store'
 import { useReviewBatch } from './review-session'
 import { batchInProgress, batchProgress } from '../shared/review-batch'
@@ -20,6 +20,7 @@ const Weekly = lazy(() => import('./pages/Weekly'))
 const Discover = lazy(() => import('./pages/Discover'))
 const Level = lazy(() => import('./pages/Level'))
 const QuestPage = lazy(() => import('./pages/Quest'))
+const PassagePage = lazy(() => import('./pages/Passage'))
 
 const tabs: { to: Path; label: string; icon: ReactNode }[] = [
   { to: '/', label: '复习', icon: <IconCards size={22} /> },
@@ -41,7 +42,7 @@ export default function App() {
       await refreshStats()
       setRefreshKey((k) => k + 1)
     },
-    path !== '/add' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
+    path !== '/add' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && passageIdOf(path) === null, // 有输入框或需要选中文字的页面不启用
   )
   useEffect(() => {
     refreshStats()
@@ -89,11 +90,12 @@ export default function App() {
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
         {readerIdOf(path) !== null && <Reader key={`lesson-${readerIdOf(path)}`} kind="lesson" id={readerIdOf(path)!} />}
         {savedIdOf(path) !== null && <Reader key={`saved-${savedIdOf(path)}`} kind="saved" id={savedIdOf(path)!} />}
+        {passageIdOf(path) !== null && <PassagePage key={passageIdOf(path)!} id={passageIdOf(path)!} />}
         </Suspense>
       </main>
       </div>
       </div>
-      {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && <MobileTabBar path={path} />}
+      {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && passageIdOf(path) === null && <MobileTabBar path={path} />}
       <Confirmer />
       <Toaster />
       <SpeechFallback />
@@ -107,7 +109,7 @@ function MobileTabBar({ path }: { path: Path }) {
     <>
       <nav className="pb-safe grid shrink-0 grid-cols-4 border-t border-line bg-bg px-3 pt-1 md:hidden">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null || passageIdOf(path) !== null))
           return (
             <Link
               key={t.to}
@@ -136,7 +138,7 @@ function DesktopHeader({ path }: { path: Path }) {
       </Link>
       <nav className="flex gap-1 justify-self-center rounded-[14px] bg-line-soft p-1">
         {tabs.map((t) => {
-          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null))
+          const on = path === t.to || (t.to === '/add' && path === '/discover') || (t.to === '/practice' && (lessonIdOf(path) !== null || readerIdOf(path) !== null || pathIdOf(path) !== null || savedIdOf(path) !== null || passageIdOf(path) !== null))
           return (
             <Link
               key={t.to}
@@ -154,7 +156,7 @@ function DesktopHeader({ path }: { path: Path }) {
       <div className="flex shrink-0 items-center gap-2 justify-self-end whitespace-nowrap">
         <Link
           to="/remix"
-          title="用今天要复习的词，AI 现编几句新例句帮你巩固"
+          title="用今天要复习的词，写成一段连贯短文"
           className={`flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line px-3.5 text-sm no-underline ${
             path === '/remix' ? 'bg-invert-bg text-invert-fg' : 'bg-surface text-ink'
           }`}
