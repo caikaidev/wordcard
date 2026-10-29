@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { prefetch, speak, stop } from '../audio'
 import { REMIX_TIMEOUT_SEC } from '../../shared/remix'
 import type { RemixResult } from '../../shared/types'
@@ -32,14 +34,20 @@ export default function Remix() {
       setData(r)
     } catch (e) {
       setError(errMsg(e))
+      reportAiFailure(e, () => { void generate() })
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    if (!cache) generate()
-    return () => stopAll()
+    const resume = resumeMatches('/remix')
+    if (resume || !cache) void generate()
+    const finish = resume ? scheduleFinishOpenAiResume('/remix') : undefined
+    return () => {
+      finish?.()
+      stopAll()
+    }
   }, [])
 
   const stopAll = () => {

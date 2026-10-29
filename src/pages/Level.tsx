@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { BANDS, CEFR_LEVELS, FAKES_PER_TEST, WORDS_PER_BAND, type LevelStatus, type TestResult } from '../../shared/level'
 import { Link } from '../router'
 import { refreshStats } from '../store'
@@ -26,16 +28,19 @@ export default function Level() {
       .catch((e) => toast(errMsg(e), 'error'))
   useEffect(() => {
     load()
+    if (!resumeMatches('/level')) return
+    void start()
+    return scheduleFinishOpenAiResume('/level')
   }, [])
 
-  const start = async () => {
+  async function start() {
     setStarting(true)
     setResult(null)
     try {
       const r = await api.startLevelTest()
       setTest({ ...r, idx: 0, known: [] })
     } catch (e) {
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(e, () => { void start() })) toast(errMsg(e), 'error')
     } finally {
       setStarting(false)
     }

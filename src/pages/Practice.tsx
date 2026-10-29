@@ -1,6 +1,8 @@
 import { readCached } from '../readCache'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type SavedArticle } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { levelOf, readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft, type OpenAiRetryDraft } from '../openai-retry'
 import { LEVELS, type Level, type LessonSummary, type PracticeStats } from '../../shared/practice'
 import { formatReadingScore } from '../../shared/reading'
 import { practiceGenerateBlock } from '../../shared/practice-compose'
@@ -87,6 +89,20 @@ export default function Practice() {
       .catch(() => {})
     loadLessons()
   }, [loadLessons, loadStats])
+
+  useEffect(() => {
+    if (!resumeMatches('/practice')) return
+    const draft = readOpenAiDraft()
+    if (draft?.kind === 'practice' || draft?.kind === 'import') return
+    if (draft?.kind === 'package') {
+      if (!packages.length) return
+      if (packages.some((p) => p.id === draft.packageId)) return
+      toast('找不到那个学习包，请再生成一次')
+      return scheduleFinishOpenAiResume('/practice')
+    }
+    toast('OpenAI key 已保存。请再点一次刚才的操作')
+    return scheduleFinishOpenAiResume('/practice')
+  }, [packages])
 
   return (
     <div className="pt-safe flex flex-1 flex-col px-4 pb-6 md:px-6 md:pt-10">
@@ -306,28 +322,39 @@ function ContinueQuest({ lessons }: { lessons: LessonSummary[] }) {
 function ImportLessonButton() {
   const input = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
-  const onFile = async (f: File | undefined) => {
-    if (!f) return
+  const finishImport = (body: unknown) => {
     setBusy(true)
-    try {
-      let body: unknown
-      try {
-        body = JSON.parse(await f.text())
-      } catch {
-        throw new Error('文件不是合法的 JSON')
-      }
-      const r = await api.importLesson(body)
+    void api.importLesson(body).then((r) => {
       toast(
         `已导入「${r.title}」${r.generatedLesson ? '，练习内容由 AI 补全' : ''}${r.dropped ? `，${r.dropped} 道不完整的题被跳过` : ''}`,
         'success',
       )
       navigate(r.hasQuest ? `/practice/${r.id}/path` : `/practice/${r.id}`)
-    } catch (e) {
-      toast(errMsg(e), 'error')
-    } finally {
-      setBusy(false)
+    }).catch((e) => {
+      if (!reportAiFailure(e, () => finishImport(body), () => {
+        if (!stashOpenAiDraft({ kind: 'import', body })) toast('这份文件太大，保存 key 后请重新选择再导入', 'error')
+      })) toast(errMsg(e), 'error')
+    }).finally(() => setBusy(false))
+  }
+  useEffect(() => {
+    if (!resumeMatches('/practice')) return
+    const draft = readOpenAiDraft()
+    if (!draft || draft.kind !== 'import') return
+    finishImport(draft.body)
+    return scheduleFinishOpenAiResume('/practice')
+  }, [])
+  const onFile = async (f: File | undefined) => {
+    if (!f) return
+    let body: unknown
+    try {
+      body = JSON.parse(await f.text())
+    } catch {
+      toast('文件不是合法的 JSON', 'error')
       if (input.current) input.current.value = ''
+      return
     }
+    if (input.current) input.current.value = ''
+    finishImport(body)
   }
   return (
     <span className="flex items-center gap-2 text-xs">
@@ -502,6 +529,19 @@ function Composer({ onSaved }: { onSaved: () => void }) {
       .catch(() => setLevel((l) => l ?? 1))
   }, [])
 
+  useEffect(() => {
+    if (!resumeMatches('/practice')) return
+    const draft = readOpenAiDraft()
+    if (!draft || draft.kind !== 'practice') return
+    setSource(draft.source)
+    setUrl(draft.url)
+    setText(draft.text)
+    setLevel(levelOf(draft.level))
+    if (draft.images?.length) setImages(draft.images.map((image) => ({ ...image, preview: '' })))
+    createFromDraft(draft)
+    return scheduleFinishOpenAiResume('/practice')
+  }, [])
+
   const blockReason = practiceGenerateBlock({ source, url, text, imageCount: images.length })
   const ready = !blockReason
 
@@ -553,19 +593,42 @@ function Composer({ onSaved }: { onSaved: () => void }) {
     }
   }
 
+  function createFromDraft(draft: Extract<OpenAiRetryDraft, { kind: 'practice' }>) {
+    setBusy(true)
+    const input = {
+      level: levelOf(draft.level),
+      ...(draft.source === 'url' ? { url: draft.url.trim() } : draft.source === 'text' ? { text: draft.text.trim() } : {}),
+      ...(draft.source === 'image' && draft.images?.length ? { images: draft.images } : {}),
+    }
+    void api.createLesson(input).then((r) => navigate(`/practice/${r.id}`)).catch((e) => {
+      setBusy(false)
+      if (!reportAiFailure(e, () => createFromDraft(draft), () => stashOpenAiDraft(draft))) toast(errMsg(e), 'error')
+    })
+  }
+
   const create = async () => {
     if (!ready || busy) return
+    const draft: Extract<OpenAiRetryDraft, { kind: 'practice' }> = {
+      kind: 'practice',
+      source,
+      url,
+      text,
+      level: level ?? 1,
+      images: source === 'image' ? images.map(({ mime, data }) => ({ mime, data })) : undefined,
+    }
     setBusy(true)
     try {
       const r = await api.createLesson({
-        level: level ?? 1,
-        ...(source === 'url' ? { url: url.trim() } : source === 'text' ? { text: text.trim() } : {}),
-        ...(source === 'image' ? { images: images.map(({ mime, data }) => ({ mime, data })) } : {}),
+        level: levelOf(draft.level),
+        ...(draft.source === 'url' ? { url: draft.url.trim() } : draft.source === 'text' ? { text: draft.text.trim() } : {}),
+        ...(draft.source === 'image' && draft.images?.length ? { images: draft.images } : {}),
       })
       navigate(`/practice/${r.id}`)
     } catch (e) {
-      toast(errMsg(e), 'error')
       setBusy(false)
+      if (!reportAiFailure(e, () => createFromDraft(draft), () => {
+        if (!stashOpenAiDraft(draft)) toast('截图太大，保存 key 后请重新选图再生成', 'error')
+      })) toast(errMsg(e), 'error')
     }
   }
 

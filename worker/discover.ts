@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 import type { AppEnv, Env } from './env'
 import { generateJson } from './gemini'
-import { aiEnv, loadSettings } from './settings'
+import { OPENAI_OVERRIDE_HEADER } from '../shared/ai-failure'
+import { aiEnv, loadSettings, openAiRequestOverride } from './settings'
 import { isAdminEmail } from './auth'
 import { parseDiscoverPassage, takeDiscoverPassage, shouldAutoEnroll, DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
 import { resolveVocabCount } from '../shared/passages'
@@ -288,7 +289,7 @@ async function vocabCutoff(env: Env, user: string, level: number) {
   return resolveVocabCount(0, est.vocab)
 }
 
-export async function runDiscover(env: Env, user: string, admin: boolean): Promise<{ report: DiscoverReport; ids: number[] }> {
+export async function runDiscover(env: Env, user: string, admin: boolean, override?: 'openai'): Promise<{ report: DiscoverReport; ids: number[] }> {
   const settings = await loadSettings(env, user)
   const sources = parseSources(settings.discoverSources)
   const results = await Promise.allSettled(sources.map((s) => fetchSource(env, s)))
@@ -312,7 +313,7 @@ export async function runDiscover(env: Env, user: string, admin: boolean): Promi
   report.candidates = cands.length
   if (!cands.length) return { report, ids: [] }
 
-  const ai = await aiEnv(env, user, admin)
+  const ai = await aiEnv(env, user, admin, override)
   const generated = await generateJson<{ picks: Pick[]; passage?: { title?: string; en?: string; zh?: string } }>(
     ai,
     pickPrompt(cands, settings.coachProfile, cutoff),
@@ -441,7 +442,7 @@ discover.get('/', async (c) => {
 })
 
 discover.post('/run', async (c) => {
-  const { report, ids } = await runDiscover(c.env, c.get('user'), c.get('admin'))
+  const { report, ids } = await runDiscover(c.env, c.get('user'), c.get('admin'), openAiRequestOverride(c.req.header(OPENAI_OVERRIDE_HEADER)))
   // 手动找一批只生成待读短文。enrolled 固定为 0：点开、浏览都不会把词写进词库。
   return c.json({ report, count: ids.length, enrolled: 0 })
 })

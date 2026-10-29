@@ -1,5 +1,6 @@
 import type { Env } from './env'
 import { CloudflareTextError, cloudflareGenerateJson } from './cloudflare-text'
+import { OpenAITextError, openaiGenerateJson } from './openai-text'
 import {
   REMIX_ATTEMPT_MS,
   REMIX_ATTEMPTS,
@@ -15,6 +16,8 @@ import { pcmToWav } from './wav'
 import { SOURCE_LABEL, type DictResult, type DictSense } from './dictionary'
 
 export class GeminiError extends Error {
+  /** 文本生成失败时，页面可以重试、改用 OpenAI，或切换 Gemini。 */
+  switchable = false
   constructor(
     message: string,
     readonly status = 502,
@@ -23,6 +26,12 @@ export class GeminiError extends Error {
   ) {
     super(message)
   }
+}
+
+function textFailure(kind: UsageKind, message: string, status = 502, upstream = 0): GeminiError {
+  const err = new GeminiError(message, status, upstream)
+  if (kind !== 'tts') err.switchable = true
+  return err
 }
 
 const baseUrl = (env: Env) =>
@@ -109,7 +118,7 @@ type UsageMeta = {
 const DEFAULT_TIMEOUT_MS = 60_000
 
 async function post<T>(env: Env, path: string, body: unknown, call: { kind: UsageKind; model: string; timeoutMs?: number }): Promise<T> {
-  if (!env.GEMINI_API_KEY) throw new GeminiError('服务端未配置 GEMINI_API_KEY', 500)
+  if (!env.GEMINI_API_KEY) throw textFailure(call.kind, '服务端未配置 GEMINI_API_KEY', 500)
   await guard(env, call.kind)
   let res: Response
   try {
@@ -121,8 +130,8 @@ async function post<T>(env: Env, path: string, body: unknown, call: { kind: Usag
     })
   } catch (e) {
     await recordUsage(env, call.kind, call.model, 0, 0)
-    if (e instanceof Error && e.name === 'TimeoutError') throw new GeminiError('AI 响应超时了，请重试', 504)
-    throw new GeminiError('连不上 Gemini，请稍后再试')
+    if (e instanceof Error && e.name === 'TimeoutError') throw textFailure(call.kind, 'AI 响应超时了，请重试', 504)
+    throw textFailure(call.kind, '连不上 Gemini，请稍后再试')
   }
   const data = (await res.json().catch(() => ({}))) as T & UsageMeta & { error?: { message?: string } }
   const u = data.usageMetadata
@@ -136,7 +145,8 @@ async function post<T>(env: Env, path: string, body: unknown, call: { kind: Usag
   )
   if (res.status === 429) {
     // Google 那边的速率 / 每日额度用完了（每日额度按美国太平洋时间零点重置，约北京时间 15–16 点）
-    throw new GeminiError(
+    throw textFailure(
+      call.kind,
       call.kind === 'tts'
         ? 'Google 的语音额度暂时用完了（每分钟 10 次 / 每天 100 次），稍后再试；已缓存的语音照常能播'
         : 'Google 的调用额度暂时用完了，稍后再试',
@@ -145,7 +155,7 @@ async function post<T>(env: Env, path: string, body: unknown, call: { kind: Usag
     )
   }
   if (!res.ok) {
-    throw new GeminiError(`Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`, 502, res.status)
+    throw textFailure(call.kind, `Gemini 请求失败（${res.status}）：${data.error?.message ?? '未知错误'}`, 502, res.status)
   }
   return data
 }
@@ -176,7 +186,7 @@ async function generate(env: Env, model: string, body: unknown, kind: UsageKind,
     { kind, model, timeoutMs },
   )
   const parts = data.candidates?.[0]?.content?.parts
-  if (!parts?.length) throw new GeminiError('Gemini 没有返回内容，请重试')
+  if (!parts?.length) throw textFailure(kind, 'Gemini 没有返回内容，请重试')
   return parts
 }
 
@@ -192,7 +202,8 @@ export async function generateJson<T>(
   /** 闯关首批关掉同提示重试，缺的部分另一次短请求补。 */
   retry = true,
 ): Promise<T> {
-  // Cloudflare failures never silently trigger a Gemini call.
+  // 各家失败都不自动改道。Qwen 的同提示重试仍只在 Cloudflare 分支里，闯关首批可以关掉。
+  if (env.TEXT_PROVIDER === 'openai') return openaiGenerateJson<T>(env, prompt, schema, kind, temperature, timeoutMs)
   if (env.TEXT_PROVIDER !== 'gemini') return cloudflareGenerateJson<T>(env, prompt, schema, kind, temperature, retry)
   const userParts = typeof prompt === 'string' ? [{ text: prompt }] : prompt
   const body = (thinking: boolean) => ({
@@ -217,7 +228,7 @@ export async function generateJson<T>(
   try {
     return JSON.parse(text) as T
   } catch {
-    throw new GeminiError('Gemini 返回的不是合法 JSON，请重试')
+    throw textFailure(kind, 'Gemini 返回的不是合法 JSON，请重试')
   }
 }
 
@@ -231,7 +242,15 @@ const NO_ACCESS = 'NO_ACCESS'
  * 读取到的网页内容按输入 token 计费，记在“生成练习”名下。
  */
 export async function readUrl(env: Env, url: string): Promise<{ title: string; text: string }> {
-  if (env.TEXT_PROVIDER !== 'gemini') throw new GeminiError('此链接无法直接读取；免费模式不会自动调用 Gemini，请粘贴正文或手动切换 Gemini', 400)
+  if (env.TEXT_PROVIDER !== 'gemini') {
+    throw textFailure(
+      'lesson',
+      env.TEXT_PROVIDER === 'openai'
+        ? '此链接无法直接读取。OpenAI 不会打开网页，请粘贴正文，或切换到 Gemini 后再用链接'
+        : '此链接无法直接读取；免费模式不会自动调用 Gemini，请粘贴正文或手动切换 Gemini',
+      400,
+    )
+  }
   const prompt = `Read the web page at ${url} and output its main article content as plain text.
 Rules:
 - First line: the article title. Then an empty line. Then the article body, keeping paragraph breaks.
@@ -417,6 +436,7 @@ const remixSchema = {
 function retryableRemixError(e: unknown): boolean {
   if (e instanceof GeminiError) return e.status === 504 || e.status === 502
   if (e instanceof CloudflareTextError) return e.status === 502
+  if (e instanceof OpenAITextError) return e.status === 504 || e.status === 502
   return false
 }
 
@@ -448,7 +468,7 @@ export async function composeRemix(env: Env, words: { text: string; meaning: str
       if (attempt === REMIX_ATTEMPTS - 1 || !retryableRemixError(e)) throw e
     }
   }
-  throw new GeminiError(remixFailure(last) ?? '这次没有连成一段短文，请再试一次')
+  throw textFailure('remix', remixFailure(last) ?? '这次没有连成一段短文，请再试一次')
 }
 
 /* ------------------------------ 语音 ------------------------------ */

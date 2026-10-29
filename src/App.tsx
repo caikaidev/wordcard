@@ -4,7 +4,10 @@ import { Link, lessonIdOf, passageIdOf, pathIdOf, readerIdOf, savedIdOf, usePath
 import { refreshStats, useStats } from './store'
 import { useReviewBatch } from './review-session'
 import { batchInProgress, batchProgress } from '../shared/review-batch'
-import { Confirmer, Toaster } from './components/ui'
+import { Confirmer, Toaster, toast } from './components/ui'
+import { AiFailureDialog } from './components/AiFailureDialog'
+import { clearOpenAiResume, openAiResumePath } from '../shared/ai-failure'
+import { OPENAI_RESUME_EVENT, clearOpenAiDraft, readOpenAiDraft, scheduleFinishOpenAiResume } from './openai-retry'
 import { SpeechFallback } from './components/SpeechFallback'
 import { PullIndicator, hasNewVersion, usePullToRefresh } from './components/PullToRefresh'
 import { IconCards, IconGear, IconList, IconPen, IconPlusCircle, IconSparkle } from './components/icons'
@@ -47,6 +50,26 @@ export default function App() {
   useEffect(() => {
     refreshStats()
     scroller.current?.scrollTo(0, 0)
+  }, [path])
+  // 子页面的 effect 先跑，能在标记还在时发出带 OpenAI 的请求。这里只清理走错页面的暂存。
+  useEffect(() => {
+    let stored: string | null = null
+    try {
+      stored = openAiResumePath(sessionStorage)
+    } catch {
+      return
+    }
+    if (!stored) return
+    if (stored !== path && path !== '/settings') {
+      clearOpenAiResume(sessionStorage)
+      clearOpenAiDraft()
+      window.dispatchEvent(new Event(OPENAI_RESUME_EVENT))
+      return
+    }
+    if (stored === path && readOpenAiDraft()?.kind === 'lookup') {
+      toast('OpenAI key 已保存，请再点一次加入复习')
+      return scheduleFinishOpenAiResume(path)
+    }
   }, [path])
   // 从后台切回来（手机上常常隔了很久）：顺手拉一次数据，登录过期的话 api 会立刻带去重新登录，
   // 而不是等用户点了按钮才报错
@@ -96,6 +119,7 @@ export default function App() {
       </div>
       </div>
       {path !== '/remix' && path !== '/settings' && path !== '/discover' && path !== '/level' && lessonIdOf(path) === null && readerIdOf(path) === null && pathIdOf(path) === null && savedIdOf(path) === null && passageIdOf(path) === null && <MobileTabBar path={path} />}
+      <AiFailureDialog />
       <Confirmer />
       <Toaster />
       <SpeechFallback />

@@ -29,11 +29,16 @@ const subscribe = (cb: () => void) => {
   return () => window.removeEventListener('popstate', cb)
 }
 
-export function usePath(): Path {
-  const p = useSyncExternalStore(subscribe, () => window.location.pathname)
+const STATIC_PATHS = ['/', '/add', '/library', '/remix', '/weekly', '/settings', '/discover', '/level', '/practice'] as const
+
+export function asAppPath(p: string): Path | null {
   if (/^\/practice\/(\d+(\/read|\/path)?|saved\/\d+)$/.test(p)) return p as Path
   if (/^\/practice\/passage\/[a-z0-9-]+$/.test(p)) return p as Path
-  return (['/', '/add', '/library', '/remix', '/weekly', '/settings', '/discover', '/level', '/practice'] as const).find((x) => x === p) ?? '/'
+  return STATIC_PATHS.find((x) => x === p) ?? null
+}
+
+export function usePath(): Path {
+  return asAppPath(useSyncExternalStore(subscribe, () => window.location.pathname)) ?? '/'
 }
 
 export function navigate(to: Path) {

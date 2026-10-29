@@ -3,6 +3,8 @@ import { api } from '../api'
 import { LEVELS, type Level } from '../../shared/practice'
 import type { PackageInfo } from '../../shared/types'
 import { navigate } from '../router'
+import { reportAiFailure } from './AiFailureDialog'
+import { levelOf, readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft } from '../openai-retry'
 import { errMsg, toast } from './ui'
 
 let defaultLevel: Level | null = null
@@ -27,18 +29,29 @@ export default function PackagePractice({ pkg, onCreated }: { pkg: PackageInfo; 
   const pct = pkg.total ? Math.round((pkg.practiced / pkg.total) * 100) : 0
   const allPracticed = active > 0 && pkg.pending === 0
 
-  const create = async (repeat = false) => {
+  const create = async (repeat = false, at: Level = level) => {
     if (busy) return
     setBusy(true)
+    const draft = { kind: 'package' as const, packageId: pkg.id, level: at, repeat }
     try {
-      const r = await api.createPackageLesson(pkg.id, { level, repeat })
+      const r = await api.createPackageLesson(pkg.id, { level: at, repeat })
       onCreated?.()
       navigate(`/practice/${r.id}`)
     } catch (e) {
-      toast(errMsg(e), 'error')
       setBusy(false)
+      if (!reportAiFailure(e, () => { void create(repeat, at) }, () => stashOpenAiDraft(draft))) toast(errMsg(e), 'error')
     }
   }
+
+  useEffect(() => {
+    const path = window.location.pathname
+    if (path !== '/library' && path !== '/practice') return
+    if (!resumeMatches(path)) return
+    const draft = readOpenAiDraft()
+    if (!draft || draft.kind !== 'package' || draft.packageId !== pkg.id) return
+    void create(draft.repeat, levelOf(draft.level))
+    return scheduleFinishOpenAiResume(path)
+  }, [pkg.id])
 
   return (
     <section className="rounded-2xl border border-line-soft bg-surface p-4" aria-label={`为《${pkg.title}》生成练习`}>

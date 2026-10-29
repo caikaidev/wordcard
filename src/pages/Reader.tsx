@@ -1,6 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api, ApiError } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft } from '../openai-retry'
 import type { Lesson } from '../../shared/practice'
 import { decorateSentence, sameSentence, splitSentences, type DecorToken, type GuessItem } from '../../shared/reading'
 import { Link, navigate } from '../router'
@@ -92,7 +94,8 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
         setZh((m) => ({ ...m, ...Object.fromEntries(need.map((i, k) => [i, r.translations[k] ?? ''])) }))
         return true
       } catch (e) {
-        toast(errMsg(e), 'error')
+        const indexes = need
+        if (!reportAiFailure(e, () => { void fetchZh(indexes) }, () => stashOpenAiDraft({ kind: 'translate', indexes }))) toast(errMsg(e), 'error')
         return false
       } finally {
         setLoading((s) => new Set([...s].filter((i) => !need.includes(i))))
@@ -189,10 +192,32 @@ export default function Reader({ kind, id }: { kind: 'lesson' | 'saved'; id: num
       const r = await api.createLesson({ savedId: id })
       navigate(`/practice/${r.id}`)
     } catch (e) {
-      toast(errMsg(e), 'error')
       setCreating(false)
+      if (!reportAiFailure(e, () => { void createLesson() })) toast(errMsg(e), 'error')
     }
   }
+
+  useEffect(() => {
+    const path = window.location.pathname
+    if (!resumeMatches(path)) return
+    const draft = readOpenAiDraft()
+    if (draft?.kind === 'lookup' || draft?.kind === 'translate') return
+    if (kind !== 'saved' || draft) return
+    void createLesson()
+    return scheduleFinishOpenAiResume(path)
+  }, [kind, id])
+
+  useEffect(() => {
+    const path = window.location.pathname
+    if (!resumeMatches(path)) return
+    const draft = readOpenAiDraft()
+    if (draft?.kind !== 'translate') return
+    if (!paragraphs.length) return
+    const indexes = draft.indexes.filter((i) => paragraphs[i])
+    if (!indexes.length) return scheduleFinishOpenAiResume(path)
+    void fetchZh(indexes)
+    return scheduleFinishOpenAiResume(path)
+  }, [paragraphs, fetchZh])
 
   const title = lesson?.title || source?.title
   const link = lesson?.source_url ?? source?.url

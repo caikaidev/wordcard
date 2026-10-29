@@ -1,6 +1,7 @@
 import { readCached } from '../readCache'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { dueLabel } from '../../shared/srs'
 import type { Item, ItemStatus, PackageInfo } from '../../shared/types'
 import { libraryJump, refreshStats, useStats } from '../store'
@@ -20,10 +21,25 @@ export default function Library() {
   const [menuId, setMenuId] = useState<number | null>(null)
   const [packages, setPackages] = useState<PackageInfo[]>(() => readCached<{ packages: PackageInfo[] }>('/packages')?.packages ?? [])
   // 从复习卡片的「来自《包名》」跳过来时直接筛选该包（严格模式下初始化函数会跑两次，所以到 effect 里再清空）
-  const [pkgId, setPkgId] = useState<number | null>(() => libraryJump.packageId)
+  const [pkgId, setPkgId] = useState<number | null>(() => {
+    if (resumeMatches('/library')) {
+      const draft = readOpenAiDraft()
+      if (draft?.kind === 'package') return draft.packageId
+    }
+    return libraryJump.packageId
+  })
   useEffect(() => {
     libraryJump.packageId = null
   }, [])
+  useEffect(() => {
+    if (!resumeMatches('/library')) return
+    const draft = readOpenAiDraft()
+    if (draft?.kind !== 'package') return
+    if (!packages.length) return
+    if (packages.some((p) => p.id === draft.packageId)) return
+    toast('找不到那个学习包，请再生成一次')
+    return scheduleFinishOpenAiResume('/library')
+  }, [packages])
   const [showImport, setShowImport] = useState(false)
   const [editing, setEditing] = useState<Item | null>(null)
   const stats = useStats()

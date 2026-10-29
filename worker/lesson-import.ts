@@ -1,7 +1,8 @@
 import { Hono, type MiddlewareHandler } from 'hono'
 import type { AppEnv, Env } from './env'
 import { isAdminEmail } from './auth'
-import { aiEnv, loadSettings } from './settings'
+import { OPENAI_OVERRIDE_HEADER } from '../shared/ai-failure'
+import { aiEnv, loadSettings, openAiRequestOverride } from './settings'
 import { cleanLesson, generateLesson } from './practice'
 import { cleanQuest } from './quest'
 import { parseLessonImport, type LessonImportReport } from '../shared/lesson-import'
@@ -23,7 +24,14 @@ const count = (q: Partial<QuestContent> | null | undefined) =>
   (q?.cloze?.length ?? 0) +
   (q?.reading ?? []).reduce((n, r) => n + (Array.isArray(r?.questions) ? r.questions.length : 0), 0)
 
-export async function importLesson(env: Env, user: string, admin: boolean, raw: unknown, origin: string): Promise<{ error: string } | LessonImportReport> {
+export async function importLesson(
+  env: Env,
+  user: string,
+  admin: boolean,
+  raw: unknown,
+  origin: string,
+  override?: 'openai',
+): Promise<{ error: string } | LessonImportReport> {
   const parsed = parseLessonImport(raw)
   if (!parsed.ok) return { error: parsed.error }
   const d = parsed.data
@@ -35,7 +43,7 @@ export async function importLesson(env: Env, user: string, admin: boolean, raw: 
   if (d.lesson) {
     content = cleanLesson({ ...d.lesson, title: d.lesson.title || d.title }, level)
   } else {
-    content = await generateLesson(await aiEnv(env, user, admin), settings.coachProfile, level, d.text!)
+    content = await generateLesson(await aiEnv(env, user, admin, override), settings.coachProfile, level, d.text!)
     generatedLesson = true
     if (d.title) content.title = d.title
   }
@@ -214,7 +222,14 @@ ext.post('/lessons', async (c) => {
   const day = await hit(c.env.DB, `import-day:${user}`, lim.daily, DAY)
   if (!day.ok) return tooMany(c, day.retryAfter, `24 小时内已经导入 ${lim.daily} 次了`)
 
-  const r = await importLesson(c.env, user, c.get('admin'), body, new URL(c.req.url).origin)
+  const r = await importLesson(
+    c.env,
+    user,
+    c.get('admin'),
+    body,
+    new URL(c.req.url).origin,
+    openAiRequestOverride(c.req.header(OPENAI_OVERRIDE_HEADER)),
+  )
   if ('error' in r) return c.json(r, 400)
   return c.json(r, 201)
 })

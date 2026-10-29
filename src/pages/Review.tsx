@@ -1,6 +1,8 @@
 import { readCached } from '../readCache'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft } from '../openai-retry'
 import { prefetch, prefetchCached, speak, speakFast, stop } from '../audio'
 import { previewLabel } from '../../shared/srs'
 import { reviewGradeDecision } from '../../shared/review'
@@ -69,6 +71,12 @@ export default function Review() {
       .catch(() => {})
   }, [])
   useEffect(loadStreak, [loadStreak])
+  useEffect(() => {
+    if (!resumeMatches('/')) return
+    if (readOpenAiDraft()?.kind !== 'define') return
+    toast('OpenAI key 已保存。请再查一次这张卡的释义')
+    return scheduleFinishOpenAiResume('/')
+  }, [])
   // 复习方式读到之前先不出卡片，免得「只产出」模式下第一张先闪一下英文正面
   const [modeSetting, setMode] = useState<ReviewMode | null>(() => readCached<{ current: { reviewMode: ReviewMode } }>('/settings')?.current.reviewMode ?? null)
   const mode = modeSetting ?? 'mixed'
@@ -701,7 +709,7 @@ function Back({
     try {
       onUpdate((await api.define(item.id)).item)
     } catch (e) {
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(e, () => { void define() }, () => stashOpenAiDraft({ kind: 'define', itemId: item.id }))) toast(errMsg(e), 'error')
     } finally {
       setDefining(false)
     }

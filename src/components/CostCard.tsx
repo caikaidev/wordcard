@@ -137,7 +137,7 @@ export default function CostCard({ refreshKey = 0 }: { refreshKey?: number }) {
           )}
 
           <p className="mt-3 mb-0 text-xs leading-relaxed text-muted">
-            Gemini 按公开付费单价估算。Cloudflare Qwen 文本模型与 MeloTTS 按 Workers AI Neurons 计费，不在此金额中
+            Gemini 按公开付费单价估算。OpenAI 调用记在用量里，但没有公开单价，算作未计价。Cloudflare Qwen 文本模型与 MeloTTS 按 Workers AI Neurons 计费，也不在此金额中
             {t.unpriced > 0 && `（有 ${t.unpriced} 次调用不在本页价目表里）`}。
             Cloudflare 每日 10,000 Neurons 免费额度为账号共享；Workers Paid 超额可能收费。命中 R2 缓存不会再次推理。
             <a href={PRICING_URL} target="_blank" rel="noreferrer" className="text-accent">

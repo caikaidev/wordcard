@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { resumeMatches, scheduleFinishOpenAiResume } from '../openai-retry'
 import { prefetch } from '../audio'
 import { BLANK, type CardMeta, type EnrichResult } from '../../shared/types'
 import { refreshStats } from '../store'
@@ -62,7 +64,14 @@ export default function Add() {
     if (window.matchMedia('(min-width: 768px)').matches) inputRef.current?.focus()
   }, [])
 
-  const runEnrich = async (text = input) => {
+  useEffect(() => {
+    if (!resumeMatches('/add')) return
+    const text = store.input.trim()
+    if (text) void runEnrich(text)
+    return scheduleFinishOpenAiResume('/add')
+  }, [])
+
+  async function runEnrich(text = input) {
     const t = text.trim()
     if (!t || loading) return
     const id = ++reqSeq
@@ -77,7 +86,8 @@ export default function Add() {
     } catch (e) {
       if (id === store.loadingId) {
         patchStore({ loadingId: 0 })
-        toast(errMsg(e), 'error')
+        const again = t
+        if (!reportAiFailure(e, () => { void runEnrich(again) })) toast(errMsg(e), 'error')
       }
     }
   }

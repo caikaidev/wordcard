@@ -437,3 +437,185 @@ test('explicit Gemini selection continues using Gemini generateContent endpoint'
     assert.equal(calls.length, 0)
   } finally { globalThis.fetch = old }
 })
+
+function openaiEnv(model = 'gpt-6-astra', base = 'https://api.openai.com/v1/') {
+  const box = env('openai')
+  box.settings.OPENAI_API_KEY = 'sk-test-key-value'
+  box.settings.OPENAI_TEXT_MODEL = model
+  box.settings.OPENAI_BASE_URL = base
+  box.settings.AI.run = async () => { throw new Error('Qwen must not be called') }
+  return box
+}
+
+function chatReply(payload, status = 200, extra = {}) {
+  return Response.json({
+    choices: [{ message: { content: typeof payload === 'string' ? payload : JSON.stringify(payload) } }],
+    usage: { prompt_tokens: 3, completion_tokens: 4 },
+    ...extra,
+  }, { status })
+}
+
+test('OpenAI uses the official chat completions endpoint and the flagship model', async () => {
+  const { settings, calls, logs } = openaiEnv()
+  const old = globalThis.fetch
+  let seen
+  globalThis.fetch = async (url, opts) => {
+    seen = { url: String(url), body: JSON.parse(opts.body), headers: opts.headers }
+    return chatReply({ meaning: '承诺', examples: ['A commitment matters.'] })
+  }
+  try {
+    const result = await ai.generateJson(settings, 'Explain commitment', schema, 'enrich')
+    assert.deepEqual(result, { meaning: '承诺', examples: ['A commitment matters.'] })
+    assert.equal(seen.url, 'https://api.openai.com/v1/chat/completions')
+    assert.equal(seen.headers.authorization, 'Bearer sk-test-key-value')
+    assert.equal(seen.body.model, 'gpt-6-astra')
+    assert.equal(seen.body.reasoning_effort, 'low')
+    assert.equal(seen.body.max_completion_tokens, 8000)
+    assert.equal('temperature' in seen.body, false)
+    assert.deepEqual(seen.body.response_format, { type: 'json_object' })
+    assert.match(seen.body.messages[0].content, /JSON/)
+    assert.match(seen.body.messages[1].content, /JSON/)
+    assert.equal(calls.length, 0)
+    assert.ok(logs.some((row) => row.args[2] === 'gpt-6-astra'))
+  } finally { globalThis.fetch = old }
+})
+
+test('OpenAI base URL is configurable and drops a trailing slash', async () => {
+  const { settings } = openaiEnv('gpt-6-astra', 'https://example.test/v1/')
+  const old = globalThis.fetch
+  let url = ''
+  globalThis.fetch = async (next) => {
+    url = String(next)
+    return chatReply({ meaning: '承诺', examples: ['A'] })
+  }
+  try {
+    await ai.generateJson(settings, 'word', schema, 'enrich')
+    assert.equal(url, 'https://example.test/v1/chat/completions')
+  } finally { globalThis.fetch = old }
+})
+
+test('missing OpenAI key fails before any request', async () => {
+  const { settings, calls } = env('openai')
+  settings.AI.run = async () => { throw new Error('Qwen must not be called') }
+  const old = globalThis.fetch
+  globalThis.fetch = () => { throw new Error('OpenAI must not be called') }
+  try {
+    await assert.rejects(ai.generateJson(settings, 'x', schema, 'enrich'), /API key/)
+    assert.equal(calls.length, 0)
+  } finally { globalThis.fetch = old }
+})
+
+test('OpenAI unwraps an items array for array-root schemas', async () => {
+  const { settings, calls } = openaiEnv()
+  const old = globalThis.fetch
+  globalThis.fetch = async () => chatReply({ items: ['hello', 'world'] })
+  try {
+    const words = await ai.generateJson(settings, 'words', { type: 'ARRAY', items: { type: 'STRING' } }, 'remix')
+    assert.deepEqual(words, ['hello', 'world'])
+    assert.equal(calls.length, 0)
+  } finally { globalThis.fetch = old }
+})
+
+test('OpenAI sends screenshots as image_url data URLs', async () => {
+  const { settings, calls } = openaiEnv()
+  const old = globalThis.fetch
+  let content
+  globalThis.fetch = async (_url, opts) => {
+    content = JSON.parse(opts.body).messages[1].content
+    return chatReply({ meaning: '截图', examples: ['A'] })
+  }
+  try {
+    const result = await ai.generateJson(
+      settings,
+      [{ text: 'Read screenshot' }, { inlineData: { mimeType: 'image/png', data: 'ZmFrZQ==' } }],
+      schema,
+      'lesson',
+    )
+    assert.equal(result.meaning, '截图')
+    assert.equal(content[1].type, 'image_url')
+    assert.equal(content[1].image_url.url, 'data:image/png;base64,ZmFrZQ==')
+    assert.equal(calls.length, 0)
+  } finally { globalThis.fetch = old }
+})
+
+test('OpenAI 401 tells the user to replace the key', async () => {
+  const { settings } = openaiEnv()
+  const old = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ error: { message: 'Incorrect API key sk-test-key-value' } }, { status: 401 })
+  try {
+    await assert.rejects(ai.generateJson(settings, 'x', schema, 'enrich'), (error) => {
+      assert.equal(error.message, 'OpenAI API key 无效或没有权限，请到设置里更换')
+      assert.equal(error.message.includes('sk-test-key-value'), false)
+      return true
+    })
+  } finally { globalThis.fetch = old }
+})
+
+test('invalid OpenAI JSON is retried once', async () => {
+  const { settings } = openaiEnv()
+  const old = globalThis.fetch
+  let n = 0
+  globalThis.fetch = async () => {
+    n++
+    return chatReply('hello, not json')
+  }
+  try {
+    await assert.rejects(ai.generateJson(settings, 'x', schema, 'enrich'), /不是合法 JSON/)
+    assert.equal(n, 2)
+  } finally { globalThis.fetch = old }
+})
+
+test('older OpenAI models send temperature and max_tokens', async () => {
+  const { settings } = openaiEnv('gpt-4o-mini', 'https://api.openai.com/v1')
+  const old = globalThis.fetch
+  let body
+  globalThis.fetch = async (_url, opts) => {
+    body = JSON.parse(opts.body)
+    return chatReply({ meaning: '承诺', examples: ['A'] })
+  }
+  try {
+    await ai.generateJson(settings, 'word', schema, 'enrich', 0.4)
+    assert.equal(body.model, 'gpt-4o-mini')
+    assert.equal(body.temperature, 0.4)
+    assert.equal(body.max_tokens, 8000)
+    assert.equal('reasoning_effort' in body, false)
+    assert.equal('max_completion_tokens' in body, false)
+  } finally { globalThis.fetch = old }
+})
+
+test('a compatible endpoint that rejects reasoning_effort is retried without it', async () => {
+  const { settings } = openaiEnv()
+  const old = globalThis.fetch
+  const bodies = []
+  globalThis.fetch = async (_url, opts) => {
+    const body = JSON.parse(opts.body)
+    bodies.push(body)
+    if (bodies.length === 1) {
+      return Response.json({ error: { message: "Unsupported parameter: reasoning_effort" } }, { status: 400 })
+    }
+    return chatReply({ meaning: '承诺', examples: ['A'] })
+  }
+  try {
+    const result = await ai.generateJson(settings, 'word', schema, 'enrich')
+    assert.equal(result.meaning, '承诺')
+    assert.equal(bodies[0].reasoning_effort, 'low')
+    assert.equal('reasoning_effort' in bodies[1], false)
+    assert.equal('response_format' in bodies[1], false)
+    assert.equal(typeof bodies[1].temperature, 'number')
+    assert.equal(bodies.length, 2)
+  } finally { globalThis.fetch = old }
+})
+
+test('quest calls ask OpenAI for a larger completion budget', async () => {
+  const { settings } = openaiEnv()
+  const old = globalThis.fetch
+  let cap = 0
+  globalThis.fetch = async (_url, opts) => {
+    cap = JSON.parse(opts.body).max_completion_tokens
+    return chatReply({ meaning: '承诺', examples: ['A'] })
+  }
+  try {
+    await ai.generateJson(settings, '出题', schema, 'quest')
+    assert.equal(cap, 16000)
+  } finally { globalThis.fetch = old }
+})

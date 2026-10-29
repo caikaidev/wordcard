@@ -114,7 +114,9 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | 补全和造句用的模型 |
+| `GEMINI_TEXT_MODEL` | `gemini-3.8-flash` | 补全和造句用的 Gemini 模型 |
+| `OPENAI_TEXT_MODEL` | `gpt-6-astra` | OpenAI 默认模型，当前最强旗舰；设置页可改 |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI Chat Completions 根地址，可改成兼容端点 |
 | `GEMINI_TTS_MODEL` | `gemini-3.8-flash-tts` | 语音模型，以 AI Studio 当前可用列表为准 |
 | `GEMINI_VOICE` | `Kore` | 音色，可换 `Puck`、`Charon`、`Aoede` 等 |
 | `GEMINI_BASE_URL` | Google 官方地址 | 想走 Cloudflare AI Gateway 时填网关地址 |
@@ -123,14 +125,17 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 
 **执行区域**：`wrangler.jsonc` 的 `placement.region` 是请求路由设置，让 Worker 在美国执行、调用 Gemini 的请求从美国发出，避免 `User location is not supported`。它不是任何地区的合规方案，详见[自部署指南](docs/self-hosting.md#关于执行区域)。
 
-## 文本：Cloudflare 免费模式与 Gemini 一键切换
+## 文本：Qwen、Gemini、OpenAI
 
-「设置 → 文本 AI 引擎」提供两档（每个用户分别保存选择）：
+「设置 → 文本 AI 引擎」三选一（每个用户分别保存）：
 
-- **Cloudflare 免费（默认）**：使用 Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` 处理词卡、练习、闯关题库、批改、翻译等结构化 JSON 文本任务；不需要另外的 API key，与 MeloTTS 共享账号每天 10,000 Neurons 免费分配额度。Workers Paid 超额仍可能计费。
-- **Gemini**：一键切换后恢复原有 Gemini 3.8 Flash（管理员可在「高级」指定 Gemini 备用模型）。Qwen 出错时**不会自动换 Gemini**，避免意外计费。
+- **Qwen（默认，Cloudflare 免费）**：Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` 处理词卡、练习、闯关题库、批改、翻译等结构化 JSON。不需要另外的 API key，与 MeloTTS 共享账号每天 10,000 Neurons。Workers Paid 超额仍可能计费。
+- **Gemini**：Gemini 3.8 Flash（管理员可在「高级」指定备用模型）。读链接失败时，只有 Gemini 会用 URL context 打开网页。
+- **OpenAI**：官方 Chat Completions。默认模型 **`gpt-6-astra`**（当前最强旗舰），默认地址 **`https://api.openai.com/v1`**。模型、地址都可以在设置里改，地址也能指向其它兼容端点。key 存在该用户的 `user_settings`（页面不回显）；没填个人 key 时用部署环境的 `OPENAI_API_KEY`。`gpt-6-astra` / `gpt-6.1-sol` 不传 temperature，推理强度用 `low`。
 
-Cloudflare 文本模型只处理纯文本；截图识别或网页无法直接解析而需要 Gemini URL context 时，请手动切换 Gemini。Qwen 的 JSON 输出经服务端解析、必要字段和类型校验，不合格会明确报错，用户可重试或切回 Gemini。两种模型的用量记入同一 `usage` 日志，但设置页的美元预估只统计 Gemini，Cloudflare 实际 Neurons 请以 Cloudflare Dashboard 为准。
+Qwen 出错**不会自动换** Gemini 或 OpenAI。失败弹窗里「重试」仍用当前提供方；「用 OpenAI 重试」只覆盖这一次，没配 key 会去设置，保存后自动回来再试；「切换 Gemini」会把提供方改成 Gemini 再试。
+
+Cloudflare 文本模型只处理纯文本。截图可以走 Gemini 或 OpenAI。后台自动补题仍只走 Cloudflare Qwen，不会改到已经在队列里的任务。用量记入同一 `usage` 日志。设置页的美元预估只统计 Gemini；OpenAI 与 Qwen 记为未计价。Qwen 的实际 Neurons 以 Cloudflare Dashboard 为准。
 
 ## 语音：Cloudflare Workers AI MeloTTS
 

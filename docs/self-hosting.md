@@ -67,6 +67,7 @@ npx wrangler r2 bucket create wordcard-audio
 | `CLOUDFLARE_ACCOUNT_ID` | 是 | 第 4 步的帐户 ID |
 | `D1_DATABASE_ID` | 是 | 第 3 步的数据库 ID |
 | `GEMINI_API_KEY` | 是 | 第 2 步的 key |
+| `OPENAI_API_KEY` | 否 | OpenAI 官方 key。不填时，每个用户仍可在设置页保存自己的 key。默认模型 `gpt-6-astra`，默认地址 `https://api.openai.com/v1` |
 | `ACCESS_TEAM_DOMAIN` | 第 7 步再填 | 形如 `yourteam.cloudflareaccess.com` |
 | `ACCESS_AUD` | 第 7 步再填 | 64 位十六进制的 AUD |
 | `ADMIN_EMAILS` | 建议 | 你的登录邮箱，多个用英文逗号隔开。管理员可以改模型、管理语音缓存、查看各成员用量 |

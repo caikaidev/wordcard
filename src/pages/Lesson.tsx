@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft } from '../openai-retry'
 import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../shared/practice'
 import { lessonListMeaning, splitScoreLabels } from '../../shared/reading'
 import type { CardMeta } from '../../shared/types'
@@ -38,6 +40,16 @@ export default function LessonPage({ id }: { id: number }) {
       })
       .catch((e) => setError(errMsg(e)))
   }, [id])
+
+  useEffect(() => {
+    const path = `/practice/${id}`
+    if (!resumeMatches(path)) return
+    if (!lesson && !error) return
+    const draft = readOpenAiDraft()
+    if (lesson && draft?.kind === 'grade' && draft.lessonId === id) return
+    toast('OpenAI key 已保存。请再提交一次刚才的句子')
+    return scheduleFinishOpenAiResume(path)
+  }, [id, lesson, error])
 
   // Warm the quest only after the learner spends time on this lesson.
   // Best effort: budget or queue outages must not block reading/writing.
@@ -344,22 +356,42 @@ function TaskStep({
   const missing = mode === 'blanks' ? fills.filter((f) => !f.trim()).length : 0
   const canSubmit = !busy && !!composed.trim() && missing === 0
 
-  const submit = async () => {
-    if (!canSubmit) return
+  const submitText = async (raw: string) => {
+    const composedText = raw.replace(/\s+/g, ' ').trim()
+    if (!composedText || busy) return
     setBusy(true)
     try {
-      const r = await api.submit(lesson.id, idx, composed.replace(/\s+/g, ' ').trim())
+      const r = await api.submit(lesson.id, idx, composedText)
       celebrate(r.checkin)
       justGraded.current = true
-      setText(composed.replace(/\s+/g, ' ').trim())
+      setText(composedText)
       setMode('free')
       setEditing(false)
       onGraded(r.lesson)
     } catch (e) {
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(
+        e,
+        () => { void submitText(composedText) },
+        () => stashOpenAiDraft({ kind: 'grade', lessonId: lesson.id, idx, text: composedText }),
+      )) toast(errMsg(e), 'error')
     } finally {
       setBusy(false)
     }
+  }
+
+  useEffect(() => {
+    const path = `/practice/${lesson.id}`
+    if (!resumeMatches(path)) return
+    const draft = readOpenAiDraft()
+    if (!draft || draft.kind !== 'grade' || draft.lessonId !== lesson.id || draft.idx !== idx) return
+    setText(draft.text)
+    void submitText(draft.text)
+    return scheduleFinishOpenAiResume(path)
+  }, [lesson.id, idx])
+
+  const submit = () => {
+    if (!canSubmit) return
+    void submitText(composed)
   }
 
   const startEditing = () => {

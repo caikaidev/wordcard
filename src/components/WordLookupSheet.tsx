@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { matchingSenseIndex } from '../../shared/retention'
 import { createPortal } from 'react-dom'
 import { api, ApiError } from '../api'
+import { reportAiFailure } from './AiFailureDialog'
+import { stashOpenAiDraft } from '../openai-retry'
 import { refreshStats } from '../store'
 import { EnglishDefinition, MerriamWebsterLogo, SpeakButton, errMsg, toast } from './ui'
 import { IconCheck, IconClose, IconPlusCircle } from './icons'
@@ -63,7 +65,7 @@ export function WordLookupSheet({
       refreshStats()
     } catch (e) {
       setState('idle')
-      toast(errMsg(e), 'error')
+      if (!reportAiFailure(e, () => { void save() }, () => stashOpenAiDraft({ kind: 'lookup' }))) toast(errMsg(e), 'error')
     }
   }
 

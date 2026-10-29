@@ -4,6 +4,8 @@ import { createQuestBufferSession, type RefillState } from '../quest-buffer-sess
 import SpeakingExercise from '../components/SpeakingExercise'
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+import { reportAiFailure } from '../components/AiFailureDialog'
+import { readOpenAiDraft, resumeMatches, scheduleFinishOpenAiResume, stashOpenAiDraft } from '../openai-retry'
 import { speak, speakFast, stop, prefetch, prefetchCached } from '../audio'
 import { setSfx, sfx, sfxOn } from '../sfx'
 import { STAGES, STAGE_ICONS, buildStage, routeStatus, sameTokens, unlocked, type Exercise, type Quest, type StageId } from '../../shared/quest'
@@ -29,14 +31,32 @@ export default function QuestPage({ id }: { id: number }) {
       onQuest: (result) => setQuest((q) => q?.lessonId === result.lessonId
         // Polling can race with passStage. Only append content; keep live progress/feedback.
         ? { ...q, content: result.content, buffer: result.buffer } : result),
-      onError: (message) => setError(message || null), onRefill: setRefill,
+      onError: (message) => setError(message || null),
+      onFail: (error, source) => {
+        const retryTail = source === 'complete' || source === 'refill'
+        reportAiFailure(
+          error,
+          () => {
+            if (retryTail) void session.current?.complete()
+            else void session.current?.load()
+          },
+          () => { stashOpenAiDraft({ kind: 'quest', lessonId: id, tail: retryTail }) },
+        )
+      },
+      onRefill: setRefill,
       visible: () => !document.hidden,
     })
     session.current = loader
     const visibility = () => loader.visibilityChanged()
     document.addEventListener('visibilitychange', visibility)
-    void loader.load()
+    const path = window.location.pathname
+    const draft = resumeMatches(path) ? readOpenAiDraft() : null
+    const tail = draft?.kind === 'quest' && draft.lessonId === id && draft.tail
+    if (tail) void loader.complete()
+    else void loader.load()
+    const finish = resumeMatches(path) ? scheduleFinishOpenAiResume(path) : undefined
     return () => {
+      finish?.()
       loader.close()
       if (session.current === loader) session.current = null
       document.removeEventListener('visibilitychange', visibility)

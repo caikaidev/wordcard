@@ -45,6 +45,8 @@
 
   "vars": {
     "GEMINI_TEXT_MODEL": "gemini-3.8-flash",
+    "OPENAI_TEXT_MODEL": "gpt-6-astra",
+    "OPENAI_BASE_URL": "https://api.openai.com/v1",
     // 历史设置兼容保留：TTS 语音生成已默认切换到 Cloudflare MeloTTS，不再调用以下 Gemini 配置。
     "GEMINI_TTS_MODEL": "gemini-3.8-flash-tts",
     "GEMINI_VOICE": "Kore",
