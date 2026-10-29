@@ -190,7 +190,8 @@ function WaitNote() {
     <WaitProgress
       stages={[
         [0, '正在挑掉过浅的词…'],
-        [3, 'AI 正在写成一段连贯短文…通常 5–15 秒'],
+        [3, 'AI 正在写成同一段短文…通常 5–15 秒'],
+        [18, '上一稿没有连上，正在重写…'],
       ]}
       timeout={REMIX_TIMEOUT_SEC}
       timeoutHint={`到 ${REMIX_TIMEOUT_SEC} 秒还没写好会停下来，点「重试」即可`}

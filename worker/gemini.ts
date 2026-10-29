@@ -1,6 +1,15 @@
 import type { Env } from './env'
-import { cloudflareGenerateJson } from './cloudflare-text'
-import { remixPrompt } from '../shared/remix'
+import { CloudflareTextError, cloudflareGenerateJson } from './cloudflare-text'
+import {
+  REMIX_ATTEMPT_MS,
+  REMIX_ATTEMPTS,
+  REMIX_TIMEOUT_SEC,
+  normalizeRemixSentences,
+  remixCoherent,
+  remixFailure,
+  remixPrompt,
+  remixRetryPrompt,
+} from '../shared/remix'
 import type { CardMeta, EnrichResult, ItemType, RemixSentence } from '../shared/types'
 import { pcmToWav } from './wav'
 import { SOURCE_LABEL, type DictResult, type DictSense } from './dictionary'
@@ -403,13 +412,41 @@ const remixSchema = {
   },
 }
 
-export async function remix(env: Env, words: { text: string; meaning: string }[]): Promise<RemixSentence[]> {
-  const r = await generateJson<RemixSentence[]>(env, remixPrompt(words), remixSchema, 'remix', 0.7, 'low', 30_000)
-  return (Array.isArray(r) ? r : []).slice(0, 5).map((s) => ({
-    en: s.en ?? '',
-    zh: s.zh ?? '',
-    highlights: Array.isArray(s.highlights) ? s.highlights.filter((h) => h && s.en?.includes(h)) : [],
-  }))
+function retryableRemixError(e: unknown): boolean {
+  if (e instanceof GeminiError) return e.status === 504 || e.status === 502
+  if (e instanceof CloudflareTextError) return e.status === 502
+  return false
+}
+
+/**
+ * 写一段短文。句数不够或前后句对不上时再写一次；仍不合格就抛出失败原因，不把零散句返回给页面。
+ * 两次调用的时间盒在页面超时之内，来不及重写就直接失败。
+ */
+export async function composeRemix(env: Env, words: { text: string; meaning: string }[]): Promise<RemixSentence[]> {
+  const started = Date.now()
+  const budget = (REMIX_TIMEOUT_SEC - 8) * 1000
+  let last: RemixSentence[] = []
+  for (let attempt = 0; attempt < REMIX_ATTEMPTS; attempt++) {
+    const remain = budget - (Date.now() - started)
+    if (attempt > 0 && remain < 8_000) break
+    const prompt = attempt === 0 ? remixPrompt(words) : remixRetryPrompt(words, last)
+    try {
+      const raw = await generateJson<RemixSentence[]>(
+        env,
+        prompt,
+        remixSchema,
+        'remix',
+        attempt === 0 ? 0.7 : 0.4,
+        'low',
+        Math.min(REMIX_ATTEMPT_MS, Math.max(remain, 1_000)),
+      )
+      last = normalizeRemixSentences(Array.isArray(raw) ? raw : [])
+      if (remixCoherent(last)) return last
+    } catch (e) {
+      if (attempt === REMIX_ATTEMPTS - 1 || !retryableRemixError(e)) throw e
+    }
+  }
+  throw new GeminiError(remixFailure(last) ?? '这次没有连成一段短文，请再试一次')
 }
 
 /* ------------------------------ 语音 ------------------------------ */
