@@ -318,6 +318,54 @@ test('dropping every array item does not pretend the payload is empty', async ()
   assert.equal(calls.length, 2)
 })
 
+test('quest aliases, object options, and a word map salvage on the first reply', async () => {
+  const { settings, calls } = env()
+  const tolerant = {
+    type: 'OBJECT',
+    properties: {
+      words: {
+        type: 'ARRAY',
+        items: { type: 'OBJECT', properties: { en: { type: 'STRING' }, zh: { type: 'STRING' }, distractors: { type: 'ARRAY', items: { type: 'STRING' } } }, required: ['en', 'zh', 'distractors'] },
+      },
+      listening: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: { en: { type: 'STRING' }, zh: { type: 'STRING' }, distractors: { type: 'ARRAY', items: { type: 'STRING' } }, extra: { type: 'ARRAY', items: { type: 'STRING' } } },
+          required: ['en', 'zh', 'distractors', 'extra'],
+        },
+      },
+    },
+    required: ['words', 'listening'],
+  }
+  settings.AI.run = async () => {
+    calls.push({})
+    return { response: JSON.stringify({
+      Words: {
+        commit: { meaning: '提交', options: [{ text: '收获' }, { text: '放弃' }, { text: '推迟' }] },
+        harvest: { zh: '收割', distractors: '甲，乙，丙' },
+        ship: { en: 'ship', zh: '发出', distractors: '["推迟","取消","搁置"]' },
+      },
+      Listening: [
+        { word: 'Ship the commit.', translation: '把这次提交发出去。', choices: ['把收成运走。', '取消提交。', '明天再写。'] },
+      ],
+    }) }
+  }
+  const result = await ai.generateJson(settings, '出题', tolerant, 'quest')
+  assert.equal(calls.length, 1)
+  assert.deepEqual(result.words, [
+    { en: 'commit', zh: '提交', distractors: ['收获', '放弃', '推迟'] },
+    { en: 'harvest', zh: '收割', distractors: ['甲', '乙', '丙'] },
+    { en: 'ship', zh: '发出', distractors: ['推迟', '取消', '搁置'] },
+  ])
+  assert.deepEqual(result.listening, [{
+    en: 'Ship the commit.',
+    zh: '把这次提交发出去。',
+    distractors: ['把收成运走。', '取消提交。', '明天再写。'],
+    extra: [],
+  }])
+})
+
 test('numeric strings coerce to integers; an inner fragment still gets one retry', async () => {
   const { settings, calls } = env()
   const indexSchema = { type: 'OBJECT', properties: { senseIndex: { type: 'INTEGER' } }, required: ['senseIndex'] }

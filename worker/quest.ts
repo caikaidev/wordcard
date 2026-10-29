@@ -13,8 +13,15 @@ import { PLAYABLE, unlocked, XP_PER_STAGE, XP_PERFECT_BONUS, type Quest, type Qu
 
 export const quest = new Hono<AppEnv>()
 
-/** 出题时给 AI 的原文长度上限 */
+/** 出题时给 AI 的原文长度上限。首批只出认词和听力，原文过长时模型会把 listening 写丢，连着两次都失败。 */
 const MAX_SOURCE = 6000
+const STARTER_SOURCE = 1600
+
+const STARTER_QUALITY = `中文质量要求：
+- 中文单独读要通顺，先按语境意思再按中文习惯写，不要照搬英语语序。
+- 干扰项不能是正确答案的另一种译法，也不能靠病句让人猜。
+- 听力 en 必须是脱离上下文也能听懂的完整句子。
+- 自查只在内部完成，不要写进回复。`
 
 const str = { type: 'STRING' }
 const strs = { type: 'ARRAY', items: str }
@@ -112,6 +119,7 @@ function phasePrompt(prompt: string, part: QuestPart, existing?: QuestContent): 
 2. reading：1–2 段 40–90 词的原文，每段 1–2 题。passage 为原文；questions 中 question、answer、distractors（3 项）、explain 都用自然中文。
 3. speaking：3 个独立完整的英文跟读短句（en）及中文译文（zh），忠实原文，不使用省略号或占位符。
 不要重出、修改或返回首批题目。已生成的听力句子：${existing?.listening.map((l) => l.en).join(' / ') ?? ''}`
+  if (part === 'starter') return prompt.slice(0, begin) + requirements + '\n\n' + STARTER_QUALITY
   return prompt.slice(0, begin) + requirements + '\n\n' + prompt.slice(end)
 }
 
@@ -213,7 +221,8 @@ export async function generateQuestBank(
         WHERE f.user_id = ? AND l.level = ? AND f.created_at >= ?
       ) WHERE n <= 8 ORDER BY stage, n
     `).bind(user, lesson.level, Date.now() - 90 * 86400_000).all<DifficultySample>()
-    const prompt = questPrompt(content, lesson.source_text?.slice(0, MAX_SOURCE) ?? null, lesson.level, difficultyPrompt(samples.results))
+    const sourceLimit = effectivePart === 'starter' ? STARTER_SOURCE : MAX_SOURCE
+    const prompt = questPrompt(content, lesson.source_text?.slice(0, sourceLimit) ?? null, lesson.level, difficultyPrompt(samples.results))
     const raw = await generateJson<Partial<QuestContent>>(
       ai, phasePrompt(prompt, effectivePart, existing), phaseSchema(effectivePart), 'quest', 0.5,
     )

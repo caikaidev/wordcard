@@ -109,6 +109,8 @@ test('new generation uses recent same-user, same-level feedback; cached banks ar
     assert.match(prompt, /听力：在当前档位内稍降低难度/)
     assert.match(prompt, /阅读：保持当前档位的常规难度/)
     assert.match(prompt, /只生成首批认词与听力题/)
+    assert.match(prompt, /中文单独读要通顺/)
+    assert.doesNotMatch(prompt, /绊脚石/)
     assert.doesNotMatch(prompt, /speaking：3 个独立/)
     assert.equal(calls, 1)
     const cached = await (await s.request('/20')).json()

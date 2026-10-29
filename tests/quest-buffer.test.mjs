@@ -69,6 +69,8 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
   const s = setup()
   try {
     s.lesson(1)
+    const sourceMark = '甲'.repeat(2000)
+    s.sqlite.prepare('UPDATE lessons SET source_text = ? WHERE id = 1').run(sourceMark)
     const first = await s.request('/1', 'POST')
     assert.equal(first.status, 200, await first.clone().text())
     const q = await first.json()
@@ -79,6 +81,9 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
     assert.equal(s.calls.length, 1)
     const prompt = s.calls[0].input.messages[0].content
     assert.match(prompt, /只生成首批认词与听力题/)
+    assert.match(prompt, /中文单独读要通顺/)
+    assert.doesNotMatch(prompt, /绊脚石/)
+    assert.equal((prompt.match(/甲/g) ?? []).length, 1600)
     const progress = JSON.stringify({ stages: { words: { accuracy: 1, firstAccuracy: 1, at: 1 } }, xp: 15 })
     s.sqlite.prepare('UPDATE quests SET progress = ? WHERE lesson_id = 1').run(progress)
     assert.equal((await prepareQuest(s.env, 'alice', 1)).status, 'cached', 'opening lesson does not auto-fill tail')
@@ -95,11 +100,46 @@ test('new bank serves ten ready screens, tail appends to twenty without rewritin
     assert.equal(s.sqlite.prepare('SELECT progress FROM quests').get().progress, progress)
     assert.equal(s.calls.length, 2)
     assert.match(s.calls[1].input.messages[0].content, /只补充后半套题/)
+    assert.match(s.calls[1].input.messages[0].content, /绊脚石/)
+    assert.equal((s.calls[1].input.messages[0].content.match(/甲/g) ?? []).length, 2000)
     await s.deliver(job.jobId)
     await s.request('/1', 'POST')
     await s.request('/1/complete', 'POST')
     assert.equal(s.calls.length, 2, 'cached, complete and redelivered tasks spend no inference')
     await Promise.all(s.tasks)
+  } finally { s.sqlite.close() }
+})
+
+test('aliased first quest reply stays playable instead of a shape 502', async () => {
+  const s = setup()
+  try {
+    s.lesson(11)
+    s.env.AI.run = async (model, input) => {
+      s.calls.push({ model, input })
+      return { response: JSON.stringify({
+        Words: {
+          commit: { meaning: '提交', options: [{ text: '收获' }, { text: '放弃' }, { text: '推迟' }] },
+          harvest: { zh: '收割', distractors: ['甲', '乙', '丙'] },
+        },
+        Listening: [
+          { word: 'Ship the commit today.', translation: '今天把这次提交发出去。', choices: ['把收成运走。', '取消提交。', '明天再写。'], extra: ['park', 'bike'] },
+          { sentence: 'Harvest comes after the commit.', chinese: '提交之后才是收割。', options: '甲，乙，丙' },
+        ],
+      }) }
+    }
+    const response = await s.request('/11', 'POST')
+    assert.equal(response.status, 200, await response.clone().text())
+    const body = await response.json()
+    assert.equal(s.calls.length, 1)
+    assert.equal(body.buffer.phase, 'starter')
+    assert.equal(body.content.words[0].en, 'commit')
+    assert.equal(body.content.words[0].zh, '提交')
+    assert.deepEqual(body.content.words[0].distractors, ['收获', '放弃', '推迟'])
+    assert.equal(body.content.words[1].en, 'harvest')
+    assert.equal(body.content.listening[0].en, 'Ship the commit today.')
+    assert.equal(body.content.listening[1].zh, '提交之后才是收割。')
+    assert.deepEqual(body.content.listening[1].distractors, ['甲', '乙', '丙'])
+    assert.ok(body.content.words.length >= 2 && body.content.listening.length >= 2)
   } finally { s.sqlite.close() }
 })
 
