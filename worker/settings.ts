@@ -1,6 +1,6 @@
 import type { Env } from './env'
 import { COACH_PROFILE_MAX, isSafeId, type Settings } from '../shared/settings'
-import { DEFAULT_COACH_PROFILE, isLevel } from '../shared/practice'
+import { DEFAULT_COACH_PROFILE, isLevel, resolveCoachProfile } from '../shared/practice'
 import { DEFAULT_SOURCES, DEFAULT_VOCAB_LEVEL, formatSources, isVocabLevel, parseSources } from '../shared/discover'
 import { DEFAULT_DAILY_GOAL, DEFAULT_REMINDER_HOUR, REMINDER_HOURS, isDailyGoal } from '../shared/streak'
 
@@ -31,7 +31,7 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
     ttsModel: isSafeId(gm.ttsModel) ? gm.ttsModel : env.GEMINI_TTS_MODEL,
     voice: isSafeId(gm.voice) ? gm.voice : env.GEMINI_VOICE,
     practiceLevel: isLevel(level) ? level : 1,
-    coachProfile: typeof um.coachProfile === 'string' && um.coachProfile.trim() ? um.coachProfile : DEFAULT_COACH_PROFILE,
+    coachProfile: resolveCoachProfile(um.coachProfile),
     reviewMode: isReviewMode(um.reviewMode) ? um.reviewMode : 'mixed',
     dailyGoal: isDailyGoal(goal) ? goal : DEFAULT_DAILY_GOAL,
     reminderHour: isReminderHour(hour) ? hour : DEFAULT_REMINDER_HOUR,

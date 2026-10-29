@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, ApiError } from '../api'
 import { LEVELS, type GradeResult, type Lesson, type Submission } from '../../shared/practice'
+import { splitScoreLabels } from '../../shared/reading'
 import type { CardMeta } from '../../shared/types'
 import { Link, navigate } from '../router'
 import { refreshStats } from '../store'
@@ -128,9 +129,10 @@ export default function LessonPage({ id }: { id: number }) {
               to={`/practice/${lesson.id}/read`}
               className="mt-3 flex h-11 items-center justify-center gap-1.5 rounded-xl border border-line bg-surface text-[14px] font-medium text-ink no-underline"
             >
-              <IconBook size={17} /> 读原文 · 点词查义、收藏
+              <IconBook size={17} /> 读原文 · 先猜后查
             </Link>
           )}
+          <ScoreSplit lesson={lesson} />
 
           {/* 生词 */}
           {c.words.length > 0 && (
@@ -192,7 +194,7 @@ export default function LessonPage({ id }: { id: number }) {
 
           {/* 输出任务 */}
           <h2 className="mt-7 mb-0 text-[13px] font-semibold">输出任务 · 3 句话</h2>
-          <p className="mt-0.5 mb-0 text-xs text-muted">一句一句来。提交前先大声读一遍，读不顺的地方通常就是写得不自然的地方。</p>
+          <p className="mt-0.5 mb-0 text-xs text-muted">写作单独计分，不和上面的阅读分混在一起。一句一句来。提交前先大声读一遍，读不顺的地方通常就是写得不自然的地方。</p>
           <div className="mt-2.5 flex flex-col gap-2.5">
             {c.tasks.map((t, idx) => (
               <TaskStep
@@ -226,6 +228,17 @@ export default function LessonPage({ id }: { id: number }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function ScoreSplit({ lesson }: { lesson: Lesson }) {
+  const writingPassed = new Set(lesson.submissions.filter((s) => s.passed).map((s) => s.idx)).size
+  const labels = splitScoreLabels(lesson.reading, writingPassed)
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <span className="rounded-full bg-chip px-2.5 py-1 text-xs text-ink">{labels.reading}</span>
+      <span className="rounded-full bg-chip px-2.5 py-1 text-xs text-ink">{labels.writing}</span>
     </div>
   )
 }

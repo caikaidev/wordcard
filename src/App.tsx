@@ -87,8 +87,8 @@ export default function App() {
         {path === '/settings' && <Settings />}
         {path === '/practice' && <Practice />}
         {lessonIdOf(path) !== null && <LessonPage id={lessonIdOf(path)!} />}
-        {readerIdOf(path) !== null && <Reader kind="lesson" id={readerIdOf(path)!} />}
-        {savedIdOf(path) !== null && <Reader kind="saved" id={savedIdOf(path)!} />}
+        {readerIdOf(path) !== null && <Reader key={`lesson-${readerIdOf(path)}`} kind="lesson" id={readerIdOf(path)!} />}
+        {savedIdOf(path) !== null && <Reader key={`saved-${savedIdOf(path)}`} kind="saved" id={savedIdOf(path)!} />}
         </Suspense>
       </main>
       </div>

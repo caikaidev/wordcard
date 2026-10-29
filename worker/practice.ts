@@ -6,10 +6,15 @@ import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import { checkIn, streakStatus } from './streak'
 import type { QuestProgress } from '../shared/quest'
+import { parseReadingScore } from '../shared/reading'
 import {
   LEVEL_RULES,
   TASK_GOALS,
+  applyDailyReadingVoice,
+  coachExampleHint,
   isLevel,
+  lessonPrompt,
+  packageLessonPrompt,
   type GradeResult,
   type Lesson,
   type LessonContent,
@@ -77,33 +82,6 @@ const lessonSchema = {
   required: ['title', 'fit', 'fitNote', 'summary', 'words', 'expressions', 'tasks', 'speaking'],
 }
 
-function lessonPrompt(profile: string, level: Level, source: string) {
-  return `你是一名英语教练。根据下面提供的文章，为学习者设计一次 15–30 分钟的练习。
-
-# 学习者设定
-${profile}
-
-# 当前档位
-${LEVEL_RULES[level].task}
-
-# 要求（讲解用中文，示例用英文）
-- title：文章标题（英文原标题；没有就起一个简短的）
-- fit：这篇文章对学习者现阶段是否合适（ok / hard / easy）；fitNote：一两句中文说明，太难就直接说并建议换什么材料
-- summary：一句简单英文概括文章主旨
-- words：最多 5 个值得学的生词或短语，只选文章里出现过的；ipa 美式音标（短语可留空）；meaning 中文释义；quote 文章里包含它的原句（太长可以截取一段，但必须在完整单词处断开，不要用 ... 或 … 截断单词）
-- expressions：2–3 个能直接用在学习者目标场景里的英文句式（目标场景以学习者设定为准，没写就按日常与职场沟通；pattern，用 ... 表示可替换部分），meaning 中文说明，example 贴近学习者生活或工作的英文例句
-- tasks：固定 3 个，依次是
-  1. 讲清楚：文章讲了什么
-  2. 有观点：同意或不同意什么，为什么
-  3. 连到自己：和学习者的工作或经历有什么关系
-  goal 分别填 "${TASK_GOALS.join('" "')}"；prompt 用中文说明这一句要写什么（可给思路提示）；template 按当前档位给出（挑战档留空字符串）
-- speaking：1–2 个英文口语题，贴合学习者目标场景的提问方式（比如目标是面试就模拟面试官），可在散步时用 1 分钟回答；hint 中文提示回答思路
-- 回复简洁，适合手机阅读
-
-# 文章
-${source}`
-}
-
 export function cleanLesson(r: Partial<LessonContent>, level: Level): LessonContent {
   const str = (v: unknown, max = 1000) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
   const arr = <T,>(v: unknown, n: number) => (Array.isArray(v) ? (v.slice(0, n) as T[]) : [])
@@ -148,7 +126,7 @@ export async function generateLesson(ai: Env, profile: string, level: Level, sou
   )
   const parts: GeminiPart[] = [{ text: prompt }, ...images.map((i) => ({ inlineData: { mimeType: i.mime, data: i.data } }))]
   const raw = await generateJson<Partial<LessonContent>>(ai, parts, lessonSchema, 'lesson')
-  return cleanLesson(raw, level)
+  return applyDailyReadingVoice(cleanLesson(raw, level), profile)
 }
 
 practice.post('/lessons', async (c) => {
@@ -217,31 +195,6 @@ const packageLessonSchema = {
 
 type PackageCard = { id: number; text: string; ipa: string; meaning: string; example: string; ref: string; lapses: number }
 
-function packageLessonPrompt(profile: string, level: Level, title: string, ref: string, cards: PackageCard[]) {
-  const list = cards.map((c, i) => `${i + 1}. ${c.text}（${c.meaning}）\n   原句：${c.example}`).join('\n')
-  return `你是一名英语教练。学习者正在读《${title}》${ref ? `（${ref}）` : ''}，下面是从原文里摘出的 ${cards.length} 个值得学的词/短语和它们的原句。请围绕这些原句，为学习者设计一次 15–30 分钟的练习。
-
-# 学习者设定
-${profile}
-
-# 当前档位
-${LEVEL_RULES[level].task}
-
-# 要求（讲解用中文，示例用英文）
-- summary：一句简单英文，概括这些原句共同讲的内容
-- expressions：2–3 个能直接用在学习者目标场景里的英文句式（优先从原句里提炼；pattern 用 ... 表示可替换部分），meaning 中文说明，example 贴近学习者生活或工作的英文例句
-- tasks：固定 3 个，依次是
-  1. 讲清楚：这些原句讲了什么
-  2. 有观点：同意或不同意其中的什么观点，为什么
-  3. 连到自己：和学习者的工作或经历有什么关系
-  goal 分别填 "${TASK_GOALS.join('" "')}"；prompt 用中文说明这一句要写什么（可给思路提示，最好引导用上上面的词）；template 按当前档位给出（挑战档留空字符串）
-- speaking：1–2 个英文口语题，贴合学习者目标场景的提问方式，可在散步时用 1 分钟回答；hint 中文提示回答思路
-- 回复简洁，适合手机阅读
-
-# 词和原句
-${list}`
-}
-
 /**
  * 为学习包生成下一套练习：取包里「进行中、还没练过」的词，按导入顺序选出下一个章节，
  * 章节内先练最近忘过的，凑够一套（5 词）。词的释义和原句直接来自卡片，AI 只负责出题。
@@ -300,17 +253,20 @@ practice.post('/packages/:id/lessons', async (c) => {
     'lesson',
   )
   const n = ((await db.prepare('SELECT COUNT(*) AS n FROM lessons WHERE user_id = ? AND package_id = ?').bind(user, pkgId).first<{ n: number }>())?.n ?? 0) + 1
-  const content = cleanLesson(
-    {
-      ...raw,
-      title: `${pkg.title} · ${ref ? `${ref} · ` : ''}第 ${n} 套`,
-      fit: 'ok',
-      fitNote: '',
-      words: chosen.map((c) => ({ word: c.text, ipa: c.ipa, meaning: c.meaning, quote: c.example })),
-    },
-    level,
+  const content = applyDailyReadingVoice(
+    cleanLesson(
+      {
+        ...raw,
+        title: `${pkg.title} · ${ref ? `${ref} · ` : ''}第 ${n} 套`,
+        fit: 'ok',
+        fitNote: '',
+        words: chosen.map((c) => ({ word: c.text, ipa: c.ipa, meaning: c.meaning, quote: c.example })),
+      },
+      level,
+    ),
+    settings.coachProfile,
   )
-  // 原句拼成「原文」，练习页里可以直接读、点词查义
+  // 原句拼成「原文」，练习页里可以先猜后查、点词查义
   const source = chosen.map((c) => c.example).filter(Boolean).join('\n\n')
 
   const row = await db
@@ -335,7 +291,8 @@ practice.get('/lessons', async (c) => {
     `SELECT l.id, l.created_at, l.level, l.title,
             COUNT(DISTINCT CASE WHEN s.passed = 1 THEN s.idx END) AS passed,
             COUNT(DISTINCT s.idx) AS submitted,
-            q.progress AS quest_progress, q.updated_at AS quest_updated
+            q.progress AS quest_progress, q.updated_at AS quest_updated,
+            MAX(l.reading_score) AS reading_score
      FROM lessons l
      LEFT JOIN submissions s ON s.lesson_id = l.id
      LEFT JOIN quests q ON q.lesson_id = l.id AND q.user_id = l.user_id
@@ -343,8 +300,8 @@ practice.get('/lessons', async (c) => {
      GROUP BY l.id ORDER BY l.created_at DESC LIMIT 100`,
   )
     .bind(c.get('user'))
-    .all<Omit<LessonSummary, 'quest'> & { quest_progress: string | null; quest_updated: number | null }>()
-  const lessons: LessonSummary[] = results.map(({ quest_progress, quest_updated, ...l }) => {
+    .all<Omit<LessonSummary, 'quest' | 'reading'> & { quest_progress: string | null; quest_updated: number | null; reading_score: string | null }>()
+  const lessons: LessonSummary[] = results.map(({ quest_progress, quest_updated, reading_score, ...l }) => {
     let quest: LessonSummary['quest'] = null
     if (quest_progress) {
       try {
@@ -354,7 +311,7 @@ practice.get('/lessons', async (c) => {
         /* 坏数据当没开始 */
       }
     }
-    return { ...l, quest }
+    return { ...l, quest, reading: parseReadingScore(reading_score) }
   })
   return c.json({ lessons })
 })
@@ -377,10 +334,10 @@ function visibleSubmissions(rows: (Omit<Submission, 'passed' | 'result'> & { pas
 
 async function loadLesson(env: Env, id: number, user: string): Promise<Lesson | null> {
   const l = await env.DB.prepare(
-    'SELECT id, created_at, level, source_url, title, content, source_text IS NOT NULL AS has_source FROM lessons WHERE id = ? AND user_id = ?',
+    'SELECT id, created_at, level, source_url, title, content, source_text IS NOT NULL AS has_source, reading_score FROM lessons WHERE id = ? AND user_id = ?',
   )
     .bind(id, user)
-    .first<{ id: number; created_at: number; level: number; source_url: string | null; title: string; content: string; has_source: number }>()
+    .first<{ id: number; created_at: number; level: number; source_url: string | null; title: string; content: string; has_source: number; reading_score: string | null }>()
   if (!l) return null
   const { results } = await env.DB.prepare(
     'SELECT id, idx, attempt, text, passed, result, created_at FROM submissions WHERE lesson_id = ? ORDER BY created_at',
@@ -397,6 +354,7 @@ async function loadLesson(env: Env, id: number, user: string): Promise<Lesson | 
     submissions: visibleSubmissions(results),
     // 有原文，或者有链接可以重新抓取
     readable: !!l.has_source || !!l.source_url,
+    reading: parseReadingScore(l.reading_score),
   }
 }
 
@@ -404,6 +362,22 @@ practice.get('/lessons/:id', async (c) => {
   const lesson = await loadLesson(c.env, Number(c.req.param('id')), c.get('user'))
   if (!lesson) return c.json({ error: '找不到这份练习' }, 404)
   return c.json({ lesson })
+})
+
+/** 记下这篇的阅读理解成绩。只更新这一列，不改原文、词库或写作记录。 */
+practice.post('/lessons/:id/reading', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.json<unknown>().catch(() => null)
+  const score = parseReadingScore(body)
+  if (!score) return c.json({ error: '阅读成绩格式不对' }, 400)
+  const user = c.get('user')
+  const row = await c.env.DB.prepare('SELECT id FROM lessons WHERE id = ? AND user_id = ?').bind(id, user).first()
+  if (!row) return c.json({ error: '找不到这份练习' }, 404)
+  await c.env.DB
+    .prepare('UPDATE lessons SET reading_score = ? WHERE id = ? AND user_id = ?')
+    .bind(JSON.stringify(score), id, user)
+    .run()
+  return c.json({ reading: score })
 })
 
 /** 原文：已保存就直接返回；老练习只有链接的，第一次打开时抓取并保存 */
@@ -515,7 +489,7 @@ ${text}
 - reference：更地道的参考版本，贴近学习者原意和水平，不要改得面目全非
 - translations：学习者用中文括号写的部分，给出英文说法；没有就空数组
 - scores：1–5 分，content 内容完整度、grammar 语法准确度、naturalness 表达自然度、expression 是否用上了今天的句式
-- remember：从这次批改里挑一个最值得记的英文表达（text、中文 meaning、一个贴近学习者工作的 example）；没有合适的就三个字段都留空
+- remember：从这次批改里挑一个最值得记的英文表达（text、中文 meaning、${coachExampleHint(profile)}）；没有合适的就三个字段都留空
 - 回复简洁，适合手机阅读`
 }
 
