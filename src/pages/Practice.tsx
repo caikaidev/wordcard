@@ -8,6 +8,7 @@ import { Link, navigate } from '../router'
 import { PageTitle, errMsg, toast } from '../components/ui'
 import { IconBookmark, IconChevronRight, IconClipboard, IconClose, IconFlame, IconImage, IconLink, IconShare, IconSparkle, IconText } from '../components/icons'
 import { ShareSheet } from '../components/ShareSheet'
+import { PassageHome } from '../components/PassageHome'
 import PackagePractice from '../components/PackagePractice'
 import { StreakDetail } from '../components/Streak'
 import { LESSON_DOC_URL } from '../../shared/lesson-import'
@@ -92,6 +93,7 @@ export default function Practice() {
       <div className="md:hidden">
         <PageTitle eyebrow="英语教练" title="练习" />
       </div>
+      <PassageHome />
       <StatsCard stats={stats} phase={statsPhase} error={statsError} onRetry={loadStats} />
       {lessons && <ContinueQuest lessons={lessons} />}
       <Composer onSaved={loadSaved} />
@@ -584,10 +586,10 @@ function Composer({ onSaved }: { onSaved: () => void }) {
     >
       <h2 id="new-lesson" className="m-0 flex items-center gap-1.5 text-[15px] font-semibold">
         <IconSparkle size={16} className="text-accent" />
-        新练习
+        自己贴一篇
       </h2>
       <p className="mt-1 mb-0 text-xs text-muted">
-        {shared ? '已从分享带入，确认档位后点「生成练习」' : '发一篇文章，AI 按你的档位出生词、句式和 3 句输出任务'}
+        {shared ? '已从分享带入，确认档位后点「生成练习」' : '链接、正文或截图都可以，AI 仍按你的档位出练习'}
       </p>
 
       <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl bg-line-soft p-1" role="tablist">

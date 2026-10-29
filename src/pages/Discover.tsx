@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { DEFAULT_SOURCES, VOCAB_LEVELS, formatSources, parseSources, sourceLabel, type Discovery, type DiscoverReport } from '../../shared/discover'
+import { DEFAULT_SOURCES, VOCAB_LEVELS, discoverArticles, formatSources, parseSources, sourceLabel, type Discovery, type DiscoverArticle, type DiscoverReport } from '../../shared/discover'
 import type { Settings } from '../../shared/settings'
 import type { LevelStatus } from '../../shared/level'
 import { Link } from '../router'
 import { refreshStats } from '../store'
-import { Highlighted, SpeakButton, WaitProgress, errMsg, toast } from '../components/ui'
+import { GlossSpan } from '../components/GlossText'
+import { WaitProgress, confirmDialog, errMsg, toast } from '../components/ui'
 import { IconBack, IconSparkle } from '../components/icons'
 
 /** 发现新词：从 HN / Reddit 最近的讨论里，挑出你还没学、又经常出现的词 */
@@ -98,6 +99,7 @@ export default function Discover() {
       <div className="px-4 pt-1 md:px-6">
         <div className="text-[13px] tracking-wide text-muted">HN · Reddit 上反复出现、你还没学的词</div>
         <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">发现新词</h1>
+        <p className="mt-1 mb-0 text-xs leading-relaxed text-muted">结果是含这些词的短文。先读，点词再决定要不要加入复习。</p>
       </div>
 
       <section className="mx-4 mt-5 flex flex-col gap-3.5 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6">
@@ -136,9 +138,9 @@ export default function Discover() {
               </div>
             </div>
             <label className="flex items-center gap-3">
-              <span className="flex flex-1 flex-col gap-0.5">
-                <span className="text-[14px] text-ink">每天早上自动找一批，直接加入复习</span>
-                <span className="text-xs text-muted">6 点左右运行；认识的词复习时标 DONE 就不会再出现</span>
+                <span className="flex flex-1 flex-col gap-0.5">
+                <span className="text-[14px] text-ink">自动加入复习（可选）</span>
+                <span className="text-xs text-muted">默认先读短文再决定。打开后，早上找到的词会直接进词库</span>
               </span>
               <input
                 type="checkbox"
@@ -176,27 +178,26 @@ export default function Discover() {
         <div className="mx-4 mt-5 h-40 animate-shimmer rounded-2xl bg-surface md:mx-6" />
       ) : items.length === 0 ? (
         <p className="mx-4 mt-6 text-sm leading-relaxed text-muted md:mx-6">
-          {report ? '' : '还没有待看的新词。点上面的按钮，从最近的讨论里找一批。'}
+          {report ? '' : '还没有待看的短文。点上面的按钮，从最近的讨论里找一批。'}
         </p>
       ) : (
         <>
           <div className="mx-4 mt-6 mb-2 flex items-baseline justify-between md:mx-6">
-            <h2 className="m-0 text-[13px] font-semibold">待看 {items.length} 个</h2>
-            <span className="text-xs text-muted">认识的点「认识」，以后不再推荐</span>
+            <h2 className="m-0 text-[13px] font-semibold">含这些词的短文 {discoverArticles(items).length} 篇</h2>
+            <span className="text-xs text-muted">先读，再决定学不学</span>
           </div>
           <div className="mx-4 flex flex-col gap-2.5 md:mx-6">
-            {items.map((d) => (
-              <DiscoveryCard key={d.id} d={d} busy={busy.has(d.id)} onLearn={() => act([d.id], 'learn')} onKnow={() => act([d.id], 'know')} />
+            {discoverArticles(items).map((article) => (
+              <ArticleCard
+                key={article.key}
+                article={article}
+                busy={busy}
+                onLearn={(id) => act([id], 'learn')}
+                onKnow={(id) => act([id], 'know')}
+                onLearnAll={() => act(article.words.map((d) => d.id), 'learn')}
+              />
             ))}
           </div>
-          {items.length > 1 && (
-            <button
-              onClick={() => act(items.map((d) => d.id), 'learn')}
-              className="mx-4 mt-3 h-12 rounded-[14px] border border-line bg-surface text-[14px] font-medium text-ink md:mx-6"
-            >
-              剩下 {items.length} 个全部加入复习
-            </button>
-          )}
         </>
       )}
     </div>
@@ -249,7 +250,13 @@ function ReportLine({ report }: { report: DiscoverReport }) {
       {read.length > 0 && (
         <span>
           读了 {read.map((s) => `${s.label} ${s.docs} 条`).join('、')}，
-          {report.added ? `挑出 ${report.added} 个新词。` : report.candidates ? 'AI 觉得这批里没有特别值得学的，过一阵再来。' : '没找到你没学过的高频词，过一阵再来。'}
+          {report.added
+            ? report.passage
+              ? `挑出 ${report.added} 个词，写成 1 篇短文。`
+              : `挑出 ${report.added} 个词。这批没写成连贯短文，先把原句收成卡片。`
+            : report.candidates
+              ? 'AI 觉得这批里没有特别值得学的，过一阵再来。'
+              : '没找到你没学过的高频词，过一阵再来。'}
         </span>
       )}
       {failed.map((s) => (
@@ -261,49 +268,121 @@ function ReportLine({ report }: { report: DiscoverReport }) {
   )
 }
 
-function DiscoveryCard({ d, busy, onLearn, onKnow }: { d: Discovery; busy: boolean; onLearn: () => void; onKnow: () => void }) {
+function glossForms(article: DiscoverArticle) {
+  const forms: { form: string; word: Discovery }[] = []
+  const lower = article.en.toLowerCase()
+  for (const word of article.words) {
+    const candidates = [word.meta.highlight, word.text].map((s) => s.trim()).filter(Boolean)
+    const form = candidates.find((c) => lower.includes(c.toLowerCase()))
+    if (form) forms.push({ form, word })
+  }
+  return forms
+}
+
+function ArticleCard({
+  article,
+  busy,
+  onLearn,
+  onKnow,
+  onLearnAll,
+}: {
+  article: DiscoverArticle
+  busy: Set<number>
+  onLearn: (id: number) => void
+  onKnow: (id: number) => void
+  onLearnAll: () => void
+}) {
+  const [showZh, setShowZh] = useState(false)
+  const [pickedId, setPickedId] = useState<number | null>(null)
+  const forms = glossForms(article)
+  const hit = article.words.find((word) => word.id === pickedId) ?? null
+  const inText = new Set(forms.map((f) => f.word.id))
+  const missing = article.words.filter((word) => !inText.has(word.id))
+  const sources = [...new Set(article.words.map((w) => w.source))].join(' · ')
   return (
     <article className="rounded-2xl border border-line-soft bg-surface p-4">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="font-serif text-[22px] leading-tight text-ink">{d.text}</span>
-            {d.meta.ipa && <span className="text-[13px] text-muted">{d.meta.ipa}</span>}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs text-muted">{article.composed ? '连贯短文' : '原帖句子'}{sources ? ` · ${sources}` : ''}</div>
+          <h3 className="m-0 mt-0.5 font-serif text-[18px] leading-snug">{article.title}</h3>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowZh((v) => !v)}
+          className="h-8 shrink-0 rounded-full border border-line bg-transparent px-3 text-[12px] text-ink"
+        >
+          {showZh ? '隐藏中文' : '显示中文'}
+        </button>
+      </div>
+      {article.en ? (
+        <p className="mt-3 mb-0 font-serif text-[16px] leading-relaxed text-ink">
+          <GlossSpan
+            text={article.en}
+            forms={forms.map((f) => f.form)}
+            active={hit ? forms.find((f) => f.word.id === hit.id)?.form ?? null : null}
+            onPick={(form) => {
+              const word = forms.find((f) => f.form.toLowerCase() === form.toLowerCase())?.word
+              if (word) setPickedId(word.id)
+            }}
+          />
+        </p>
+      ) : (
+        <p className="mt-3 mb-0 text-sm text-muted">这批还没有能读的正文。</p>
+      )}
+      {!article.composed && <p className="mt-2 mb-0 text-xs leading-relaxed text-faint">再找一批时，会写成一篇连贯短文。现在先读这些原句。</p>}
+      {showZh && article.zh && <p className="mt-2 mb-0 text-[13px] leading-relaxed text-muted">{article.zh}</p>}
+      {missing.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {missing.map((word) => (
+            <button
+              key={word.id}
+              type="button"
+              onClick={() => setPickedId(word.id)}
+              className="rounded-lg border border-line bg-transparent px-2.5 py-1 font-serif text-[14px] text-ink"
+            >
+              {word.text}
+            </button>
+          ))}
+        </div>
+      )}
+      {hit && (
+        <div className="mt-3 rounded-xl bg-bg px-3 py-2.5">
+          <div className="text-[15px]">
+            <span className="font-serif">{hit.text}</span>
+            {hit.meta.pos && <span className="ml-1.5 text-xs text-muted">{hit.meta.pos}</span>}
           </div>
-          <div className="mt-0.5 text-[14px] text-ink">
-            {d.meta.pos && <span className="mr-1 text-muted">{d.meta.pos}</span>}
-            {d.meta.meaning}
+          <p className="mt-0.5 mb-0 text-[14px] leading-relaxed">{hit.meta.meaning}</p>
+          {hit.why && <p className="mt-1 mb-0 text-xs leading-relaxed text-muted">{hit.why}</p>}
+          <div className="mt-2 flex gap-2">
+            <button
+              onClick={() => onKnow(hit.id)}
+              disabled={busy.has(hit.id)}
+              className="h-9 rounded-xl border border-line bg-transparent px-3.5 text-[13px] text-muted-2 disabled:opacity-40"
+            >
+              认识
+            </button>
+            <button
+              onClick={() => onLearn(hit.id)}
+              disabled={busy.has(hit.id)}
+              className="h-9 rounded-xl border-0 bg-accent px-3.5 text-[13px] font-medium text-on-accent disabled:opacity-40"
+            >
+              学这个
+            </button>
           </div>
         </div>
-        <SpeakButton text={d.text} />
-      </div>
-      {d.meta.example && (
-        <blockquote className="m-0 mt-2.5 border-l-2 border-line pl-3">
-          <p className="m-0 font-serif text-[15px] leading-relaxed text-ink">
-            <Highlighted text={d.meta.example} marks={[d.meta.highlight]} />
-          </p>
-          {d.meta.exampleZh && <p className="m-0 mt-0.5 text-[13px] leading-relaxed text-muted">{d.meta.exampleZh}</p>}
-        </blockquote>
       )}
-      {d.why && <p className="m-0 mt-2 text-xs leading-relaxed text-muted-2">{d.why}</p>}
-      <div className="mt-3 flex items-center gap-2">
-        <span className="flex-1 text-xs text-faint">
-          {d.url ? (
-            <a href={d.url} target="_blank" rel="noreferrer" className="text-faint">
-              {d.source} 原帖
-            </a>
-          ) : (
-            d.source
-          )}
-          {' · '}出现在 {d.hits} 条内容里
-        </span>
-        <button onClick={onKnow} disabled={busy} className="h-9 rounded-xl border border-line bg-transparent px-3.5 text-[13px] text-muted-2 disabled:opacity-40">
-          认识
+      {article.words.length > 1 && (
+        <button
+          type="button"
+          onClick={async () => {
+            const ok = await confirmDialog(`要把这篇里的 ${article.words.length} 个词都加入复习吗？可以先点词，只学想记的。`, { ok: '全部加入' })
+            if (ok) onLearnAll()
+          }}
+          className="mt-3 h-10 w-full rounded-xl border border-line bg-transparent text-[13px] text-muted-2"
+        >
+          全部加入复习…
         </button>
-        <button onClick={onLearn} disabled={busy} className="h-9 rounded-xl border-0 bg-accent px-3.5 text-[13px] font-medium text-on-accent disabled:opacity-40">
-          学这个
-        </button>
-      </div>
+      )}
     </article>
   )
 }

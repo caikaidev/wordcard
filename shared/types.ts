@@ -110,7 +110,9 @@ export interface RemixSentence {
 }
 
 export interface RemixResult {
-  words: { id: number; text: string }[]
+  words: { id: number; text: string; meaning?: string }[]
+  /** 相对当前词汇量过浅、这次没有写进短文的词 */
+  skipped?: string[]
   sentences: RemixSentence[]
 }
 

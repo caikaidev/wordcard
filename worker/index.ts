@@ -2,6 +2,9 @@ import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
 import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { normalizeRemixSentences, remixReady, selectRemixTargets } from '../shared/remix'
+import { resolveVocabCount } from '../shared/passages'
+import { rankOf } from './wordfreq'
 import { CloudflareTextError } from './cloudflare-text'
 import { MELO_MIME, MeloTtsError, getOrGenerateMeloTts, meloTtsKey } from './melo'
 import { lookup, SOURCE_LABEL } from './dictionary'
@@ -16,7 +19,7 @@ import { parseImport } from '../shared/import'
 import { checkInAfterReview, streakStatus } from './streak'
 import { push, sendReminders } from './push'
 import { autoDiscover, discover } from './discover'
-import { level } from './level'
+import { level, vocabEstimate } from './level'
 import { quest } from './quest'
 import { prepareQuest, processGenerationBatch } from './generation-jobs'
 import { ext, importLesson, tokens } from './lesson-import'
@@ -494,11 +497,27 @@ app.post('/remix', async (c) => {
   if (!rows.length) return c.json({ error: '词库里还没有进行中的词，先去添加几个吧' }, 400)
 
   const items = rows.map(toItem)
-  const sentences = await remix(
-    await ai(c),
-    items.map((i) => ({ text: i.text, meaning: i.meta.meaning })),
+  const settings = await loadSettings(c.env, user)
+  const estimate = await vocabEstimate(c.env, user)
+  const vocab = resolveVocabCount(settings.vocabLevel, estimate.vocab)
+  const picked = selectRemixTargets(
+    items.map((i) => ({ id: i.id, text: i.text, meaning: i.meta.meaning })),
+    (word) => rankOf(word),
+    vocab,
   )
-  return c.json({ words: items.map((i) => ({ id: i.id, text: i.text })), sentences })
+  if (!picked.kept.length) return c.json({ error: '这些词都太浅了，先去加几个想复习的' }, 400)
+
+  const raw = await remix(
+    await ai(c),
+    picked.kept.map((i) => ({ text: i.text, meaning: i.meaning })),
+  )
+  const sentences = normalizeRemixSentences(raw)
+  if (!remixReady(sentences)) throw new GeminiError('这次没有连成一段短文，请再试一次')
+  return c.json({
+    words: picked.kept.map((i) => ({ id: i.id, text: i.text, meaning: i.meaning })),
+    skipped: picked.dropped,
+    sentences,
+  })
 })
 
 app.get('/tts', async (c) => {

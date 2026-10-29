@@ -4,6 +4,8 @@ import { generateJson, type GeminiPart } from './gemini'
 import { fetchArticle, MAX_SOURCE_CHARS } from './article'
 import { translateParagraphs } from './gemini'
 import { aiEnv, loadSettings } from './settings'
+import { vocabEstimate } from './level'
+import { ladderView, nextReadableId, passageById } from '../shared/passages'
 import { checkIn, streakStatus } from './streak'
 import type { QuestProgress } from '../shared/quest'
 import { parseReadingScore } from '../shared/reading'
@@ -791,4 +793,49 @@ practice.get('/share', async (c) => {
     quotes: quotes.slice(0, 8),
   }
   return c.json(data)
+})
+
+/* ============================== 分级短文 ============================== */
+
+async function passageLadder(env: Env, user: string) {
+  const settings = await loadSettings(env, user)
+  const est = await vocabEstimate(env, user)
+  const { results } = await env.DB.prepare('SELECT passage_id FROM passage_reads WHERE user_id = ?').bind(user).all<{ passage_id: string }>()
+  return ladderView(settings.vocabLevel, est.vocab, results.map((r) => r.passage_id))
+}
+
+practice.get('/passages', async (c) => c.json(await passageLadder(c.env, c.get('user'))))
+
+practice.get('/passages/:id', async (c) => {
+  const id = c.req.param('id')
+  const passage = passageById(id)
+  if (!passage) return c.json({ error: '没有这篇短文' }, 404)
+  const ladder = await passageLadder(c.env, c.get('user'))
+  const item = ladder.items.find((i) => i.id === id)
+  if (!item) return c.json({ error: '这篇不在当前档位里' }, 404)
+  if (item.state === 'locked') return c.json({ error: '先读完上一篇，这篇才会解锁' }, 403)
+  return c.json({
+    id: passage.id,
+    title: passage.title,
+    text: passage.text,
+    words: passage.words,
+    band: passage.band,
+    bandName: ladder.bandName,
+    state: item.state,
+    nextId: nextReadableId(ladder.items, id),
+  })
+})
+
+practice.post('/passages/:id/complete', async (c) => {
+  const id = c.req.param('id')
+  const passage = passageById(id)
+  if (!passage) return c.json({ error: '没有这篇短文' }, 404)
+  const user = c.get('user')
+  const ladder = await passageLadder(c.env, user)
+  const item = ladder.items.find((i) => i.id === id)
+  if (!item) return c.json({ error: '这篇不在当前档位里' }, 404)
+  if (item.state === 'locked') return c.json({ error: '先读完上一篇，这篇才会解锁' }, 403)
+  await c.env.DB.prepare('INSERT OR IGNORE INTO passage_reads (user_id, passage_id, completed_at) VALUES (?, ?, ?)').bind(user, id, Date.now()).run()
+  const updated = await passageLadder(c.env, user)
+  return c.json({ ok: true as const, nextId: nextReadableId(updated.items, id) })
 })

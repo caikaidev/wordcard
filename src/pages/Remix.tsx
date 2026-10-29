@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { prefetch, speak, stop } from '../audio'
+import { REMIX_TIMEOUT_SEC } from '../../shared/remix'
 import type { RemixResult } from '../../shared/types'
 import { Link } from '../router'
-import { Highlighted, SpeakButton, WaitProgress, errMsg } from '../components/ui'
+import { GlossSpan } from '../components/GlossText'
+import { WaitProgress, errMsg } from '../components/ui'
 import { IconBack, IconPlay, IconRefresh, IconSparkle, IconStop } from '../components/icons'
 
 // 切换页面再回来时不重复生成，省额度
@@ -13,7 +15,8 @@ export default function Remix() {
   const [data, setData] = useState<RemixResult | null>(cache)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showZh, setShowZh] = useState(true)
+  const [showZh, setShowZh] = useState(false)
+  const [picked, setPicked] = useState<string | null>(null)
   const [playing, setPlaying] = useState<number | null>(null)
   const playToken = useRef(0)
 
@@ -25,6 +28,7 @@ export default function Remix() {
       const r = await api.remix(exclude)
       prefetch(r.sentences.map((x) => x.en))
       cache = r
+      setPicked(null)
       setData(r)
     } catch (e) {
       setError(errMsg(e))
@@ -80,17 +84,14 @@ export default function Remix() {
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-1.5 text-[13px] tracking-wide text-muted">
             <IconSparkle size={14} className="text-accent" />
-            {data ? `用 ${data.words.length} 个待复习的词生成` : '用今日到期的词生成'}
+            {data ? `用 ${data.words.length} 个词写成一段` : '用今日到期的词写成一段'}
           </div>
           <h1 className="m-0 text-[22px] font-semibold tracking-tight md:text-2xl">AI 重组</h1>
+          <p className="m-0 text-xs leading-relaxed text-muted">先读英文。点亮的词再看意思，中文默认先藏着。</p>
         </div>
-        <div className="flex min-h-[30px] flex-wrap gap-1.5">
-          {data?.words.map((w) => (
-            <span key={w.id} title={w.text} className="max-w-full truncate rounded-lg border border-line bg-surface px-2.5 py-1 font-serif text-[15px]">
-              {w.text}
-            </span>
-          ))}
-        </div>
+        {!!data?.skipped?.length && (
+          <p className="m-0 text-xs leading-relaxed text-faint">已跳过过浅的词：{data.skipped.join('、')}</p>
+        )}
       </div>
 
       <div className="flex flex-col gap-2.5 px-4 pt-4 pb-3 md:px-6">
@@ -109,32 +110,15 @@ export default function Remix() {
         ) : loading || !data ? (
           <>
             <WaitNote />
-            {[0, 1, 2].map((i) => (
-            <div key={i} className="flex animate-shimmer flex-col gap-2.5 rounded-2xl border border-line-soft bg-surface p-5">
+            <div className="flex animate-shimmer flex-col gap-2.5 rounded-2xl border border-line-soft bg-surface p-5">
               <div className="h-5 w-full rounded bg-chip" />
-              <div className="h-5 w-3/4 rounded bg-chip" />
-              <div className="h-3.5 w-1/2 rounded bg-chip" />
+              <div className="h-5 w-11/12 rounded bg-chip" />
+              <div className="h-5 w-4/5 rounded bg-chip" />
+              <div className="h-5 w-2/3 rounded bg-chip" />
             </div>
-            ))}
           </>
         ) : (
-          data.sentences.map((s, i) => (
-            <div
-              key={i}
-              style={{ animationDelay: `${i * 60}ms` }}
-              className={`flex animate-rise items-start gap-3 rounded-2xl border bg-surface py-3.5 pr-3 pl-4 transition-colors ${
-                playing === i ? 'border-accent' : 'border-line-soft'
-              }`}
-            >
-              <div className="flex flex-1 flex-col gap-2">
-                <div className="font-serif text-[17px] leading-normal md:text-xl">
-                  <Highlighted text={s.en} marks={s.highlights} />
-                </div>
-                {showZh && <div className="text-[13px] leading-relaxed text-muted md:text-sm">{s.zh}</div>}
-              </div>
-              <SpeakButton text={s.en} waves={1} label={`播放第 ${i + 1} 句`} />
-            </div>
-          ))
+          <PassageBlock data={data} showZh={showZh} playing={playing} picked={picked} onPick={setPicked} />
         )}
       </div>
 
@@ -161,15 +145,55 @@ export default function Remix() {
 }
 
 /** 生成期间的进度说明：阶段文案 + 已等待秒数；超过 15 秒说明比平时慢，并告知多久会超时 */
+function glossOf(form: string, data: RemixResult) {
+  const key = form.toLowerCase()
+  return data.words.find((w) => key.includes(w.text.toLowerCase()) || w.text.toLowerCase().includes(key))?.meaning || ''
+}
+
+function PassageBlock({
+  data,
+  showZh,
+  playing,
+  picked,
+  onPick,
+}: {
+  data: RemixResult
+  showZh: boolean
+  playing: number | null
+  picked: string | null
+  onPick: (form: string) => void
+}) {
+  const meaning = picked ? glossOf(picked, data) : ''
+  return (
+    <article className="animate-rise rounded-2xl border border-line-soft bg-surface px-4 py-4">
+      <p className="m-0 font-serif text-[17px] leading-relaxed md:text-xl">
+        {data.sentences.map((s, i) => (
+          <span key={i} className={playing === i ? 'rounded-sm bg-accent-soft' : undefined}>
+            <GlossSpan text={s.en} forms={s.highlights} active={picked} onPick={onPick} />
+            {i < data.sentences.length - 1 ? ' ' : ''}
+          </span>
+        ))}
+      </p>
+      {picked && (
+        <p className="mt-3 mb-0 text-[14px] leading-relaxed text-ink">
+          <span className="font-serif text-accent">{picked}</span>
+          {meaning ? <span className="text-muted"> · {meaning}</span> : <span className="text-muted"> · 这个词在上面的句子里</span>}
+        </p>
+      )}
+      {showZh && <p className="mt-3 mb-0 text-[13px] leading-relaxed text-muted md:text-sm">{data.sentences.map((s) => s.zh).filter(Boolean).join('')}</p>}
+    </article>
+  )
+}
+
 function WaitNote() {
   return (
     <WaitProgress
       stages={[
-        [0, '正在挑选要复习的词…'],
-        [3, 'AI 正在用这些词造句…通常 5–15 秒'],
+        [0, '正在挑掉过浅的词…'],
+        [3, 'AI 正在写成一段连贯短文…通常 5–15 秒'],
       ]}
-      timeout={40}
-      timeoutHint="超过 40 秒会自动提示超时，到时点「重试」即可"
+      timeout={REMIX_TIMEOUT_SEC}
+      timeoutHint={`到 ${REMIX_TIMEOUT_SEC} 秒还没写好会停下来，点「重试」即可`}
     />
   )
 }

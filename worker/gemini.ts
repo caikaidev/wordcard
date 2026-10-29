@@ -1,5 +1,6 @@
 import type { Env } from './env'
 import { cloudflareGenerateJson } from './cloudflare-text'
+import { remixPrompt } from '../shared/remix'
 import type { CardMeta, EnrichResult, ItemType, RemixSentence } from '../shared/types'
 import { pcmToWav } from './wav'
 import { SOURCE_LABEL, type DictResult, type DictSense } from './dictionary'
@@ -403,18 +404,7 @@ const remixSchema = {
 }
 
 export async function remix(env: Env, words: { text: string; meaning: string }[]): Promise<RemixSentence[]> {
-  const list = words.map((w, i) => `${i + 1}. ${w.text}（${w.meaning}）`).join('\n')
-  const prompt = `你在帮一个中国英语学习者复习。下面是今天要复习的词/句：
-${list}
-
-请写 3 个全新的英文句子来练习它们：
-- 每句至少用到其中 2 个（如果只有 1 个就用 1 个），合起来要覆盖全部词；如果是整句，就借用其中的关键表达
-- 句子自然、地道、贴近日常生活或工作场景，每句不超过 25 个单词，难度适中（大约 CEFR B1~B2）
-- 可以对单词做合理的词形变化
-- zh：自然的中文翻译
-- highlights：该句中用到的目标词/表达，写法必须与 en 中完全一致，便于程序高亮`
-
-  const r = await generateJson<RemixSentence[]>(env, prompt, remixSchema, 'remix', 0.7, 'low', 30_000)
+  const r = await generateJson<RemixSentence[]>(env, remixPrompt(words), remixSchema, 'remix', 0.7, 'low', 30_000)
   return (Array.isArray(r) ? r : []).slice(0, 5).map((s) => ({
     en: s.en ?? '',
     zh: s.zh ?? '',
