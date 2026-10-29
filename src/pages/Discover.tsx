@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import { DEFAULT_SOURCES, VOCAB_LEVELS, discoverArticles, formatSources, parseSources, sourceLabel, type Discovery, type DiscoverArticle, type DiscoverReport } from '../../shared/discover'
+import { DEFAULT_SOURCES, VOCAB_LEVELS, discoverArticles, formatSources, parseSources, shouldAutoEnroll, sourceLabel, type Discovery, type DiscoverArticle, type DiscoverReport } from '../../shared/discover'
 import type { Settings } from '../../shared/settings'
 import type { LevelStatus } from '../../shared/level'
 import { Link } from '../router'
@@ -18,6 +18,14 @@ export default function Discover() {
   const [report, setReport] = useState<DiscoverReport | null>(null)
   const [busy, setBusy] = useState<Set<number>>(new Set())
   const [level, setLevel] = useState<LevelStatus | null>(null)
+  // 新用户默认关。设置接口还没回来、或失败时，页面上也先显示关，不把开关藏起来。
+  const [autoAdd, setAutoAdd] = useState(false)
+  const [savingAuto, setSavingAuto] = useState(false)
+  const userSetAuto = useRef(false)
+
+  const applyAuto = (value: unknown) => {
+    if (!userSetAuto.current) setAutoAdd(shouldAutoEnroll(value))
+  }
 
   const load = () =>
     api
@@ -25,6 +33,7 @@ export default function Discover() {
       .then((r) => {
         setItems(r.items)
         setRedditAuth(r.redditAuth)
+        applyAuto(r.discoverAuto)
       })
       .catch((e) => toast(errMsg(e), 'error'))
 
@@ -32,13 +41,36 @@ export default function Discover() {
     load()
     api
       .settings()
-      .then((r) => setSettings(r.current))
+      .then((r) => {
+        setSettings(r.current)
+        applyAuto(r.current.discoverAuto)
+      })
       .catch(() => {})
     api
       .level()
       .then(setLevel)
       .catch(() => {})
   }, [])
+
+  const toggleAuto = async (next: boolean) => {
+    if (savingAuto || next === autoAdd) return
+    userSetAuto.current = true
+    const prev = autoAdd
+    setAutoAdd(next)
+    setSavingAuto(true)
+    try {
+      const r = await api.saveSettings({ discoverAuto: next ? 1 : null })
+      setSettings(r.current)
+      setAutoAdd(shouldAutoEnroll(r.current.discoverAuto))
+      toast(next ? '已开启：每天早上自动找词并加入复习' : '已关闭自动加入。浏览短文不会入库')
+    } catch (e) {
+      setAutoAdd(prev)
+      userSetAuto.current = false
+      toast(errMsg(e), 'error')
+    } finally {
+      setSavingAuto(false)
+    }
+  }
 
   const save = async (patch: Partial<Record<keyof Settings, string | number | null>>, label: string) => {
     try {
@@ -102,7 +134,9 @@ export default function Discover() {
         <p className="mt-1 mb-0 text-xs leading-relaxed text-muted">结果是含这些词的短文。先读，点词再决定要不要加入复习。</p>
       </div>
 
-      <section className="mx-4 mt-5 flex flex-col gap-3.5 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6">
+      <AutoEnrollSwitch on={autoAdd} busy={savingAuto} onToggle={toggleAuto} />
+
+      <section className="mx-4 mt-4 flex flex-col gap-3.5 rounded-2xl border border-line-soft bg-surface p-4 md:mx-6">
         {!settings ? (
           <div className="h-28 animate-shimmer rounded-xl bg-line-soft" />
         ) : (
@@ -137,19 +171,6 @@ export default function Discover() {
                 ))}
               </div>
             </div>
-            <label className="flex items-center gap-3">
-                <span className="flex flex-1 flex-col gap-0.5">
-                <span className="text-[14px] text-ink">自动加入复习（可选）</span>
-                <span className="text-xs text-muted">默认先读短文再决定。打开后，早上找到的词会直接进词库</span>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                checked={settings.discoverAuto}
-                onChange={(e) => save({ discoverAuto: e.target.checked ? 1 : null }, e.target.checked ? '已开启：每天早上自动加入新词' : '已关闭自动加入')}
-                className="h-5 w-5 accent-[var(--accent)]"
-              />
-            </label>
           </>
         )}
         {running ? (
@@ -184,7 +205,7 @@ export default function Discover() {
         <>
           <div className="mx-4 mt-6 mb-2 flex items-baseline justify-between md:mx-6">
             <h2 className="m-0 text-[13px] font-semibold">含这些词的短文 {discoverArticles(items).length} 篇</h2>
-            <span className="text-xs text-muted">先读，再决定学不学</span>
+            <span className="text-xs text-muted">自动加入复习：{autoAdd ? '开' : '关'} · 先读再决定</span>
           </div>
           <div className="mx-4 flex flex-col gap-2.5 md:mx-6">
             {discoverArticles(items).map((article) => (
@@ -200,6 +221,32 @@ export default function Discover() {
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+function AutoEnrollSwitch({ on, busy, onToggle }: { on: boolean; busy: boolean; onToggle: (next: boolean) => void }) {
+  return (
+    <div className="mx-4 mt-4 flex items-center gap-3 rounded-2xl border border-line-soft bg-surface px-4 py-3 md:mx-6">
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[15px] font-medium text-ink">自动加入复习</span>
+        <span className="text-xs leading-relaxed text-muted">
+          {on
+            ? '开。每天早上自动找词并加入复习。浏览和点开短文仍然不会入库。'
+            : '关（默认）。先读短文再决定；浏览和点开不会把词加入复习。'}
+        </span>
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label="自动加入复习"
+        disabled={busy}
+        onClick={() => onToggle(!on)}
+        className={`relative h-7 w-12 shrink-0 rounded-full border-0 transition-colors disabled:opacity-40 ${on ? 'bg-accent' : 'bg-line'}`}
+      >
+        <span className={`absolute top-0.5 h-6 w-6 rounded-full bg-surface shadow-sm ${on ? 'left-[22px]' : 'left-0.5'}`} />
+      </button>
     </div>
   )
 }

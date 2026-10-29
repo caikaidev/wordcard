@@ -1,8 +1,8 @@
 import { Hono, type Context } from 'hono'
 import type { AppEnv, Env } from './env'
 import { requireAccess } from './auth'
-import { enrich, remix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
-import { normalizeRemixSentences, remixReady, selectRemixTargets } from '../shared/remix'
+import { enrich, composeRemix, GeminiError, aiCallCounts, aiLimits, pickSense } from './gemini'
+import { selectRemixTargets } from '../shared/remix'
 import { resolveVocabCount } from '../shared/passages'
 import { rankOf } from './wordfreq'
 import { CloudflareTextError } from './cloudflare-text'
@@ -507,12 +507,10 @@ app.post('/remix', async (c) => {
   )
   if (!picked.kept.length) return c.json({ error: '这些词都太浅了，先去加几个想复习的' }, 400)
 
-  const raw = await remix(
+  const sentences = await composeRemix(
     await ai(c),
     picked.kept.map((i) => ({ text: i.text, meaning: i.meaning })),
   )
-  const sentences = normalizeRemixSentences(raw)
-  if (!remixReady(sentences)) throw new GeminiError('这次没有连成一段短文，请再试一次')
   return c.json({
     words: picked.kept.map((i) => ({ id: i.id, text: i.text, meaning: i.meaning })),
     skipped: picked.dropped,

@@ -3,7 +3,7 @@ import type { AppEnv, Env } from './env'
 import { generateJson } from './gemini'
 import { aiEnv, loadSettings } from './settings'
 import { isAdminEmail } from './auth'
-import { parseDiscoverPassage, takeDiscoverPassage, DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
+import { parseDiscoverPassage, takeDiscoverPassage, shouldAutoEnroll, DISCOVER_PACKAGE, parseSources, sourceLabel, type Discovery, type DiscoverReport, type Source } from '../shared/discover'
 import { resolveVocabCount } from '../shared/passages'
 import type { CardMeta } from '../shared/types'
 import { rankOf } from './wordfreq'
@@ -406,10 +406,11 @@ export async function addToLibrary(db: D1Database, user: string, ids: number[]) 
   return res.filter((_, i) => i % 2 === 0).reduce((n, r) => n + (r.meta.changes ?? 0), 0)
 }
 
-/** 定时任务（每天早上）：开了「自动」的人，找一批新词直接加进复习 */
+/** 定时任务（每天早上）：只有明确打开「自动加入复习」的人，才找一批新词直接加进复习 */
 export async function autoDiscover(env: Env) {
-  const { results } = await env.DB.prepare(`SELECT user_id FROM user_settings WHERE key = 'discoverAuto' AND value = '1'`).all<{ user_id: string }>()
-  for (const { user_id: user } of results) {
+  const { results } = await env.DB.prepare(`SELECT user_id, value FROM user_settings WHERE key = 'discoverAuto'`).all<{ user_id: string; value: string }>()
+  const enabled = results.filter((row) => shouldAutoEnroll(row.value))
+  for (const { user_id: user } of enabled) {
     try {
       const { ids } = await runDiscover(env, user, isAdminEmail(env, user))
       await addToLibrary(env.DB, user, ids)
@@ -424,17 +425,25 @@ export async function autoDiscover(env: Env) {
 export const discover = new Hono<AppEnv>()
 
 discover.get('/', async (c) => {
+  const user = c.get('user')
+  const settings = await loadSettings(c.env, user)
   const { results } = await c.env.DB.prepare(
     `SELECT * FROM discoveries WHERE user_id = ? AND status = 'new' ORDER BY created_at DESC, hits DESC LIMIT 100`,
   )
-    .bind(c.get('user'))
+    .bind(user)
     .all<DiscoveryRow>()
-  return c.json({ items: results.map(toDiscovery), redditAuth: !!(c.env.REDDIT_CLIENT_ID && c.env.REDDIT_CLIENT_SECRET) })
+  return c.json({
+    items: results.map(toDiscovery),
+    redditAuth: !!(c.env.REDDIT_CLIENT_ID && c.env.REDDIT_CLIENT_SECRET),
+    // 没存过这条设置时是 false。浏览这份列表不会入库。
+    discoverAuto: shouldAutoEnroll(settings.discoverAuto),
+  })
 })
 
 discover.post('/run', async (c) => {
   const { report, ids } = await runDiscover(c.env, c.get('user'), c.get('admin'))
-  return c.json({ report, count: ids.length })
+  // 手动找一批只生成待读短文。enrolled 固定为 0：点开、浏览都不会把词写进词库。
+  return c.json({ report, count: ids.length, enrolled: 0 })
 })
 
 const idsOf = (v: unknown) => (Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200) : [])

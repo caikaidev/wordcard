@@ -1,7 +1,7 @@
 import type { Env } from './env'
 import { COACH_PROFILE_MAX, isSafeId, type Settings } from '../shared/settings'
 import { DEFAULT_COACH_PROFILE, isLevel, resolveCoachProfile } from '../shared/practice'
-import { DEFAULT_SOURCES, DEFAULT_VOCAB_LEVEL, formatSources, isVocabLevel, parseSources } from '../shared/discover'
+import { DEFAULT_SOURCES, DEFAULT_VOCAB_LEVEL, formatSources, isVocabLevel, parseSources, shouldAutoEnroll } from '../shared/discover'
 import { DEFAULT_DAILY_GOAL, DEFAULT_REMINDER_HOUR, REMINDER_HOURS, isDailyGoal } from '../shared/streak'
 
 /** 全站共用、只有管理员能改的设置 */
@@ -37,7 +37,7 @@ export async function loadSettings(env: Env, user: string): Promise<Settings> {
     reminderHour: isReminderHour(hour) ? hour : DEFAULT_REMINDER_HOUR,
     discoverSources: um.discoverSources && parseSources(um.discoverSources).length ? um.discoverSources : DEFAULT_SOURCES,
     vocabLevel: isVocabLevel(vocab) ? vocab : DEFAULT_VOCAB_LEVEL,
-    discoverAuto: um.discoverAuto === '1',
+    discoverAuto: shouldAutoEnroll(um.discoverAuto),
   }
 }
 

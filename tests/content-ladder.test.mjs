@@ -12,13 +12,20 @@ import {
 } from '../shared/passages.ts'
 import {
   discoverArticles,
+  shouldAutoEnroll,
   takeDiscoverPassage,
 } from '../shared/discover.ts'
 import {
+  REMIX_ATTEMPT_MS,
+  REMIX_ATTEMPTS,
+  REMIX_TIMEOUT_SEC,
   normalizeRemixSentences,
+  remixCoherent,
+  remixFailure,
   remixPassageText,
   remixPrompt,
   remixReady,
+  remixRetryPrompt,
   selectRemixTargets,
   shallowRankFloor,
 } from '../shared/remix.ts'
@@ -140,6 +147,9 @@ test('remix drops shallow words and asks for one coherent passage', () => {
   assert.match(prompt, /连贯/)
   assert.match(prompt, /3 到 5/)
   assert.match(prompt, /不要写三句互不相关/)
+  assert.match(prompt, /同一件事/)
+  assert.equal(REMIX_ATTEMPTS, 2)
+  assert.equal(REMIX_ATTEMPTS * REMIX_ATTEMPT_MS < REMIX_TIMEOUT_SEC * 1000, true)
 
   const raw = [
     { en: 'Lina opened the shop before sunrise.', zh: '丽娜日出前开了店。', highlights: ['shop', 'missing'] },
@@ -151,7 +161,28 @@ test('remix drops shallow words and asks for one coherent passage', () => {
   assert.equal(sentences[0].highlights.includes('missing'), false)
   assert.equal(remixReady(sentences.slice(0, 2)), false)
   assert.equal(remixReady(sentences.slice(0, 3)), true)
+  assert.equal(remixCoherent(sentences.slice(0, 3)), true)
+  assert.equal(remixFailure(sentences.slice(0, 3)), null)
   assert.match(remixPassageText(sentences.slice(0, 3)), /opened the shop.*warm bread.*street was busy/)
+
+  const scattered = [
+    { en: 'Teams leverage the new process to ship the release.' },
+    { en: 'Gardeners reached a consensus about the tomato beds.' },
+    { en: 'Her reluctance to travel surprised the orchestra.' },
+    { en: 'The invoice showed a discrepancy in the final total.' },
+  ]
+  assert.equal(remixReady(scattered), true)
+  assert.equal(remixCoherent(scattered), false)
+  assert.match(remixFailure(scattered), /各说各的/)
+  const glued = [
+    { en: 'Then the chef baked the bread before sunrise.' },
+    { en: 'Then the pilot landed the plane in heavy rain.' },
+    { en: 'Then the judge closed the hearing for the day.' },
+  ]
+  assert.equal(remixCoherent(glued), false)
+  const retry = remixRetryPrompt([{ text: 'leverage', meaning: '利用' }], scattered)
+  assert.match(retry, /上一稿被拒绝/)
+  assert.match(retry, /Teams leverage/)
 })
 
 test('discover results collapse into passage cards and do not require saving', () => {
@@ -196,8 +227,37 @@ test('discover results collapse into passage cards and do not require saving', (
   const discoverSrc = readFileSync(new URL('../worker/discover.ts', import.meta.url), 'utf8')
   const run = discoverSrc.slice(discoverSrc.indexOf('export async function runDiscover'), discoverSrc.indexOf('type DiscoveryRow'))
   assert.equal(run.includes('addToLibrary'), false)
+  const manual = discoverSrc.slice(discoverSrc.indexOf("discover.post('/run'"), discoverSrc.indexOf('const idsOf'))
+  assert.equal(manual.includes('addToLibrary'), false)
+  assert.match(manual, /enrolled: 0/)
+  const auto = discoverSrc.slice(discoverSrc.indexOf('export async function autoDiscover'), discoverSrc.indexOf('/* ------------------------------ 接口'))
+  assert.match(auto, /shouldAutoEnroll/)
+  assert.match(auto, /addToLibrary/)
   const settings = readFileSync(new URL('../worker/settings.ts', import.meta.url), 'utf8')
   assert.match(settings, /discoverAuto: false/)
+  assert.match(settings, /shouldAutoEnroll\(um\.discoverAuto\)/)
+  assert.equal(shouldAutoEnroll(undefined), false)
+  assert.equal(shouldAutoEnroll(false), false)
+  assert.equal(shouldAutoEnroll('0'), false)
+  assert.equal(shouldAutoEnroll(null), false)
+  assert.equal(shouldAutoEnroll('1'), true)
+  assert.equal(shouldAutoEnroll(1), true)
+  assert.equal(shouldAutoEnroll(true), true)
+
+  const page = readFileSync(new URL('../src/pages/Discover.tsx', import.meta.url), 'utf8')
+  assert.match(page, /aria-label="自动加入复习"/)
+  assert.match(page, /role="switch"/)
+  assert.match(page, /const \[autoAdd, setAutoAdd\] = useState\(false\)/)
+  assert.match(page, /关（默认）/)
+  assert.equal(page.includes('type="checkbox"'), false)
+  const pick = page.slice(page.indexOf('onPick={(form)'), page.indexOf('/>', page.indexOf('onPick={(form)')))
+  assert.equal(pick.includes('onLearn'), false)
+  assert.equal(pick.includes('learnDiscoveries'), false)
+
+  const gemini = readFileSync(new URL('../worker/gemini.ts', import.meta.url), 'utf8')
+  assert.match(gemini, /remixCoherent/)
+  assert.match(gemini, /remixRetryPrompt/)
+  assert.match(gemini, /REMIX_ATTEMPTS/)
 })
 
 test('the browser bundle is not handed the locked passage catalog', () => {

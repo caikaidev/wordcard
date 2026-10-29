@@ -164,3 +164,11 @@ export interface DiscoverReport {
 
 /** 自动加入时放进这个学习包，方便在词库里筛选、用学习包练习 */
 export const DISCOVER_PACKAGE = '社区热词 · HN / Reddit'
+
+/**
+ * 只有用户明确打开「自动加入复习」才入库。
+ * 缺省、false、0、'0' 都是关。新用户没有这条设置，所以是关。
+ */
+export function shouldAutoEnroll(value: unknown): boolean {
+  return value === true || value === 1 || value === '1'
+}
