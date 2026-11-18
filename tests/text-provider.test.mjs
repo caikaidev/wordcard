@@ -43,13 +43,13 @@ test('default Cloudflare routes to Qwen and never hits Gemini', async () => {
     const result = await ai.generateJson(settings, 'Explain commitment', schema, 'enrich')
     assert.deepEqual(result, { meaning: '承诺', examples: ['A commitment matters.'] })
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].model, '@cf/qwen/qwen3-30b-a3b-fp8')
+    assert.equal(calls[0].model, '@cf/qwen/qwen3.8-27b')
     assert.match(calls[0].request.messages[0].content, /"type":"object"/)
     const prompt = calls[0].request.messages[0].content
     assert.ok(prompt.indexOf('Explain commitment') < prompt.indexOf('输出要求'))
     assert.match(prompt, /字符串数组必须写成 JSON 数组/)
     assert.match(prompt, /最后一个必须是 \} 或 \]。$/)
-    assert.equal(logs[0].args[2], '@cf/qwen/qwen3-30b-a3b-fp8')
+    assert.equal(logs[0].args[2], '@cf/qwen/qwen3.8-27b')
   } finally { globalThis.fetch = old }
 })
 

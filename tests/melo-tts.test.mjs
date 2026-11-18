@@ -55,7 +55,8 @@ function setup(overrides = {}) {
       async put(key, content) { state.cached.set(key, content) },
     },
     AI: {
-      async run(model, input) { state.calls.push({ model, input }); return { audio } },
+      // Aura-2 returns raw audio bytes as a stream, not MeloTTS's base64 JSON.
+      async run(model, input) { state.calls.push({ model, input }); return new ReadableStream({ start(c) { c.enqueue(mp3); c.close() } }) },
     },
     ...overrides,
   }
@@ -79,7 +80,7 @@ test('MeloTTS is the only invoked provider, in English, and logs a new synthesis
   const { env, state } = setup()
   const result = await generateMeloTts(env, 'hello')
   assert.deepEqual(result, { bytes: mp3, mimeType: 'audio/mpeg' })
-  assert.deepEqual(state.calls, [{ model: MELO_MODEL, input: { prompt: 'hello', lang: 'en' } }])
+  assert.deepEqual(state.calls, [{ model: MELO_MODEL, input: { text: 'hello', speaker: 'luna', encoding: 'mp3' } }])
   assert.equal(state.recorded.length, 1)
   assert.equal(state.recorded[0].params[1], 'tts')
   assert.equal(state.recorded[0].params[2], MELO_MODEL)

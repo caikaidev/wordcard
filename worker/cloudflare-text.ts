@@ -2,7 +2,7 @@ import type { Env } from './env'
 import type { GeminiPart, UsageKind } from './gemini'
 import { aiCallCounts, aiLimits } from './gemini'
 
-export const CF_TEXT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8'
+export const CF_TEXT_MODEL = '@cf/qwen/qwen3.8-27b'
 
 export class CloudflareTextError extends Error {
   readonly partial?: unknown

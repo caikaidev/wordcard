@@ -549,7 +549,7 @@ app.get('/tts', async (c) => {
   const key = await meloTtsKey(text)
   const headers = {
     'cache-control': 'private, max-age=31536000, immutable',
-    'x-tts-engine': 'melotts',
+    'x-tts-engine': 'aura-2',
   }
   const cached = await c.env.AUDIO.get(key)
   if (cached) return new Response(cached.body, { headers: { ...headers, 'content-type': cached.httpMetadata?.contentType || MELO_MIME, 'x-tts-cache': 'HIT' } })

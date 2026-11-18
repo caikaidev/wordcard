@@ -2,7 +2,7 @@ import type { Env } from './env'
 import { aiCallCounts, aiLimits } from './gemini'
 
 /** All new audio uses Cloudflare Workers AI. No fallback to Gemini TTS. */
-export const MELO_MODEL = '@cf/myshell-ai/melotts'
+export const MELO_MODEL = '@cf/deepgram/aura-2-en'
 export const MELO_MIME = 'audio/mpeg'
 const MAX_AUDIO_BYTES = 10 * 1024 * 1024
 
@@ -121,8 +121,12 @@ export async function generateMeloTts(env: Env, text: string): Promise<MeloAudio
   await checkQuota(env)
   let audio: MeloAudio
   try {
-    const result = await env.AI.run(MELO_MODEL, { prompt: text, lang: 'en' })
-    audio = decodeMeloResult(result)
+    const raw: unknown = await env.AI.run(MELO_MODEL, { text, speaker: 'luna', encoding: 'mp3' })
+    // Aura-2 returns raw audio bytes (a stream via the binding), not MeloTTS's base64 JSON.
+    const normalized = raw instanceof ReadableStream
+      ? new Uint8Array(await new Response(raw).arrayBuffer())
+      : raw
+    audio = decodeMeloResult(normalized)
   } catch (error) {
     throw toMeloError(error)
   }

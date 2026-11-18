@@ -129,7 +129,7 @@ npm run dev                      # 终端 2：Vite 前端，/api 自动转发到
 
 「设置 → 文本 AI 引擎」三选一（每个用户分别保存）：
 
-- **Qwen（默认，Cloudflare 免费）**：Workers AI `@cf/qwen/qwen3-30b-a3b-fp8` 处理词卡、练习、闯关题库、批改、翻译等结构化 JSON。不需要另外的 API key，与 MeloTTS 共享账号每天 10,000 Neurons。Workers Paid 超额仍可能计费。
+- **Qwen（默认，Cloudflare 免费）**：Workers AI `@cf/qwen/qwen3.8-27b` 处理词卡、练习、闯关题库、批改、翻译等结构化 JSON。不需要另外的 API key，与语音模型共享账号每天 10,000 Neurons。Workers Paid 超额仍可能计费。
 - **Gemini**：Gemini 3.8 Flash（管理员可在「高级」指定备用模型）。读链接失败时，只有 Gemini 会用 URL context 打开网页。
 - **OpenAI**：官方 Chat Completions。默认模型 **`gpt-6-astra`**（当前最强旗舰），默认地址 **`https://api.openai.com/v1`**。模型、地址都可以在设置里改，地址也能指向其它兼容端点。key 存在该用户的 `user_settings`（页面不回显）；没填个人 key 时用部署环境的 `OPENAI_API_KEY`。`gpt-6-astra` / `gpt-6.1-sol` 不传 temperature，推理强度用 `low`。
 
@@ -137,9 +137,9 @@ Qwen 出错**不会自动换** Gemini 或 OpenAI。失败弹窗里「重试」�
 
 Cloudflare 文本模型只处理纯文本。截图可以走 Gemini 或 OpenAI。后台自动补题仍只走 Cloudflare Qwen，不会改到已经在队列里的任务。用量记入同一 `usage` 日志。设置页的美元预估只统计 Gemini；OpenAI 与 Qwen 记为未计价。Qwen 的实际 Neurons 以 Cloudflare Dashboard 为准。
 
-## 语音：Cloudflare Workers AI MeloTTS
+## 语音：Cloudflare Workers AI Aura-2
 
-默认的单词、例句、AI 重组、闯关听力和跟读语音全部使用 `@cf/myshell-ai/melotts`，语言 `en`。配置文件中需要 `"ai": { "binding": "AI" }`，无需额外的 MeloTTS API key。输出 MP3，R2 缓存键包含 Melo 模型版本，旧 Gemini WAV 缓存不会被当成 MP3；前端请求 URL 带 `v=melo-v1`，避免浏览器继续播放旧缓存。慢速 `slow=1` 在前端以 0.75 倍速播放同一段 MP3，不再重复合成。
+默认的单词、例句、AI 重组、闯关听力和跟读语音全部使用 `@cf/deepgram/aura-2-en`（speaker `luna`）。配置文件中需要 `"ai": { "binding": "AI" }`，无需额外的 TTS API key。输出 MP3，R2 缓存键包含语音模型版本，旧 Gemini WAV 缓存不会被当成 MP3；前端请求 URL 带 `v=melo-v1`，避免浏览器继续播放旧缓存。慢速 `slow=1` 在前端以 0.75 倍速播放同一段 MP3，不再重复合成。
 
 **额度与账单**：Cloudflare Workers AI 每个账号每天共享 10,000 Neurons 免费额度，UTC 00:00 重置。Workers Free 用完会返回 429；**Workers Paid 超出免费额度可能继续计费**。拾句默认限制每天新生成 120 段、普通成员每人 60 段、每分钟 8 段（可通过 `DAILY_TTS_LIMIT` / `USER_DAILY_TTS_LIMIT` / `TTS_PER_MINUTE_LIMIT` 调整），这是应用侧请求次数限流，**不等于**准确的 Neurons 用量，也不保证 Paid 计划绝对零收费。应在 Cloudflare Dashboard → Workers AI 监测账号共享的实际 Neurons。若需要零额外费用，保持 Workers Free 或在 Cloudflare 账户级进行约束。
 
